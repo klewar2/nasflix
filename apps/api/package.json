@@ -1,0 +1,50 @@
+{
+  "name": "@nasflix/api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "nest start --watch",
+    "build": "nest build",
+    "start": "node dist/main",
+    "start:prod": "node dist/main",
+    "lint": "eslint \"src/**/*.ts\"",
+    "type-check": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:prod": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11",
+    "@nestjs/core": "^11",
+    "@nestjs/platform-express": "^11",
+    "@nestjs/jwt": "^11",
+    "@nestjs/passport": "^11",
+    "@nestjs/config": "^4",
+    "@nestjs/schedule": "^5",
+    "@prisma/client": "^6",
+    "passport": "^0.7",
+    "passport-jwt": "^4",
+    "passport-local": "^1",
+    "bcryptjs": "^2",
+    "class-validator": "^0.14",
+    "class-transformer": "^0.5",
+    "parse-torrent-title": "^2",
+    "reflect-metadata": "^0.2",
+    "rxjs": "^7",
+    "@nasflix/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11",
+    "@nestjs/schematics": "^11",
+    "@types/node": "^22",
+    "@types/passport-jwt": "^4",
+    "@types/passport-local": "^1",
+    "@types/bcryptjs": "^2",
+    "@types/express": "^5",
+    "prisma": "^6",
+    "typescript": "^5.7",
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
+    "eslint": "^9"
+  }
+}
