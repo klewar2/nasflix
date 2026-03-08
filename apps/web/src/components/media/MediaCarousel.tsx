@@ -12,9 +12,9 @@ interface MediaCarouselProps {
 export function MediaCarousel({ title, media }: MediaCarouselProps) {
   const [emblaRef, emblaApi] = useEmblaCarousel({
     align: 'start',
-    slidesToScroll: 4,
+    slidesToScroll: 5,
     containScroll: 'trimSnaps',
-    dragFree: true,
+    dragFree: false,
   });
 
   const scrollPrev = useCallback(() => emblaApi?.scrollPrev(), [emblaApi]);
@@ -28,20 +28,20 @@ export function MediaCarousel({ title, media }: MediaCarouselProps) {
       <div className="group relative">
         <button
           onClick={scrollPrev}
-          className="absolute left-0 top-0 bottom-0 z-10 w-10 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+          className="absolute left-0 top-0 bottom-0 z-10 w-10 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
         >
           <ChevronLeft className="w-6 h-6" />
         </button>
         <div className="overflow-hidden px-4 md:px-8" ref={emblaRef}>
           <div className="flex gap-2">
             {media.map((m) => (
-              <MediaCard key={m.id} media={m} className="min-w-[140px] md:min-w-[180px] lg:min-w-[200px]" />
+              <MediaCard key={m.id} media={m} className="min-w-[130px] md:min-w-[170px] lg:min-w-[0] lg:w-[calc(20%-7px)] lg:flex-shrink-0" />
             ))}
           </div>
         </div>
         <button
           onClick={scrollNext}
-          className="absolute right-0 top-0 bottom-0 z-10 w-10 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+          className="absolute right-0 top-0 bottom-0 z-10 w-10 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
         >
           <ChevronRight className="w-6 h-6" />
         </button>

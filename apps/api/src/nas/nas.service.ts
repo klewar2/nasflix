@@ -12,8 +12,13 @@ export interface SynoFileInfo {
   name: string;
   isdir: boolean;
   additional?: {
-    size?: number;
-    time?: { mtime: number };
+    size?: number | string;
+    time?: {
+      mtime?: number;
+      crtime?: number;
+      atime?: number;
+      ctime?: number;
+    };
     real_path?: string;
   };
 }
@@ -120,7 +125,7 @@ export class NasService {
         version: '2',
         method: 'list',
         folder_path: folderPath,
-        additional: 'size,time,real_path',
+        additional: '["size","time","real_path"]',
         offset: String(offset),
         limit: String(limit),
         _sid: this.sid!,
@@ -145,6 +150,11 @@ export class NasService {
       } catch (error) {
         this.logger.warn(`Failed to scan folder ${folder}: ${error}`);
       }
+    }
+
+    // Log first file to diagnose additional.time structure
+    if (allFiles.length > 0) {
+      this.logger.log(`[NAS] Sample file additional: ${JSON.stringify(allFiles[0].additional)}`);
     }
 
     return allFiles;

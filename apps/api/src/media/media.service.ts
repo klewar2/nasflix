@@ -33,7 +33,7 @@ export class MediaService {
         include: this.includeRelations,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ nasAddedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
       }),
       this.prisma.media.count({ where }),
     ]);
@@ -83,13 +83,70 @@ export class MediaService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async findRecent(limit = 20) {
+  async findRecent(limit = 40) {
     return this.prisma.media.findMany({
       where: { syncStatus: SyncStatus.SYNCED },
       include: this.includeRelations,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ nasAddedAt: 'desc' }, { createdAt: 'desc' }],
       take: limit,
     });
+  }
+
+  async findByQuality(quality: 'UHD' | 'HDR' | 'FHD', limit = 20) {
+    const where: any = { syncStatus: SyncStatus.SYNCED };
+    if (quality === 'UHD') where.videoQuality = '4K';
+    else if (quality === 'HDR') where.OR = [{ hdr: true }, { dolbyVision: true }];
+    else if (quality === 'FHD') where.videoQuality = '1080p';
+
+    return this.prisma.media.findMany({
+      where,
+      include: this.includeRelations,
+      orderBy: [{ nasAddedAt: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+    });
+  }
+
+  async findAllAdmin(params: {
+    type?: MediaType;
+    status?: SyncStatus;
+    title?: string;
+    videoQuality?: string;
+    dolbyVision?: boolean;
+    hdr?: boolean;
+    dolbyAtmos?: boolean;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    page?: number;
+    limit?: number;
+  }) {
+    const { type, status, title, videoQuality, dolbyVision, hdr, dolbyAtmos, sortBy = 'nasAddedAt', sortOrder = 'desc', page = 1, limit = 20 } = params;
+    const where: any = {};
+    if (type) where.type = type;
+    if (status) where.syncStatus = status;
+    if (title) {
+      where.OR = [
+        { titleVf: { contains: title, mode: 'insensitive' } },
+        { titleOriginal: { contains: title, mode: 'insensitive' } },
+        { nasFilename: { contains: title, mode: 'insensitive' } },
+      ];
+    }
+    if (videoQuality) where.videoQuality = videoQuality;
+    if (dolbyVision) where.dolbyVision = true;
+    if (hdr) where.hdr = true;
+    if (dolbyAtmos) where.dolbyAtmos = true;
+
+    const sortField = sortBy === 'title' ? 'titleVf' : sortBy;
+    // nasAddedAt can be null; fall back to createdAt for nulls
+    const orderBy: any = sortField === 'nasAddedAt'
+      ? [{ nasAddedAt: { sort: sortOrder, nulls: 'last' } }, { createdAt: sortOrder }]
+      : { [sortField]: sortOrder };
+
+    const [data, total] = await Promise.all([
+      this.prisma.media.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy }),
+      this.prisma.media.count({ where }),
+    ]);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findUnsynchronized(page = 1, limit = 20) {
@@ -127,7 +184,7 @@ export class MediaService {
     return this.prisma.media.delete({ where: { id } });
   }
 
-  async update(id: number, data: Partial<{ titleVf: string; overview: string; tmdbId: number }>) {
+  async update(id: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number; releaseYear: number; syncStatus: SyncStatus; syncError: string | null }>) {
     return this.prisma.media.update({ where: { id }, data });
   }
 

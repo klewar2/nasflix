@@ -28,6 +28,9 @@ class ApiClient {
       this.accessToken = null;
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
+      if (!window.location.pathname.includes('/admin/login')) {
+        window.location.href = '/admin/login';
+      }
     }
 
     if (!response.ok) {
@@ -83,6 +86,36 @@ class ApiClient {
 
   getRecentMedia(limit = 20) {
     return this.fetch<any[]>(`/media/recent?limit=${limit}`);
+  }
+
+  getMediaByQuality(quality: 'UHD' | 'HDR' | 'FHD', limit = 20) {
+    return this.fetch<any[]>(`/media/quality/${quality}?limit=${limit}`);
+  }
+
+  getAdminMedia(params?: {
+    type?: string;
+    status?: string;
+    title?: string;
+    videoQuality?: string;
+    dolbyAtmos?: string;
+    dolbyVision?: string;
+    hdr?: string;
+    sortBy?: string;
+    sortOrder?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const search = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== '') search.set(k, String(v));
+      });
+    }
+    return this.fetch<any>(`/media/admin/list?${search}`);
+  }
+
+  enqueuePendingSync() {
+    return this.fetch<{ message: string; queued: number }>('/sync/pending', { method: 'POST' });
   }
 
   getUnsynchronizedMedia(page = 1) {

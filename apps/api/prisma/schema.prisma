@@ -28,7 +28,13 @@ model Media {
   nasPath         String      @unique
   nasFilename     String
   nasSize         BigInt?
-  tmdbId          Int?        @unique
+  nasAddedAt      DateTime?
+  videoQuality    String?
+  hdr             Boolean     @default(false)
+  dolbyVision     Boolean     @default(false)
+  dolbyAtmos      Boolean     @default(false)
+  audioFormat     String?
+  tmdbId          Int?
   overview        String?
   posterUrl       String?
   backdropUrl     String?

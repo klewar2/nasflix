@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router';
+import { createBrowserRouter, Navigate } from 'react-router';
 import App from './App';
 import HomePage from './pages/HomePage';
 import FilmsPage from './pages/FilmsPage';
@@ -43,8 +43,11 @@ export const router = createBrowserRouter([
               { path: 'settings', element: <SettingsPage /> },
             ],
           },
+          { index: true, element: <Navigate to="/admin/dashboard" replace /> },
+          { path: '*', element: <Navigate to="/admin/dashboard" replace /> },
         ],
       },
+      { path: '*', element: <Navigate to="/" replace /> },
     ],
   },
 ]);

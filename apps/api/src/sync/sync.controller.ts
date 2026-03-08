@@ -15,6 +15,12 @@ export class SyncController {
     return this.syncService.fullSync('manual');
   }
 
+  @Post('pending')
+  async enqueuePending() {
+    const queued = await this.syncService.enqueuePendingMetadata();
+    return { message: `${queued} job(s) enqueued`, queued };
+  }
+
   @Post('media/:id')
   async syncSingleMedia(@Param('id', ParseIntPipe) id: number) {
     await this.syncService.syncSingleMedia(id);

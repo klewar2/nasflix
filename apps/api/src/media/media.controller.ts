@@ -1,7 +1,7 @@
 import { Controller, Get, Delete, Patch, Param, Query, ParseIntPipe, Body } from '@nestjs/common';
 import { MediaService } from './media.service';
 import { Public } from '../auth/guards/public.decorator';
-import { MediaType } from '@prisma/client';
+import { MediaType, SyncStatus } from '@prisma/client';
 
 @Controller('media')
 export class MediaController {
@@ -48,6 +48,38 @@ export class MediaController {
   }
 
   @Public()
+  @Get('quality/:type')
+  findByQuality(
+    @Param('type') type: 'UHD' | 'HDR' | 'FHD',
+    @Query('limit') limit?: number,
+  ) {
+    return this.mediaService.findByQuality(type, limit);
+  }
+
+  @Get('admin/list')
+  findAllAdmin(
+    @Query('type') type?: MediaType,
+    @Query('status') status?: SyncStatus,
+    @Query('title') title?: string,
+    @Query('videoQuality') videoQuality?: string,
+    @Query('dolbyVision') dolbyVision?: string,
+    @Query('hdr') hdr?: string,
+    @Query('dolbyAtmos') dolbyAtmos?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.mediaService.findAllAdmin({
+      type, status, title, videoQuality,
+      dolbyVision: dolbyVision === 'true',
+      hdr: hdr === 'true',
+      dolbyAtmos: dolbyAtmos === 'true',
+      sortBy, sortOrder, page, limit,
+    });
+  }
+
+  @Public()
   @Get(':id')
   findById(@Param('id', ParseIntPipe) id: number) {
     return this.mediaService.findById(id);
@@ -61,7 +93,7 @@ export class MediaController {
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() data: { titleVf?: string; overview?: string; tmdbId?: number },
+    @Body() data: { titleVf?: string; titleOriginal?: string; overview?: string; tmdbId?: number; releaseYear?: number; syncStatus?: SyncStatus; syncError?: string | null },
   ) {
     return this.mediaService.update(id, data);
   }

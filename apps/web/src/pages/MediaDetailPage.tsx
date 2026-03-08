@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Copy, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Copy, ExternalLink, HardDrive } from 'lucide-react';
 import { useState } from 'react';
 
 export default function MediaDetailPage() {
@@ -60,7 +60,7 @@ export default function MediaDetailPage() {
       <div className="px-4 md:px-8 -mt-32 relative z-10">
         <div className="flex flex-col md:flex-row gap-6">
           {media.posterUrl && (
-            <img src={media.posterUrl} alt={media.titleVf || media.titleOriginal} className="w-48 rounded-lg shadow-2xl flex-shrink-0 hidden md:block" />
+            <img src={media.posterUrl} alt={media.titleVf || media.titleOriginal} className="w-44 md:w-52 lg:w-60 rounded-lg shadow-2xl flex-shrink-0 hidden md:block self-start" />
           )}
           <div className="flex-1">
             <h1 className="text-3xl md:text-4xl font-bold mb-2">{media.titleVf || media.titleOriginal}</h1>
@@ -68,11 +68,29 @@ export default function MediaDetailPage() {
               <p className="text-zinc-400 text-sm mb-3">{media.titleOriginal}</p>
             )}
 
-            <div className="flex items-center gap-3 text-sm text-zinc-400 mb-4">
+            <div className="flex items-center gap-3 text-sm text-zinc-400 mb-4 flex-wrap">
               <Badge variant="secondary">{media.type === 'MOVIE' ? 'Film' : 'Série'}</Badge>
               {media.releaseYear && <span>{media.releaseYear}</span>}
               {media.voteAverage && <span>★ {media.voteAverage.toFixed(1)}</span>}
               {media.runtime && <span>{media.runtime} min</span>}
+              {media.videoQuality === '4K' && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/40">4K UHD</span>
+              )}
+              {media.videoQuality === '1080p' && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/40">Full HD</span>
+              )}
+              {media.dolbyVision && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-gradient-to-r from-blue-700/40 to-blue-500/40 text-blue-200 border border-blue-500/40">DOLBY VISION</span>
+              )}
+              {media.hdr && !media.dolbyVision && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/40">HDR</span>
+              )}
+              {media.dolbyAtmos && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-200 border border-indigo-500/40">DOLBY ATMOS</span>
+              )}
+              {media.audioFormat && !media.dolbyAtmos && (
+                <span className="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">{media.audioFormat}</span>
+              )}
             </div>
 
             <div className="flex gap-2 flex-wrap mb-4">
@@ -97,11 +115,30 @@ export default function MediaDetailPage() {
               </button>
             </div>
 
-            {media.trailerUrl && (
-              <a href={media.trailerUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-4 text-sm text-primary hover:underline">
-                <ExternalLink className="w-4 h-4" /> Voir la bande-annonce
-              </a>
-            )}
+            {media.trailerUrl && (() => {
+              const key = (() => {
+                try { return new URL(media.trailerUrl).searchParams.get('v'); } catch { return null; }
+              })();
+              if (!key) return (
+                <a href={media.trailerUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-4 text-sm text-primary hover:underline">
+                  <ExternalLink className="w-4 h-4" /> Voir la bande-annonce
+                </a>
+              );
+              return (
+                <div className="mt-6 max-w-2xl">
+                  <h3 className="text-sm font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Bande-annonce</h3>
+                  <div className="relative aspect-video rounded-lg overflow-hidden bg-zinc-900">
+                    <iframe
+                      src={`https://www.youtube.com/embed/${key}?rel=0`}
+                      className="absolute inset-0 w-full h-full"
+                      allowFullScreen
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      title="Bande-annonce"
+                    />
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -128,29 +165,59 @@ export default function MediaDetailPage() {
           <section className="mt-10">
             <h2 className="text-xl font-bold mb-4">Saisons</h2>
             <div className="space-y-4">
-              {media.seasons.map((season: any) => (
-                <div key={season.id} className="p-4 bg-zinc-900 rounded-lg border border-zinc-800">
-                  <div className="flex items-center gap-4">
-                    {season.posterUrl && <img src={season.posterUrl} alt={season.name} className="w-16 rounded" />}
-                    <div>
-                      <h3 className="font-semibold">Saison {season.seasonNumber}</h3>
-                      {season.name && <p className="text-sm text-zinc-400">{season.name}</p>}
-                      {season.episodeCount && <p className="text-xs text-zinc-500">{season.episodeCount} épisodes</p>}
-                    </div>
-                  </div>
-                  {season.episodes?.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {season.episodes.map((ep: any) => (
-                        <div key={ep.id} className="flex justify-between items-center text-sm py-1 border-t border-zinc-800">
-                          <span className="text-zinc-400">E{ep.episodeNumber}</span>
-                          <span className="flex-1 mx-3 truncate">{ep.name || `Épisode ${ep.episodeNumber}`}</span>
-                          {ep.runtime && <span className="text-zinc-500 text-xs">{ep.runtime} min</span>}
+              {media.seasons.map((season: any) => {
+                const nasEpisodes = season.episodes?.filter((ep: any) => ep.nasPath) || [];
+                return (
+                  <div key={season.id} className="p-4 bg-zinc-900 rounded-lg border border-zinc-800">
+                    <div className="flex items-center gap-4">
+                      {season.posterUrl && <img src={season.posterUrl} alt={season.name} className="w-16 rounded flex-shrink-0" />}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                          <h3 className="font-semibold">Saison {season.seasonNumber}</h3>
+                          {nasEpisodes.length > 0 && (
+                            <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded">
+                              <HardDrive className="w-3 h-3" />
+                              {nasEpisodes.length} / {season.episodeCount || season.episodes?.length || '?'} sur NAS
+                            </span>
+                          )}
                         </div>
-                      ))}
+                        {season.name && <p className="text-sm text-zinc-400">{season.name}</p>}
+                        {season.episodeCount && <p className="text-xs text-zinc-500">{season.episodeCount} épisodes</p>}
+                      </div>
                     </div>
-                  )}
-                </div>
-              ))}
+                    {season.episodes?.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        {season.episodes.map((ep: any) => (
+                          <div
+                            key={ep.id}
+                            className={`flex justify-between items-center text-sm py-2 px-2 rounded border-t border-zinc-800 ${ep.nasPath ? 'hover:bg-zinc-800/50' : ''}`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              {ep.nasPath ? (
+                                <HardDrive className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" title="Disponible sur le NAS" />
+                              ) : (
+                                <span className="w-3.5 h-3.5 flex-shrink-0" />
+                              )}
+                              <span className="text-zinc-500 flex-shrink-0">E{String(ep.episodeNumber).padStart(2, '0')}</span>
+                              <span className={`truncate ${ep.nasPath ? 'text-white' : 'text-zinc-400'}`}>
+                                {ep.name || `Épisode ${ep.episodeNumber}`}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0 ml-3">
+                              {ep.runtime && <span className="text-zinc-500 text-xs">{ep.runtime} min</span>}
+                              {ep.nasFilename && (
+                                <span className="text-[10px] text-zinc-600 truncate max-w-32 hidden lg:block" title={ep.nasFilename}>
+                                  {ep.nasFilename}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
