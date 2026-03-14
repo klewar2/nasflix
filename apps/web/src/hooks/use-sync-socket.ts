@@ -11,7 +11,10 @@ let socket: Socket | null = null;
 
 function getSocket(): Socket {
   if (!socket) {
-    socket = io('/sync', { path: '/socket.io', transports: ['websocket', 'polling'] });
+    const apiBase = import.meta.env.VITE_API_URL as string | undefined;
+    // In prod VITE_API_URL = "https://api.railway.app/api" → strip "/api" to get socket host
+    const socketHost = apiBase ? apiBase.replace(/\/api$/, '') : '';
+    socket = io(`${socketHost}/sync`, { path: '/socket.io', transports: ['websocket', 'polling'] });
   }
   return socket;
 }
