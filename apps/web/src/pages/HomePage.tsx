@@ -4,8 +4,9 @@ import { MediaCarousel } from '@/components/media/MediaCarousel';
 import { Skeleton } from '@/components/ui/skeleton';
 import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { Play, Info } from 'lucide-react';
 
 export default function HomePage() {
   const { data: recentMedia, isLoading: loadingRecent } = useQuery({
@@ -66,9 +67,11 @@ export default function HomePage() {
 
 function HeroCarousel({ items }: { items: any[] }) {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true }, [
-    Autoplay({ delay: 5000, stopOnInteraction: true }),
+    Autoplay({ delay: 6000, stopOnInteraction: true }),
   ]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [scrollY, setScrollY] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const onSelect = useCallback(() => {
     if (!emblaApi) return;
@@ -81,30 +84,76 @@ function HeroCarousel({ items }: { items: any[] }) {
     onSelect();
   }, [emblaApi, onSelect]);
 
+  useEffect(() => {
+    const onScroll = () => setScrollY(window.scrollY);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   return (
-    <div className="relative mb-8">
+    <div className="relative mb-10" ref={containerRef}>
       <div className="overflow-hidden" ref={emblaRef}>
         <div className="flex">
           {items.map((m) => (
-            <div key={m.id} className="relative flex-[0_0_100%] h-[60vh]">
+            <div key={m.id} className="relative flex-[0_0_100%] h-[60vh] md:h-[82vh] overflow-hidden">
+              {/* Parallax background */}
               <div
-                className="absolute inset-0 bg-cover bg-center"
-                style={{ backgroundImage: `url(${m.backdropUrl || ''})` }}
-              >
-                <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/50 to-transparent" />
-                <div className="absolute inset-0 bg-gradient-to-r from-zinc-950/80 to-transparent" />
-              </div>
-              <Link to={`/media/${m.id}`} className="relative h-full flex items-end pb-16 px-4 md:px-8 block">
-                <div className="max-w-xl">
-                  <h1 className="text-4xl font-bold mb-3 drop-shadow-lg">{m.titleVf || m.titleOriginal}</h1>
-                  {m.overview && <p className="text-sm text-zinc-300 line-clamp-3 mb-4">{m.overview}</p>}
-                  <div className="flex items-center gap-3 text-sm text-zinc-400">
-                    {m.releaseYear && <span>{m.releaseYear}</span>}
-                    {m.voteAverage && <span>★ {m.voteAverage.toFixed(1)}</span>}
-                    {m.runtime && <span>{m.runtime} min</span>}
+                className="absolute inset-x-0 -top-[20%] -bottom-[20%] bg-cover bg-center will-change-transform"
+                style={{
+                  backgroundImage: `url(${m.backdropUrl || ''})`,
+                  transform: `translateY(${scrollY * 0.28}px)`,
+                }}
+              />
+              {/* Gradients */}
+              <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/50 to-zinc-950/10" />
+              <div className="absolute inset-0 bg-gradient-to-r from-zinc-950/85 via-zinc-950/20 to-transparent" />
+
+              {/* Glass info panel */}
+              <div className="relative h-full flex items-end pb-8 md:pb-14 px-3 md:px-12">
+                <div className="w-full max-w-lg">
+                  <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl md:rounded-2xl p-4 md:p-6 shadow-2xl">
+                    <h1 className="text-xl md:text-4xl font-bold mb-2 md:mb-3 leading-tight line-clamp-2">
+                      {m.titleVf || m.titleOriginal}
+                    </h1>
+                    {m.overview && (
+                      <p className="hidden md:block text-sm text-zinc-300 line-clamp-3 mb-5 leading-relaxed">{m.overview}</p>
+                    )}
+                    <div className="flex items-center gap-1.5 mb-3 md:mb-5 flex-wrap">
+                      {m.releaseYear && (
+                        <span className="bg-white/10 backdrop-blur-sm border border-white/10 rounded-full px-2.5 py-0.5 text-xs text-zinc-300">
+                          {m.releaseYear}
+                        </span>
+                      )}
+                      {m.voteAverage && (
+                        <span className="bg-yellow-500/15 backdrop-blur-sm border border-yellow-500/20 rounded-full px-2.5 py-0.5 text-xs text-yellow-400">
+                          ★ {m.voteAverage.toFixed(1)}
+                        </span>
+                      )}
+                      {m.runtime && (
+                        <span className="bg-white/10 backdrop-blur-sm border border-white/10 rounded-full px-2.5 py-0.5 text-xs text-zinc-300">
+                          {m.runtime} min
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Link
+                        to={`/media/${m.id}`}
+                        className="flex items-center gap-1.5 bg-white text-black font-semibold text-xs md:text-sm px-4 md:px-5 py-2 md:py-2.5 rounded-lg md:rounded-xl hover:bg-white/90 transition-colors"
+                      >
+                        <Play className="w-3.5 h-3.5 md:w-4 md:h-4 fill-black" />
+                        Voir
+                      </Link>
+                      <Link
+                        to={`/media/${m.id}`}
+                        className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm border border-white/15 text-white text-xs md:text-sm px-4 md:px-5 py-2 md:py-2.5 rounded-lg md:rounded-xl hover:bg-white/20 transition-colors"
+                      >
+                        <Info className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                        Détails
+                      </Link>
+                    </div>
                   </div>
                 </div>
-              </Link>
+              </div>
             </div>
           ))}
         </div>
@@ -116,7 +165,7 @@ function HeroCarousel({ items }: { items: any[] }) {
           <button
             key={i}
             onClick={() => emblaApi?.scrollTo(i)}
-            className={`h-1.5 rounded-full transition-all cursor-pointer ${i === selectedIndex ? 'w-6 bg-white' : 'w-1.5 bg-white/40'}`}
+            className={`h-1 rounded-full transition-all cursor-pointer ${i === selectedIndex ? 'w-8 bg-white' : 'w-2 bg-white/30 hover:bg-white/50'}`}
           />
         ))}
       </div>
