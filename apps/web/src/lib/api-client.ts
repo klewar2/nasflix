@@ -118,6 +118,10 @@ class ApiClient {
     return this.fetch<{ message: string; queued: number }>('/sync/pending', { method: 'POST' });
   }
 
+  drainQueue() {
+    return this.fetch<{ cleaned: number }>('/sync/drain', { method: 'POST' });
+  }
+
   getUnsynchronizedMedia(page = 1) {
     return this.fetch<PaginatedResponse<any>>(`/media/unsynchronized?page=${page}`);
   }

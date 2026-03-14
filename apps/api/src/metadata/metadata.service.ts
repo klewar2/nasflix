@@ -36,6 +36,18 @@ interface TmdbMovieDetail {
   };
 }
 
+interface TmdbEpisodeDetail {
+  id: number;
+  episode_number: number;
+  season_number: number;
+  name: string;
+  overview: string;
+  runtime: number | null;
+  air_date: string | null;
+  still_path: string | null;
+  vote_average: number;
+}
+
 interface TmdbTvDetail {
   id: number;
   name: string;
@@ -127,6 +139,14 @@ export class MetadataService {
 
     const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>('/search/tv', params);
     return result.results;
+  }
+
+  async getTvEpisodeDetail(seriesId: number, season: number, episode: number): Promise<TmdbEpisodeDetail | null> {
+    try {
+      return await this.tmdbFetch<TmdbEpisodeDetail>(`/tv/${seriesId}/season/${season}/episode/${episode}`);
+    } catch {
+      return null;
+    }
   }
 
   async getMovieDetail(tmdbId: number): Promise<TmdbMovieDetail> {

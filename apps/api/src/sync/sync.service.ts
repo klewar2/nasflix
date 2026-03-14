@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../common/prisma.service';
@@ -7,6 +7,7 @@ import { MetadataService } from '../metadata/metadata.service';
 import { MediaType, SyncStatus } from '@prisma/client';
 import { parseMediaFilename, ParsedMediaInfo } from '../common/media-parser';
 import { METADATA_SYNC_QUEUE } from './sync.constants';
+import { SyncGateway } from './sync.gateway';
 
 @Injectable()
 export class SyncService {
@@ -18,6 +19,7 @@ export class SyncService {
     private nasService: NasService,
     private metadataService: MetadataService,
     @InjectQueue(METADATA_SYNC_QUEUE) private metadataQueue: Queue,
+    @Inject(forwardRef(() => SyncGateway)) private syncGateway: SyncGateway,
   ) {}
 
   async fullSync(triggeredBy = 'manual') {
@@ -170,6 +172,16 @@ export class SyncService {
     }
   }
 
+  async drainQueue(): Promise<{ cleaned: number }> {
+    const [failed, completed] = await Promise.all([
+      this.metadataQueue.clean(0, 1000, 'failed'),
+      this.metadataQueue.clean(0, 1000, 'completed'),
+    ]);
+    await this.metadataQueue.drain();
+    await this.syncGateway.emitStats();
+    return { cleaned: failed.length + completed.length };
+  }
+
   async enqueuePendingMetadata(): Promise<number> {
     const pending = await this.prisma.media.findMany({
       where: { syncStatus: { in: [SyncStatus.PENDING, SyncStatus.FAILED, SyncStatus.NOT_FOUND] } },
@@ -181,7 +193,13 @@ export class SyncService {
       pending.map((m) => ({
         name: 'sync-metadata',
         data: { mediaId: m.id },
-        opts: { jobId: `media-${m.id}`, attempts: 3, backoff: { type: 'exponential' as const, delay: 5000 } },
+        opts: {
+          jobId: `media-${m.id}`,
+          attempts: 3,
+          backoff: { type: 'exponential' as const, delay: 5000 },
+          removeOnComplete: true,
+          removeOnFail: true,
+        },
       })),
     );
     return pending.length;
@@ -208,7 +226,9 @@ export class SyncService {
         : '';
       const folderParsed = !hasManualTitle && folderName ? parseMediaFilename(folderName + '.mkv') : null;
       const isFolderASeasonDir = /^s(eason)?\s*\d+$/i.test(folderName);
-      const folderTitle = !isFolderASeasonDir && folderParsed?.title && folderParsed.title.length > parsedFileTitle.length
+      // Don't use folder title for series: episode filenames already contain the correct show title.
+      // Folder names like "Silicon.Valley.iNTEGRALE.MULTi.1080p..." would produce wrong titles.
+      const folderTitle = parsed.season === undefined && !isFolderASeasonDir && folderParsed?.title && folderParsed.title.length > parsedFileTitle.length
         ? folderParsed.title
         : null;
 
@@ -227,7 +247,7 @@ export class SyncService {
         if (detectedType === MediaType.SERIES) {
           await this.syncTvDetails(mediaId, media.tmdbId);
           if (parsed.season !== undefined && parsed.episode !== undefined) {
-            await this.linkEpisodeFile(mediaId, media, parsed);
+            await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId ?? undefined);
           }
         } else {
           await this.syncMovieDetails(mediaId, media.tmdbId);
@@ -289,9 +309,15 @@ export class SyncService {
         });
         if (existingSeries) {
           this.logger.log(`[Sync #${mediaId}] Series episode → linking to existing series #${existingSeries.id} "${existingSeries.titleVf || existingSeries.titleOriginal}"`);
-          await this.linkEpisodeFile(existingSeries.id, media, parsed);
+          await this.linkEpisodeFile(existingSeries.id, media, parsed, tmdbResult.id);
           await this.prisma.media.delete({ where: { id: mediaId } });
-          return;
+          return {
+            redirectTo: {
+              seriesId: existingSeries.id,
+              season: parsed.season!,
+              episode: parsed.episode!,
+            },
+          };
         }
       }
       // Movies with the same tmdbId are allowed (multiple copies/qualities on NAS)
@@ -304,7 +330,7 @@ export class SyncService {
         await this.syncTvDetails(mediaId, tmdbResult.id);
         // Also link this source episode file to its Episode record
         if (parsed.season !== undefined && parsed.episode !== undefined) {
-          await this.linkEpisodeFile(mediaId, media, parsed);
+          await this.linkEpisodeFile(mediaId, media, parsed, tmdbResult.id);
         }
       }
       this.logger.log(`[Sync #${mediaId}] ✓ Sync complete → SYNCED`);
@@ -325,6 +351,7 @@ export class SyncService {
     seriesMediaId: number,
     media: { nasPath: string; nasFilename: string; nasSize: bigint | null },
     parsed: ParsedMediaInfo,
+    tmdbSeriesId?: number,
   ) {
     const seasonNumber = parsed.season ?? 1;
     const episodeNumber = parsed.episode;
@@ -340,10 +367,25 @@ export class SyncService {
       });
     }
 
+    // Fetch episode metadata from TMDB if we have the series ID
+    let episodeMeta: { name?: string; overview?: string; runtime?: number | null; airDate?: Date | null; stillUrl?: string | null } = {};
+    if (tmdbSeriesId) {
+      const detail = await this.metadataService.getTvEpisodeDetail(tmdbSeriesId, seasonNumber, episodeNumber);
+      if (detail) {
+        episodeMeta = {
+          name: detail.name || undefined,
+          overview: detail.overview || undefined,
+          runtime: detail.runtime ?? null,
+          airDate: detail.air_date ? new Date(detail.air_date) : null,
+          stillUrl: this.metadataService.stillUrl(detail.still_path),
+        };
+      }
+    }
+
     await this.prisma.episode.upsert({
       where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber } },
-      update: { nasPath: media.nasPath, nasFilename: media.nasFilename, nasSize: media.nasSize },
-      create: { seasonId: season.id, episodeNumber, nasPath: media.nasPath, nasFilename: media.nasFilename, nasSize: media.nasSize },
+      update: { nasPath: media.nasPath, nasFilename: media.nasFilename, nasSize: media.nasSize, ...episodeMeta },
+      create: { seasonId: season.id, episodeNumber, nasPath: media.nasPath, nasFilename: media.nasFilename, nasSize: media.nasSize, ...episodeMeta },
     });
   }
 

@@ -1,12 +1,15 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 
 // Allow BigInt to be serialized as string in JSON responses
 (BigInt.prototype as any).toJSON = function () { return this.toString(); };
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:5173'],

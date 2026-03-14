@@ -194,7 +194,7 @@ export default function MediaDetailPage() {
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               {ep.nasPath ? (
-                                <HardDrive className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" title="Disponible sur le NAS" />
+                                <HardDrive className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" aria-label="Disponible sur le NAS" />
                               ) : (
                                 <span className="w-3.5 h-3.5 flex-shrink-0" />
                               )}

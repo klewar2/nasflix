@@ -1,6 +1,5 @@
 import { Controller, Get, Put, Body, Query } from '@nestjs/common';
 import { MetadataService } from './metadata.service';
-import { Public } from '../auth/guards/public.decorator';
 
 @Controller('metadata')
 export class MetadataController {

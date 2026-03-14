@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { SyncController } from './sync.controller';
 import { SyncService } from './sync.service';
 import { MetadataSyncProcessor } from './sync.processor';
+import { SyncGateway } from './sync.gateway';
 import { NasModule } from '../nas/nas.module';
 import { MetadataModule } from '../metadata/metadata.module';
 import { MediaModule } from '../media/media.module';
@@ -24,7 +25,7 @@ import { METADATA_SYNC_QUEUE } from './sync.constants';
     }),
   ],
   controllers: [SyncController],
-  providers: [SyncService, MetadataSyncProcessor],
+  providers: [SyncService, MetadataSyncProcessor, SyncGateway],
   exports: [SyncService],
 })
 export class SyncModule {}

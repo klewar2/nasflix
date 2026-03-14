@@ -21,10 +21,15 @@ export class SyncController {
     return { message: `${queued} job(s) enqueued`, queued };
   }
 
+  @Post('drain')
+  async drainQueue() {
+    return this.syncService.drainQueue();
+  }
+
   @Post('media/:id')
   async syncSingleMedia(@Param('id', ParseIntPipe) id: number) {
-    await this.syncService.syncSingleMedia(id);
-    return { message: 'Sync completed' };
+    const result = await this.syncService.syncSingleMedia(id);
+    return { message: 'Sync completed', ...result };
   }
 
   @Get('logs')

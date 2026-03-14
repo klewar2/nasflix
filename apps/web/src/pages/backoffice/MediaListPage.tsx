@@ -1,12 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useDebounce } from '@/hooks/use-debounce';
-import { Trash2, RefreshCw, Search, RefreshCcw, ChevronUp, ChevronDown } from 'lucide-react';
+import { useSyncSocket } from '@/hooks/use-sync-socket';
+import { Trash2, RefreshCw, Search, RefreshCcw, ChevronUp, ChevronDown, Square, Wifi, WifiOff } from 'lucide-react';
 
 const STATUS_LABELS: Record<string, string> = {
   SYNCED: 'Synchronisé', PENDING: 'En attente', SYNCING: 'En cours',
@@ -43,15 +44,25 @@ function QualityBadges({ media }: { media: any }) {
   );
 }
 
-type SortField = 'titleVf' | 'type' | 'releaseYear' | 'syncStatus' | 'nasAddedAt' | 'createdAt';
+type SortField = 'titleVf' | 'type' | 'releaseYear' | 'syncStatus' | 'nasAddedAt' | 'createdAt' | 'lastSyncedAt';
 
 const selectClass = "px-3 py-2 rounded-md bg-zinc-900 border border-zinc-700 text-sm text-white focus:outline-none focus:border-zinc-500";
+
+function SortIcon({ field, sortBy, sortOrder }: { field: SortField; sortBy: SortField; sortOrder: 'asc' | 'desc' }) {
+  if (sortBy !== field) return null;
+  return sortOrder === 'asc' ? <ChevronUp className="w-3 h-3 inline ml-1" /> : <ChevronDown className="w-3 h-3 inline ml-1" />;
+}
+
+function formatDateTime(dateStr: string | null | undefined) {
+  if (!dateStr) return '-';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
 
 export default function MediaListPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Read state from URL params
   const typeFilter = searchParams.get('type') || '';
   const statusFilter = searchParams.get('status') || '';
   const videoQualityFilter = searchParams.get('videoQuality') || '';
@@ -60,7 +71,6 @@ export default function MediaListPage() {
   const sortOrder = (searchParams.get('sortOrder') as 'asc' | 'desc') || 'desc';
   const page = Number(searchParams.get('page')) || 1;
 
-  // Search is local (debounced), also synced to URL
   const [search, setSearch] = useState(searchParams.get('q') || '');
   const debouncedSearch = useDebounce(search, 300);
 
@@ -93,7 +103,6 @@ export default function MediaListPage() {
     });
   };
 
-  // Build query params from audio filter
   const dolbyAtmos = audioFilter === 'dolbyAtmos' ? 'true' : undefined;
   const dolbyVision = audioFilter === 'dolbyVision' ? 'true' : undefined;
   const hdr = audioFilter === 'hdr' ? 'true' : undefined;
@@ -115,6 +124,14 @@ export default function MediaListPage() {
     }),
   });
 
+  // Refresh table automatically when any media finishes syncing
+  const handleMediaUpdated = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['admin', 'media'] });
+  }, [queryClient]);
+
+  const { stats, connected } = useSyncSocket({ onMediaUpdated: handleMediaUpdated });
+  const isQueueActive = stats.active > 0 || stats.waiting > 0;
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteMedia(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'media'] }),
@@ -127,6 +144,11 @@ export default function MediaListPage() {
 
   const enqueueMutation = useMutation({
     mutationFn: () => api.enqueuePendingSync(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'media'] }),
+  });
+
+  const drainMutation = useMutation({
+    mutationFn: () => api.drainQueue(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'media'] }),
   });
 
@@ -144,25 +166,53 @@ export default function MediaListPage() {
     }
   };
 
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortBy !== field) return null;
-    return sortOrder === 'asc' ? <ChevronUp className="w-3 h-3 inline ml-1" /> : <ChevronDown className="w-3 h-3 inline ml-1" />;
-  };
-
   const thClass = "text-left p-3 font-medium text-zinc-400 cursor-pointer hover:text-white select-none";
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Médias</h1>
-        <Button variant="outline" size="sm" onClick={() => enqueueMutation.mutate()} disabled={enqueueMutation.isPending}>
-          <RefreshCcw className="w-4 h-4 mr-2" />
-          {enqueueMutation.isPending ? 'En cours...' : 'Sync non-synchronisés'}
-        </Button>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">Médias</h1>
+          <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+            {connected
+              ? <Wifi className="w-3 h-3 text-green-500" />
+              : <WifiOff className="w-3 h-3 text-zinc-600" />
+            }
+            {isQueueActive && (
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                {stats.active > 0 && <span>{stats.active} en cours</span>}
+                {stats.waiting > 0 && <span className="text-zinc-500">· {stats.waiting} en attente</span>}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isQueueActive && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => drainMutation.mutate()}
+              disabled={drainMutation.isPending}
+              className="border-red-800 text-red-400 hover:bg-red-950 hover:text-red-300"
+            >
+              <Square className="w-3.5 h-3.5 mr-1.5 fill-current" />
+              {drainMutation.isPending ? 'Arrêt...' : 'Stopper la queue'}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={() => enqueueMutation.mutate()} disabled={enqueueMutation.isPending}>
+            <RefreshCcw className="w-4 h-4 mr-2" />
+            {enqueueMutation.isPending ? 'En cours...' : 'Sync non-synchronisés'}
+          </Button>
+        </div>
       </div>
 
       {enqueueMutation.isSuccess && (
         <p className="text-sm text-green-400 mb-4">{enqueueMutation.data?.queued} job(s) ajouté(s) à la queue</p>
+      )}
+      {drainMutation.isSuccess && (
+        <p className="text-sm text-yellow-400 mb-4">Queue vidée — les médias en PENDING peuvent être re-synchronisés.</p>
       )}
 
       {/* Filters */}
@@ -207,19 +257,20 @@ export default function MediaListPage() {
         <table className="w-full text-sm">
           <thead className="bg-zinc-900">
             <tr>
-              <th className={thClass} onClick={() => toggleSort('titleVf')}>Titre <SortIcon field="titleVf" /></th>
-              <th className={`${thClass} hidden md:table-cell`} onClick={() => toggleSort('type')}>Type <SortIcon field="type" /></th>
-              <th className={`${thClass} hidden lg:table-cell`} onClick={() => toggleSort('releaseYear')}>Année <SortIcon field="releaseYear" /></th>
-              <th className={thClass} onClick={() => toggleSort('syncStatus')}>Statut <SortIcon field="syncStatus" /></th>
-              <th className={`${thClass} hidden xl:table-cell`} onClick={() => toggleSort('nasAddedAt')}>Ajouté NAS <SortIcon field="nasAddedAt" /></th>
+              <th className={thClass} onClick={() => toggleSort('titleVf')}>Titre <SortIcon field="titleVf" sortBy={sortBy} sortOrder={sortOrder} /></th>
+              <th className={`${thClass} hidden md:table-cell`} onClick={() => toggleSort('type')}>Type <SortIcon field="type" sortBy={sortBy} sortOrder={sortOrder} /></th>
+              <th className={`${thClass} hidden lg:table-cell`} onClick={() => toggleSort('releaseYear')}>Année <SortIcon field="releaseYear" sortBy={sortBy} sortOrder={sortOrder} /></th>
+              <th className={thClass} onClick={() => toggleSort('syncStatus')}>Statut <SortIcon field="syncStatus" sortBy={sortBy} sortOrder={sortOrder} /></th>
+              <th className={`${thClass} hidden xl:table-cell`} onClick={() => toggleSort('nasAddedAt')}>Ajouté NAS <SortIcon field="nasAddedAt" sortBy={sortBy} sortOrder={sortOrder} /></th>
+              <th className={`${thClass} hidden 2xl:table-cell`} onClick={() => toggleSort('lastSyncedAt')}>Dernière sync <SortIcon field="lastSyncedAt" sortBy={sortBy} sortOrder={sortOrder} /></th>
               <th className="text-right p-3 font-medium text-zinc-400">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={6} className="p-8 text-center text-zinc-500">Chargement...</td></tr>
+              <tr><td colSpan={7} className="p-8 text-center text-zinc-500">Chargement...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={6} className="p-8 text-center text-zinc-500">Aucun résultat</td></tr>
+              <tr><td colSpan={7} className="p-8 text-center text-zinc-500">Aucun résultat</td></tr>
             ) : (
               data?.data?.map((m: any) => (
                 <tr key={m.id} className="border-t border-border hover:bg-zinc-900/50">
@@ -235,12 +286,20 @@ export default function MediaListPage() {
                   </td>
                   <td className="p-3 hidden lg:table-cell text-zinc-400">{m.releaseYear || '-'}</td>
                   <td className="p-3">
-                    <Badge variant={STATUS_VARIANTS[m.syncStatus] ?? 'secondary'}>
-                      {STATUS_LABELS[m.syncStatus] ?? m.syncStatus}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={STATUS_VARIANTS[m.syncStatus] ?? 'secondary'}>
+                        {STATUS_LABELS[m.syncStatus] ?? m.syncStatus}
+                      </Badge>
+                      {m.syncStatus === 'SYNCING' && (
+                        <RefreshCw className="w-3 h-3 text-zinc-400 animate-spin" />
+                      )}
+                    </div>
                   </td>
                   <td className="p-3 hidden xl:table-cell text-zinc-500 text-xs">
                     {m.nasAddedAt ? new Date(m.nasAddedAt).toLocaleDateString('fr-FR') : '-'}
+                  </td>
+                  <td className="p-3 hidden 2xl:table-cell text-zinc-500 text-xs">
+                    {formatDateTime(m.lastSyncedAt)}
                   </td>
                   <td className="p-3 text-right">
                     <div className="flex items-center justify-end gap-1">
@@ -264,7 +323,6 @@ export default function MediaListPage() {
         <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
           <Button variant="outline" size="sm" onClick={() => setPage(1)} disabled={page === 1}>«</Button>
           <Button variant="outline" size="sm" onClick={() => setPage(page - 1)} disabled={page === 1}>Précédent</Button>
-          {/* Page selector */}
           <div className="flex items-center gap-1">
             {Array.from({ length: Math.min(data.totalPages, 7) }, (_, i) => {
               let p: number;
