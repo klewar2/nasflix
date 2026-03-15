@@ -3,7 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../common/prisma.service';
 import { NasService } from '../nas/nas.service';
-import { MetadataService } from '../metadata/metadata.service';
+import { MetadataService, TmdbSearchResult } from '../metadata/metadata.service';
 import { MediaType, SyncStatus } from '@prisma/client';
 import { parseMediaFilename, ParsedMediaInfo } from '../common/media-parser';
 import { METADATA_SYNC_QUEUE } from './sync.constants';
@@ -240,6 +240,64 @@ export class SyncService {
     }
   }
 
+  /**
+   * Picks the best TMDB result by scoring title similarity, year match, and popularity.
+   * Avoids blindly taking results[0] which can return completely wrong matches.
+   */
+  private pickBestResult(
+    results: TmdbSearchResult[],
+    searchTitle: string,
+    searchYear?: number,
+  ): TmdbSearchResult | null {
+    if (results.length === 0) return null;
+    if (results.length === 1) return results[0];
+
+    const normalize = (s: string) =>
+      s.toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9 ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const needle = normalize(searchTitle);
+
+    const scored = results.map((r) => {
+      const rt = normalize(r.title || r.name || '');
+      let score = 0;
+
+      // Title similarity (most important criterion)
+      if (rt === needle) score += 100;
+      else if (rt.startsWith(needle + ' ') || rt.endsWith(' ' + needle)) score += 60;
+      else if (needle.length >= 3 && rt.includes(needle)) score += 30;
+
+      // Also check original title
+      const origTitle = normalize(r.original_title || r.original_name || '');
+      if (origTitle === needle) score += 80;
+      else if (origTitle.startsWith(needle + ' ')) score += 40;
+
+      // Year match (strong signal)
+      if (searchYear) {
+        const y = parseInt((r.release_date || r.first_air_date || '').slice(0, 4) || '0');
+        if (y === searchYear) score += 50;
+        else if (Math.abs(y - searchYear) === 1) score += 15;
+      }
+
+      // Popularity bonus — avoids obscure entries beating well-known films/shows
+      score += Math.min((r.vote_count ?? 0) / 500, 20);
+
+      return { result: r, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    this.logger.debug(
+      `TMDB ranking for "${searchTitle}": ` +
+      scored.slice(0, 3).map(s => `"${s.result.title || s.result.name}" [${s.score}]`).join(', '),
+    );
+
+    return scored[0].result;
+  }
+
   async drainQueue(): Promise<{ cleaned: number }> {
     const [failed, completed] = await Promise.all([
       this.metadataQueue.clean(0, 1000, 'failed'),
@@ -283,23 +341,21 @@ export class SyncService {
       const parsed = parseMediaFilename(media.nasFilename);
 
       // --- Title resolution ---
-      // 1. If admin manually edited titleOriginal (different from ptt parse), use it as override
+      // 1. Admin override: titleOriginal differs from what ptt would extract → trust the admin
       const parsedFileTitle = parsed.title || '';
       const hasManualTitle = media.titleOriginal && media.titleOriginal !== parsedFileTitle;
 
-      // 2. Use parent folder name if more specific (e.g. "The Hobbit - An Unexpected Journey")
+      // 2. Folder heuristic: ONLY if the folder name contains a year (e.g. "The.Dark.Knight.2008")
+      //    This avoids organization folders like "Films/", "Vus/", "BLURAY/", "4K/" being treated as titles.
       const nasPathParts = media.nasPath.split('/').filter(Boolean);
-      const folderName = nasPathParts.length >= 2
-        ? nasPathParts[nasPathParts.length - 2].replace(/[._]/g, ' ').trim()
-        : '';
-      // Skip folders that are quality/source/language tags, not actual titles
-      const SKIP_FOLDER_TITLE_RE = /^(4K|UHD|BLURAY|BLU ?RAY|BDRIP|1080[PIpi]|720[Pp]|480[Pp]|(?:FULL ?)?HD|HDRIP|WEB ?(?:RIP|DL)?|HDTV|DVDRIP|DVD|REMUX|EXTRAS?|BONUS|SPECIALS?|FEATURETTES?|MULTI|VF|VO|VFQ|VOSTFR|TRUEFRENCH|FRENCH|SDR|HDR|DV|ENCODE|HEVC|AVC|VIDEO ?TS|BDMV|VFSTFR|VFF|VFHQ)$/i;
-      const isFolderQualityTag = SKIP_FOLDER_TITLE_RE.test(folderName);
-      const folderParsed = !hasManualTitle && folderName && !isFolderQualityTag ? parseMediaFilename(folderName + '.mkv') : null;
+      const rawFolderName = nasPathParts.length >= 2 ? nasPathParts[nasPathParts.length - 2] : '';
+      const folderName = rawFolderName.replace(/[._]/g, ' ').trim();
+      const folderHasYear = /\b(19|20)\d{2}\b/.test(rawFolderName);
       const isFolderASeasonDir = /^s(eason)?\s*\d+$/i.test(folderName);
-      // Don't use folder title for series: episode filenames already contain the correct show title.
-      // Folder names like "Silicon.Valley.iNTEGRALE.MULTi.1080p..." would produce wrong titles.
-      const folderTitle = parsed.season === undefined && !isFolderASeasonDir && folderParsed?.title && folderParsed.title.length > parsedFileTitle.length
+      const folderParsed = !hasManualTitle && folderHasYear && !isFolderASeasonDir && parsed.season === undefined
+        ? parseMediaFilename(rawFolderName + '.mkv')
+        : null;
+      const folderTitle = folderParsed?.title && folderParsed.title.length > parsedFileTitle.length
         ? folderParsed.title
         : null;
 
@@ -336,30 +392,39 @@ export class SyncService {
       if (isSeries) {
         this.logger.log(`[Sync #${mediaId}] Searching TMDB TV: "${title}"${year ? ` year=${year}` : ''}`);
         const tvResults = await this.metadataService.searchTv(title, year);
-        if (tvResults.length > 0) {
-          tmdbResult = tvResults[0];
+        tmdbResult = this.pickBestResult(tvResults, title, year);
+        if (!tmdbResult && year) {
+          const tvNoYear = await this.metadataService.searchTv(title);
+          tmdbResult = this.pickBestResult(tvNoYear, title, year);
+        }
+        if (tmdbResult) {
           mediaType = MediaType.SERIES;
-          this.logger.log(`[Sync #${mediaId}] TV match: "${tvResults[0].name || tvResults[0].title}" (TMDB #${tvResults[0].id})`);
+          this.logger.log(`[Sync #${mediaId}] TV match: "${tmdbResult.name || tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         } else {
           this.logger.log(`[Sync #${mediaId}] No TV match, trying movie search`);
           const movieResults = await this.metadataService.searchMovie(title, year);
-          tmdbResult = movieResults[0] || null;
+          tmdbResult = this.pickBestResult(movieResults, title, year);
           mediaType = MediaType.MOVIE;
-          if (tmdbResult) this.logger.log(`[Sync #${mediaId}] Movie match: "${movieResults[0].title}" (TMDB #${movieResults[0].id})`);
+          if (tmdbResult) this.logger.log(`[Sync #${mediaId}] Movie match: "${tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         }
       } else {
         this.logger.log(`[Sync #${mediaId}] Searching TMDB movie: "${title}"${year ? ` year=${year}` : ''}`);
         const movieResults = await this.metadataService.searchMovie(title, year);
-        if (movieResults.length > 0) {
-          tmdbResult = movieResults[0];
+        tmdbResult = this.pickBestResult(movieResults, title, year);
+        if (!tmdbResult && year) {
+          // Fallback: search without year in case TMDB has a slightly different release date
+          const movieNoYear = await this.metadataService.searchMovie(title);
+          tmdbResult = this.pickBestResult(movieNoYear, title, year);
+        }
+        if (tmdbResult) {
           mediaType = MediaType.MOVIE;
-          this.logger.log(`[Sync #${mediaId}] Movie match: "${movieResults[0].title}" (TMDB #${movieResults[0].id})`);
+          this.logger.log(`[Sync #${mediaId}] Movie match: "${tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         } else {
           this.logger.log(`[Sync #${mediaId}] No movie match, trying TV search`);
           const tvResults = await this.metadataService.searchTv(title, year);
-          tmdbResult = tvResults[0] || null;
+          tmdbResult = this.pickBestResult(tvResults, title, year);
           mediaType = MediaType.SERIES;
-          if (tmdbResult) this.logger.log(`[Sync #${mediaId}] TV match: "${tvResults[0].name}" (TMDB #${tvResults[0].id})`);
+          if (tmdbResult) this.logger.log(`[Sync #${mediaId}] TV match: "${tmdbResult.name}" (TMDB #${tmdbResult.id})`);
         }
       }
 

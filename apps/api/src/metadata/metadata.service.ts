@@ -14,6 +14,7 @@ export interface TmdbSearchResult {
   release_date?: string;
   first_air_date?: string;
   vote_average?: number;
+  vote_count?: number;
   genre_ids?: number[];
   media_type?: string;
 }
