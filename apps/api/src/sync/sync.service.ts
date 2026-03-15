@@ -338,34 +338,16 @@ export class SyncService {
     await this.prisma.media.update({ where: { id: mediaId }, data: { syncStatus: SyncStatus.SYNCING } });
 
     try {
-      const parsed = parseMediaFilename(media.nasFilename);
+      // Parse filename only — no folder heuristic
+      const filename = media.nasPath.split('/').pop() || media.nasFilename;
+      const parsed = parseMediaFilename(filename);
 
-      // --- Title resolution ---
-      // 1. Admin override: titleOriginal differs from what ptt would extract → trust the admin
-      const parsedFileTitle = parsed.title || '';
-      const hasManualTitle = media.titleOriginal && media.titleOriginal !== parsedFileTitle;
-
-      // 2. Folder heuristic: ONLY if the folder name contains a year (e.g. "The.Dark.Knight.2008")
-      //    This avoids organization folders like "Films/", "Vus/", "BLURAY/", "4K/" being treated as titles.
-      const nasPathParts = media.nasPath.split('/').filter(Boolean);
-      const rawFolderName = nasPathParts.length >= 2 ? nasPathParts[nasPathParts.length - 2] : '';
-      const folderName = rawFolderName.replace(/[._]/g, ' ').trim();
-      const folderHasYear = /\b(19|20)\d{2}\b/.test(rawFolderName);
-      const isFolderASeasonDir = /^s(eason)?\s*\d+$/i.test(folderName);
-      const folderParsed = !hasManualTitle && folderHasYear && !isFolderASeasonDir && parsed.season === undefined
-        ? parseMediaFilename(rawFolderName + '.mkv')
-        : null;
-      const folderTitle = folderParsed?.title && folderParsed.title.length > parsedFileTitle.length
-        ? folderParsed.title
-        : null;
-
-      const title = hasManualTitle
-        ? media.titleOriginal
-        : (folderTitle || parsedFileTitle || media.titleOriginal);
-      const year = parsed.year ?? folderParsed?.year;
+      // Title: admin-edited titleOriginal wins, otherwise ptt result from filename
+      const title = media.titleOriginal || parsed.title || filename;
+      const year = parsed.year;
       const isSeries = parsed.season !== undefined;
 
-      this.logger.log(`[Sync #${mediaId}] File: "${media.nasFilename}"`);
+      this.logger.log(`[Sync #${mediaId}] File: "${filename}"`);
 
       // --- If tmdbId is already set manually, skip search and sync directly ---
       if (media.tmdbId) {
@@ -383,7 +365,7 @@ export class SyncService {
         return;
       }
 
-      this.logger.log(`[Sync #${mediaId}] Title resolved: "${title}"${year ? ` (${year})` : ''}${hasManualTitle ? ' [manual override]' : ''}${folderTitle ? ` [from folder]` : ''}`);
+      this.logger.log(`[Sync #${mediaId}] Title resolved: "${title}"${year ? ` (${year})` : ''}`);
       this.logger.log(`[Sync #${mediaId}] Detected type: ${isSeries ? 'SERIES' : 'MOVIE'}`);
 
       let tmdbResult: any = null;
