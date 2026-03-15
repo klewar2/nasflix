@@ -6,7 +6,7 @@
 API_URL="<api_url>/api"
 SECRET="<webhook_secret>"
 WATCH_DIRS="/volume1/video"
-STATE_FILE="/volume1/scripts/.nasflix_last_state"
+STATE_FILE="/volume1/homes/klewar/.nasflix_last_state"
 
 # Hash de la liste actuelle des fichiers vidéo
 CURRENT_HASH=$(find $WATCH_DIRS -type f \( -name "*.mkv" -o -name "*.mp4" -o -name "*.avi" -o -name "*.m4v" \) 2>/dev/null | sort | md5sum | cut -d' ' -f1)
