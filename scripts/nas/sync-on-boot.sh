@@ -3,8 +3,8 @@
 # Triggered Task > Boot-up > Run as root
 # Appelle le backend pour déclencher une synchronisation au démarrage du NAS
 
-API_URL="https://nasflixapi-production.up.railway.app/api"
-SECRET="100aaa229a9910fa2f43f535af9332fa"
+API_URL="<api_url>/api"
+SECRET="<webhook_secret>"
 
 # Attendre que le réseau soit prêt
 sleep 60

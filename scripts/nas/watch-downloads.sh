@@ -3,8 +3,8 @@
 # Scheduled Task > toutes les 5 minutes
 # Détecte les nouveaux fichiers et déclenche une sync
 
-API_URL="https://nasflixapi-production.up.railway.app/api"
-SECRET="100aaa229a9910fa2f43f535af9332fa"
+API_URL="<api_url>/api"
+SECRET="<webhook_secret>"
 WATCH_DIRS="/volume1/video"
 STATE_FILE="/volume1/scripts/.nasflix_last_state"
 
