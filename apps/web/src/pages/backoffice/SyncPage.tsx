@@ -50,7 +50,7 @@ export default function SyncPage() {
               className="border-red-800 text-red-400 hover:bg-red-950 hover:text-red-300"
             >
               <Square className="w-4 h-4 mr-2 fill-current" />
-              {drainMutation.isPending ? 'Arrêt...' : 'Stopper la queue'}
+              {drainMutation.isPending ? 'Arrêt...' : 'Stopper la synchronisation'}
             </Button>
           )}
           <Button onClick={() => fullSyncMutation.mutate()} disabled={fullSyncMutation.isPending}>
@@ -62,7 +62,7 @@ export default function SyncPage() {
 
       {/* Live queue stats */}
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <Card className={isQueueActive ? 'border-primary/40' : ''}>
+        <Card className={`bg-white/[0.03] backdrop-blur-md ${isQueueActive ? 'border-primary/40' : 'border-white/[0.07]'}`}>
           <CardContent className="p-4 flex items-center gap-3">
             <Activity className={`w-5 h-5 ${isQueueActive ? 'text-primary animate-pulse' : 'text-zinc-600'}`} />
             <div>
@@ -71,7 +71,7 @@ export default function SyncPage() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-white/[0.03] backdrop-blur-md border-white/[0.07]">
           <CardContent className="p-4 flex items-center gap-3">
             <RefreshCw className={`w-5 h-5 text-zinc-500 ${stats.waiting > 0 ? 'animate-spin' : ''}`} />
             <div>
@@ -83,18 +83,18 @@ export default function SyncPage() {
       </div>
 
       {fullSyncMutation.isSuccess && (
-        <Card className="mb-6 border-green-800"><CardContent className="p-4 text-sm text-green-400">Synchronisation terminée !</CardContent></Card>
+        <Card className="mb-6 bg-green-950/30 backdrop-blur-md border-green-800/50"><CardContent className="p-4 text-sm text-green-400">Synchronisation terminée !</CardContent></Card>
       )}
 
       {drainMutation.isSuccess && (
-        <Card className="mb-6 border-yellow-800"><CardContent className="p-4 text-sm text-yellow-400">Queue vidée avec succès.</CardContent></Card>
+        <Card className="mb-6 bg-yellow-950/30 backdrop-blur-md border-yellow-800/50"><CardContent className="p-4 text-sm text-yellow-400">Synchronisation stoppée.</CardContent></Card>
       )}
 
       {unsync && unsync.total > 0 && (
-        <Card className="mb-6 border-yellow-800"><CardContent className="p-4 text-sm text-yellow-400">{unsync.total} média(s) non synchronisé(s)</CardContent></Card>
+        <Card className="mb-6 bg-yellow-950/20 backdrop-blur-md border-yellow-800/40"><CardContent className="p-4 text-sm text-yellow-400">{unsync.total} média(s) non synchronisé(s)</CardContent></Card>
       )}
 
-      <Card>
+      <Card className="bg-white/[0.03] backdrop-blur-md border-white/[0.07]">
         <CardHeader><CardTitle>Historique</CardTitle></CardHeader>
         <CardContent>
           {isLoading ? (
@@ -104,7 +104,7 @@ export default function SyncPage() {
           ) : (
             <div className="space-y-3">
               {logs?.data?.map((log: any) => (
-                <div key={log.id} className="flex items-center justify-between p-3 bg-zinc-900 rounded-md text-sm">
+                <div key={log.id} className="flex items-center justify-between p-3 bg-white/[0.03] border border-white/[0.06] rounded-md text-sm">
                   <div>
                     <span className="text-zinc-400 mr-2">{new Date(log.startedAt).toLocaleString('fr-FR')}</span>
                     <Badge variant={log.status === 'completed' ? 'success' : log.status === 'running' ? 'warning' : 'destructive'}>{log.status}</Badge>

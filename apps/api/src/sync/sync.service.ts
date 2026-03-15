@@ -172,6 +172,74 @@ export class SyncService {
     }
   }
 
+  async diffSync(changes: { added?: string[]; removed?: string[]; moved?: Array<{ from: string; to: string }> }) {
+    const { added = [], removed = [], moved = [] } = changes;
+    this.logger.log(`DiffSync: +${added.length} added, -${removed.length} removed, ~${moved.length} moved`);
+
+    // Suppressions
+    if (removed.length > 0) {
+      await this.prisma.media.deleteMany({ where: { nasPath: { in: removed } } });
+      await this.prisma.episode.updateMany({
+        where: { nasPath: { in: removed } },
+        data: { nasPath: null, nasFilename: null, nasSize: null },
+      });
+      this.logger.log(`Removed ${removed.length} file(s) from DB`);
+    }
+
+    // Déplacements / renommages
+    for (const { from, to } of moved) {
+      const filename = to.split('/').pop() || '';
+      await this.prisma.media.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
+      await this.prisma.episode.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
+    }
+    if (moved.length > 0) {
+      this.logger.log(`Updated ${moved.length} moved file(s) in DB`);
+    }
+
+    // Ajouts
+    for (const filePath of added) {
+      const filename = filePath.split('/').pop() || '';
+
+      const episodeExists = await this.prisma.episode.findUnique({ where: { nasPath: filePath } });
+      if (episodeExists) continue;
+      const existing = await this.prisma.media.findUnique({ where: { nasPath: filePath } });
+      if (existing) continue;
+
+      const parsed = parseMediaFilename(filename);
+      const pathParts = filePath.split('/').filter(Boolean);
+      if (pathParts.length >= 2 && (!parsed.videoQuality || (!parsed.hdr && !parsed.dolbyVision && !parsed.dolbyAtmos && !parsed.audioFormat))) {
+        const folderParsed = parseMediaFilename(pathParts[pathParts.length - 2] + '.mkv');
+        if (!parsed.videoQuality) parsed.videoQuality = folderParsed.videoQuality;
+        if (!parsed.hdr) parsed.hdr = folderParsed.hdr;
+        if (!parsed.dolbyVision) parsed.dolbyVision = folderParsed.dolbyVision;
+        if (!parsed.dolbyAtmos) parsed.dolbyAtmos = folderParsed.dolbyAtmos;
+        if (!parsed.audioFormat) parsed.audioFormat = folderParsed.audioFormat;
+      }
+
+      await this.prisma.media.create({
+        data: {
+          type: parsed.season !== undefined ? MediaType.SERIES : MediaType.MOVIE,
+          titleOriginal: parsed.title || filename,
+          nasPath: filePath,
+          nasFilename: filename,
+          nasSize: null,
+          nasAddedAt: new Date(),
+          videoQuality: parsed.videoQuality ?? null,
+          hdr: parsed.hdr,
+          dolbyVision: parsed.dolbyVision,
+          dolbyAtmos: parsed.dolbyAtmos,
+          audioFormat: parsed.audioFormat ?? null,
+          syncStatus: SyncStatus.PENDING,
+        },
+      });
+    }
+
+    if (added.length > 0) {
+      const queued = await this.enqueuePendingMetadata();
+      this.logger.log(`Added ${added.length} file(s), enqueued ${queued} metadata job(s)`);
+    }
+  }
+
   async drainQueue(): Promise<{ cleaned: number }> {
     const [failed, completed] = await Promise.all([
       this.metadataQueue.clean(0, 1000, 'failed'),

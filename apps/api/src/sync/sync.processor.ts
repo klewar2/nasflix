@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { SyncService } from './sync.service';
@@ -27,8 +27,11 @@ export class MetadataSyncProcessor extends WorkerHost {
   async process(job: Job<MetadataSyncJobData>): Promise<void> {
     this.logger.log(`Processing metadata sync job for media #${job.data.mediaId}`);
     await this.syncService.syncSingleMedia(job.data.mediaId);
+  }
 
-    // Emit updated media status and refreshed queue stats
+  // Fires after BullMQ marks the job as complete — active count is already decremented
+  @OnWorkerEvent('completed')
+  async onCompleted(job: Job<MetadataSyncJobData>): Promise<void> {
     const media = await this.prisma.media.findUnique({
       where: { id: job.data.mediaId },
       select: { syncStatus: true },
@@ -37,6 +40,12 @@ export class MetadataSyncProcessor extends WorkerHost {
     if (media) {
       this.syncGateway.emitMediaUpdated(job.data.mediaId, media.syncStatus);
     }
+    await this.syncGateway.emitStats();
+  }
+
+  // Fires when the queue is empty (no more waiting jobs)
+  @OnWorkerEvent('drained')
+  async onDrained(): Promise<void> {
     await this.syncGateway.emitStats();
   }
 }

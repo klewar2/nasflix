@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Query, ParseIntPipe, Headers, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, ParseIntPipe, Headers, Body, UnauthorizedException } from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { ConfigService } from '@nestjs/config';
 import { Public } from '../auth/guards/public.decorator';
@@ -39,16 +39,26 @@ export class SyncController {
 
   @Public()
   @Post('webhook')
-  async webhook(@Headers('x-sync-secret') secret: string) {
+  async webhook(
+    @Headers('x-sync-secret') secret: string,
+    @Body() body: { added?: string[]; removed?: string[]; moved?: Array<{ from: string; to: string }> },
+  ) {
     const expectedSecret = this.configService.get<string>('SYNC_WEBHOOK_SECRET');
     if (!expectedSecret || secret !== expectedSecret) {
       throw new UnauthorizedException('Invalid webhook secret');
     }
 
-    // Run sync in background
-    this.syncService.fullSync('webhook').catch((err) => {
-      console.error('Webhook sync failed:', err);
-    });
+    const hasDiff = (body?.added?.length ?? 0) + (body?.removed?.length ?? 0) + (body?.moved?.length ?? 0) > 0;
+
+    if (hasDiff) {
+      this.syncService.diffSync(body).catch((err) => {
+        console.error('Webhook diff sync failed:', err);
+      });
+    } else {
+      this.syncService.fullSync('webhook').catch((err) => {
+        console.error('Webhook sync failed:', err);
+      });
+    }
 
     return { message: 'Sync triggered' };
   }

@@ -46,7 +46,7 @@ function QualityBadges({ media }: { media: any }) {
 
 type SortField = 'titleVf' | 'type' | 'releaseYear' | 'syncStatus' | 'nasAddedAt' | 'createdAt' | 'lastSyncedAt';
 
-const selectClass = "px-3 py-2 rounded-md bg-zinc-900 border border-zinc-700 text-sm text-white focus:outline-none focus:border-zinc-500";
+const selectClass = "px-3 py-2 rounded-md bg-white/[0.04] backdrop-blur-sm border border-white/[0.08] text-sm text-white focus:outline-none focus:border-white/20";
 
 function SortIcon({ field, sortBy, sortOrder }: { field: SortField; sortBy: SortField; sortOrder: 'asc' | 'desc' }) {
   if (sortBy !== field) return null;
@@ -198,7 +198,7 @@ export default function MediaListPage() {
               className="border-red-800 text-red-400 hover:bg-red-950 hover:text-red-300"
             >
               <Square className="w-3.5 h-3.5 mr-1.5 fill-current" />
-              {drainMutation.isPending ? 'Arrêt...' : 'Stopper la queue'}
+              {drainMutation.isPending ? 'Arrêt...' : 'Stopper la synchronisation'}
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => enqueueMutation.mutate()} disabled={enqueueMutation.isPending}>
@@ -253,9 +253,9 @@ export default function MediaListPage() {
         </select>
       </div>
 
-      <div className="rounded-lg border border-border overflow-hidden">
+      <div className={`rounded-xl border border-white/[0.07] bg-white/[0.02] backdrop-blur-sm overflow-hidden transition-opacity duration-200 ${enqueueMutation.isPending || drainMutation.isPending ? 'opacity-40 pointer-events-none' : ''}`}>
         <table className="w-full text-sm">
-          <thead className="bg-zinc-900">
+          <thead className="bg-white/[0.04]">
             <tr>
               <th className={thClass} onClick={() => toggleSort('titleVf')}>Titre <SortIcon field="titleVf" sortBy={sortBy} sortOrder={sortOrder} /></th>
               <th className={`${thClass} hidden md:table-cell`} onClick={() => toggleSort('type')}>Type <SortIcon field="type" sortBy={sortBy} sortOrder={sortOrder} /></th>
@@ -273,7 +273,7 @@ export default function MediaListPage() {
               <tr><td colSpan={7} className="p-8 text-center text-zinc-500">Aucun résultat</td></tr>
             ) : (
               data?.data?.map((m: any) => (
-                <tr key={m.id} className="border-t border-border hover:bg-zinc-900/50">
+                <tr key={m.id} className="border-t border-white/[0.05] hover:bg-white/[0.03]">
                   <td className="p-3">
                     <Link to={`/admin/media/${m.id}`} className="hover:text-primary">
                       <p className="font-medium truncate max-w-xs">{m.titleVf || m.titleOriginal}</p>

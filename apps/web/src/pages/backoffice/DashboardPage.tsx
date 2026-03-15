@@ -14,7 +14,7 @@ export default function DashboardPage() {
     <div>
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
+        <Card className="bg-white/[0.03] backdrop-blur-md border-white/[0.07]">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-zinc-400">NAS</CardTitle>
             {health?.nas === 'online' ? <Wifi className="w-4 h-4 text-green-500" /> : <WifiOff className="w-4 h-4 text-red-500" />}
@@ -23,21 +23,21 @@ export default function DashboardPage() {
             <Badge variant={health?.nas === 'online' ? 'success' : 'destructive'}>{health?.nas === 'online' ? 'En ligne' : 'Hors ligne'}</Badge>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-white/[0.03] backdrop-blur-md border-white/[0.07]">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-zinc-400">Films</CardTitle>
             <Film className="w-4 h-4 text-zinc-500" />
           </CardHeader>
           <CardContent><p className="text-2xl font-bold">{movies?.total || 0}</p></CardContent>
         </Card>
-        <Card>
+        <Card className="bg-white/[0.03] backdrop-blur-md border-white/[0.07]">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-zinc-400">Séries</CardTitle>
             <Tv className="w-4 h-4 text-zinc-500" />
           </CardHeader>
           <CardContent><p className="text-2xl font-bold">{series?.total || 0}</p></CardContent>
         </Card>
-        <Card>
+        <Card className="bg-white/[0.03] backdrop-blur-md border-white/[0.07]">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-zinc-400">Non synchronisés</CardTitle>
             <AlertCircle className="w-4 h-4 text-yellow-500" />

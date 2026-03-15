@@ -15,8 +15,8 @@ export function Sidebar() {
   const { logout } = useAuth();
 
   return (
-    <aside className="fixed left-0 top-0 bottom-0 w-60 bg-zinc-900 border-r border-border flex flex-col">
-      <div className="p-4 border-b border-border">
+    <aside className="fixed left-0 top-0 bottom-0 w-60 bg-zinc-900/70 backdrop-blur-2xl border-r border-white/[0.06] flex flex-col z-10">
+      <div className="p-4 border-b border-white/[0.06]">
         <Link to="/admin/dashboard" className="text-primary font-bold text-lg">Nasflix</Link>
         <p className="text-xs text-zinc-500 mt-1">Backoffice</p>
       </div>
@@ -27,7 +27,9 @@ export function Sidebar() {
             to={item.to}
             className={cn(
               'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
-              location.pathname.startsWith(item.to) ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50',
+              location.pathname.startsWith(item.to)
+                ? 'bg-white/[0.08] text-white'
+                : 'text-zinc-400 hover:text-white hover:bg-white/[0.05]',
             )}
           >
             <item.icon className="w-4 h-4" />
@@ -35,12 +37,12 @@ export function Sidebar() {
           </Link>
         ))}
       </nav>
-      <div className="p-3 border-t border-border">
-        <Link to="/" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-400 hover:text-white hover:bg-zinc-800/50 mb-1">
+      <div className="p-3 border-t border-white/[0.06]">
+        <Link to="/" className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-400 hover:text-white hover:bg-white/[0.05] mb-1">
           <Film className="w-4 h-4" />
           Voir le site
         </Link>
-        <button onClick={logout} className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-400 hover:text-white hover:bg-zinc-800/50 w-full">
+        <button onClick={logout} className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-400 hover:text-white hover:bg-white/[0.05] w-full">
           <LogOut className="w-4 h-4" />
           Déconnexion
         </button>
