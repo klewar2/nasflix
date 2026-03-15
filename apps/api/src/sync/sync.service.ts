@@ -292,7 +292,10 @@ export class SyncService {
       const folderName = nasPathParts.length >= 2
         ? nasPathParts[nasPathParts.length - 2].replace(/[._]/g, ' ').trim()
         : '';
-      const folderParsed = !hasManualTitle && folderName ? parseMediaFilename(folderName + '.mkv') : null;
+      // Skip folders that are quality/source/language tags, not actual titles
+      const SKIP_FOLDER_TITLE_RE = /^(4K|UHD|BLURAY|BLU ?RAY|BDRIP|1080[PIpi]|720[Pp]|480[Pp]|(?:FULL ?)?HD|HDRIP|WEB ?(?:RIP|DL)?|HDTV|DVDRIP|DVD|REMUX|EXTRAS?|BONUS|SPECIALS?|FEATURETTES?|MULTI|VF|VO|VFQ|VOSTFR|TRUEFRENCH|FRENCH|SDR|HDR|DV|ENCODE|HEVC|AVC|VIDEO ?TS|BDMV|VFSTFR|VFF|VFHQ)$/i;
+      const isFolderQualityTag = SKIP_FOLDER_TITLE_RE.test(folderName);
+      const folderParsed = !hasManualTitle && folderName && !isFolderQualityTag ? parseMediaFilename(folderName + '.mkv') : null;
       const isFolderASeasonDir = /^s(eason)?\s*\d+$/i.test(folderName);
       // Don't use folder title for series: episode filenames already contain the correct show title.
       // Folder names like "Silicon.Valley.iNTEGRALE.MULTi.1080p..." would produce wrong titles.
