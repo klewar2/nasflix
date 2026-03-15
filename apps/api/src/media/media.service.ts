@@ -184,8 +184,15 @@ export class MediaService {
     return this.prisma.media.delete({ where: { id } });
   }
 
-  async update(id: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number; releaseYear: number; syncStatus: SyncStatus; syncError: string | null }>) {
-    return this.prisma.media.update({ where: { id }, data });
+  async update(id: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null }>) {
+    // When re-queuing for sync without an explicit tmdbId, clear stale TMDB data so the
+    // next sync searches from scratch instead of reusing a potentially wrong tmdbId.
+    const patch: typeof data = { ...data };
+    if (data.syncStatus === SyncStatus.PENDING && data.tmdbId === undefined) {
+      patch.tmdbId = null;
+      patch.titleVf = undefined; // keep existing until new sync fills it
+    }
+    return this.prisma.media.update({ where: { id }, data: patch });
   }
 
   async getGenres() {

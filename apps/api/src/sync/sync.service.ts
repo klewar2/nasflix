@@ -331,7 +331,7 @@ export class SyncService {
     return pending.length;
   }
 
-  async syncSingleMedia(mediaId: number) {
+  async syncSingleMedia(mediaId: number, { ignoreTmdbId = false } = {}) {
     const media = await this.prisma.media.findUnique({ where: { id: mediaId } });
     if (!media) throw new Error('Media not found');
 
@@ -349,8 +349,8 @@ export class SyncService {
 
       this.logger.log(`[Sync #${mediaId}] File: "${filename}"`);
 
-      // --- If tmdbId is already set manually, skip search and sync directly ---
-      if (media.tmdbId) {
+      // --- If tmdbId is set (manually by admin via edit form) and we're not forced to re-search ---
+      if (media.tmdbId && !ignoreTmdbId) {
         this.logger.log(`[Sync #${mediaId}] tmdbId manually set to ${media.tmdbId}, skipping search`);
         const detectedType = isSeries ? MediaType.SERIES : (media.type ?? MediaType.MOVIE);
         if (detectedType === MediaType.SERIES) {
