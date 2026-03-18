@@ -115,7 +115,7 @@ class ApiClient {
     return this.fetch<UserResponse>('/users', { method: 'POST', body: JSON.stringify(data) });
   }
 
-  updateUser(id: number, data: { firstName?: string; lastName?: string; password?: string; isSuperAdmin?: boolean }) {
+  updateUser(id: number, data: { username?: string; firstName?: string; lastName?: string; password?: string; isSuperAdmin?: boolean }) {
     return this.fetch<UserResponse>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
