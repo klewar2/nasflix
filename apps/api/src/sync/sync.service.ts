@@ -179,21 +179,42 @@ export class SyncService {
     // Suppressions
     if (removed.length > 0) {
       await this.prisma.media.deleteMany({ where: { nasPath: { in: removed } } });
-      await this.prisma.episode.updateMany({
-        where: { nasPath: { in: removed } },
-        data: { nasPath: null, nasFilename: null, nasSize: null },
-      });
+      await this.prisma.episode.deleteMany({ where: { nasPath: { in: removed } } });
       this.logger.log(`Removed ${removed.length} file(s) from DB`);
     }
 
     // Déplacements / renommages
+    let movedCount = 0;
     for (const { from, to } of moved) {
       const filename = to.split('/').pop() || '';
-      await this.prisma.media.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
-      await this.prisma.episode.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
+      const mediaUpdated = await this.prisma.media.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
+      const episodeUpdated = await this.prisma.episode.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
+
+      if (mediaUpdated.count === 0 && episodeUpdated.count === 0) {
+        // Fallback: le NAS a envoyé un chemin de dossier — chercher tous les fichiers dont le chemin commence par ce préfixe
+        const fromPrefix = from.endsWith('/') ? from : `${from}/`;
+        const toPrefix = to.endsWith('/') ? to : `${to}/`;
+
+        const mediaInFolder = await this.prisma.media.findMany({ where: { nasPath: { startsWith: fromPrefix } } });
+        for (const m of mediaInFolder) {
+          const newPath = toPrefix + m.nasPath.slice(fromPrefix.length);
+          await this.prisma.media.update({ where: { id: m.id }, data: { nasPath: newPath } });
+          movedCount++;
+        }
+
+        const episodesInFolder = await this.prisma.episode.findMany({ where: { nasPath: { startsWith: fromPrefix } } });
+        for (const e of episodesInFolder) {
+          const newPath = toPrefix + e.nasPath!.slice(fromPrefix.length);
+          const newFilename = newPath.split('/').pop() || '';
+          await this.prisma.episode.update({ where: { id: e.id }, data: { nasPath: newPath, nasFilename: newFilename } });
+          movedCount++;
+        }
+      } else {
+        movedCount += mediaUpdated.count + episodeUpdated.count;
+      }
     }
     if (moved.length > 0) {
-      this.logger.log(`Updated ${moved.length} moved file(s) in DB`);
+      this.logger.log(`Updated ${movedCount} moved file(s) in DB`);
     }
 
     // Ajouts
@@ -204,6 +225,17 @@ export class SyncService {
       if (episodeExists) continue;
       const existing = await this.prisma.media.findUnique({ where: { nasPath: filePath } });
       if (existing) continue;
+
+      // Fallback : le NAS a envoyé le fichier comme "ajouté" alors qu'il a été déplacé (non détecté comme move)
+      // Si un Media SYNCED avec le même nom de fichier existe à un chemin différent, on met juste à jour son chemin
+      const sameFilename = await this.prisma.media.findFirst({
+        where: { nasFilename: filename, syncStatus: SyncStatus.SYNCED, nasPath: { not: filePath } },
+      });
+      if (sameFilename) {
+        await this.prisma.media.update({ where: { id: sameFilename.id }, data: { nasPath: filePath } });
+        this.logger.log(`Moved (via added fallback): updated nasPath for media #${sameFilename.id} "${filename}"`);
+        continue;
+      }
 
       const parsed = parseMediaFilename(filename);
       const pathParts = filePath.split('/').filter(Boolean);
