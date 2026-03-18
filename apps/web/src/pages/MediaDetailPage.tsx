@@ -1,13 +1,16 @@
 import { useParams, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Copy, ExternalLink, HardDrive } from 'lucide-react';
+import { ArrowLeft, Copy, ExternalLink, HardDrive, Pencil } from 'lucide-react';
 import { useState } from 'react';
 
 export default function MediaDetailPage() {
   const { id } = useParams();
+  const { cineClub } = useAuth();
+  const isAdmin = cineClub?.role === 'ADMIN';
   const [copied, setCopied] = useState(false);
 
   const { data: media, isLoading } = useQuery({
@@ -55,6 +58,17 @@ export default function MediaDetailPage() {
         <Link to="/" className="absolute top-4 left-4 z-10 text-zinc-400 hover:text-white">
           <ArrowLeft className="w-6 h-6" />
         </Link>
+        {isAdmin && (
+          <a
+            href={`/admin/media/${id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="absolute top-4 right-4 z-10 flex items-center gap-1.5 text-xs text-zinc-300 bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            Éditer
+          </a>
+        )}
       </div>
 
       <div className="px-4 md:px-8 -mt-32 relative z-10">

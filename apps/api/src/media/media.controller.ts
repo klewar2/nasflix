@@ -1,77 +1,92 @@
-import { Controller, Get, Delete, Patch, Param, Query, ParseIntPipe, Body } from '@nestjs/common';
+import { Controller, Get, Delete, Patch, Param, Query, ParseIntPipe, Body, Req, ForbiddenException, UseGuards, DefaultValuePipe } from '@nestjs/common';
 import { MediaService } from './media.service';
-import { Public } from '../auth/guards/public.decorator';
-import { MediaType, SyncStatus } from '@prisma/client';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/guards/roles.decorator';
+import { MemberRole, MediaType, SyncStatus } from '@prisma/client';
+import { JwtPayload } from '../auth/strategies/jwt.strategy';
 
 @Controller('media')
 export class MediaController {
-  constructor(private mediaService: MediaService) {}
+  constructor(private readonly mediaService: MediaService) {}
 
-  @Public()
   @Get()
   findAll(
-    @Query('type') type?: MediaType,
-    @Query('genreId') genreId?: number,
-    @Query('year') year?: number,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('type') type: MediaType | undefined,
+    @Query('genreId', new DefaultValuePipe(undefined), new ParseIntPipe({ optional: true })) genreId: number | undefined,
+    @Query('year', new DefaultValuePipe(undefined), new ParseIntPipe({ optional: true })) year: number | undefined,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Req() req: { user: JwtPayload },
   ) {
-    return this.mediaService.findAll({ type, genreId, year, page, limit });
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.findAll({ cineClubId, type, genreId, year, page, limit });
   }
 
-  @Public()
   @Get('search')
   search(
     @Query('q') query: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Req() req: { user: JwtPayload },
   ) {
-    return this.mediaService.search(query, page, limit);
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.search(query, cineClubId, page, limit);
   }
 
-  @Public()
   @Get('recent')
-  findRecent(@Query('limit') limit?: number) {
-    return this.mediaService.findRecent(limit);
+  findRecent(
+    @Query('limit', new DefaultValuePipe(40), ParseIntPipe) limit: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.findRecent(cineClubId, limit);
   }
 
-  @Public()
   @Get('unsynchronized')
-  findUnsynchronized(@Query('page') page?: number, @Query('limit') limit?: number) {
-    return this.mediaService.findUnsynchronized(page, limit);
+  findUnsynchronized(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.findUnsynchronized(cineClubId, page, limit);
   }
 
-  @Public()
   @Get('genres')
-  getGenres() {
-    return this.mediaService.getGenres();
+  getGenres(@Req() req: { user: JwtPayload }) {
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.getGenres(cineClubId);
   }
 
-  @Public()
   @Get('quality/:type')
   findByQuality(
     @Param('type') type: 'UHD' | 'HDR' | 'FHD',
-    @Query('limit') limit?: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Req() req: { user: JwtPayload },
   ) {
-    return this.mediaService.findByQuality(type, limit);
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.findByQuality(type, cineClubId, limit);
   }
 
+  @UseGuards(RolesGuard)
   @Get('admin/list')
   findAllAdmin(
-    @Query('type') type?: MediaType,
-    @Query('status') status?: SyncStatus,
-    @Query('title') title?: string,
-    @Query('videoQuality') videoQuality?: string,
-    @Query('dolbyVision') dolbyVision?: string,
-    @Query('hdr') hdr?: string,
-    @Query('dolbyAtmos') dolbyAtmos?: string,
-    @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('type') type: MediaType | undefined,
+    @Query('status') status: SyncStatus | undefined,
+    @Query('title') title: string | undefined,
+    @Query('videoQuality') videoQuality: string | undefined,
+    @Query('dolbyVision') dolbyVision: string | undefined,
+    @Query('hdr') hdr: string | undefined,
+    @Query('dolbyAtmos') dolbyAtmos: string | undefined,
+    @Query('sortBy') sortBy: string | undefined,
+    @Query('sortOrder') sortOrder: 'asc' | 'desc' | undefined,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Req() req: { user: JwtPayload },
   ) {
+    const cineClubId = this.requireCineClub(req.user);
     return this.mediaService.findAllAdmin({
-      type, status, title, videoQuality,
+      cineClubId, type, status, title, videoQuality,
       dolbyVision: dolbyVision === 'true',
       hdr: hdr === 'true',
       dolbyAtmos: dolbyAtmos === 'true',
@@ -79,22 +94,34 @@ export class MediaController {
     });
   }
 
-  @Public()
   @Get(':id')
-  findById(@Param('id', ParseIntPipe) id: number) {
-    return this.mediaService.findById(id);
+  findById(@Param('id', ParseIntPipe) id: number, @Req() req: { user: JwtPayload }) {
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.findById(id, cineClubId);
   }
 
+  @UseGuards(RolesGuard)
+  @Roles(MemberRole.ADMIN)
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
-    return this.mediaService.delete(id);
+  delete(@Param('id', ParseIntPipe) id: number, @Req() req: { user: JwtPayload }) {
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.delete(id, cineClubId);
   }
 
+  @UseGuards(RolesGuard)
+  @Roles(MemberRole.ADMIN)
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() data: { titleVf?: string; titleOriginal?: string; overview?: string; tmdbId?: number; releaseYear?: number; syncStatus?: SyncStatus; syncError?: string | null },
+    @Req() req: { user: JwtPayload },
   ) {
-    return this.mediaService.update(id, data);
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.update(id, cineClubId, data);
+  }
+
+  private requireCineClub(user: JwtPayload): number {
+    if (!user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return user.cineClubId;
   }
 }

@@ -15,14 +15,14 @@ export class SyncService {
   private isSyncing = false;
 
   constructor(
-    private prisma: PrismaService,
-    private nasService: NasService,
-    private metadataService: MetadataService,
-    @InjectQueue(METADATA_SYNC_QUEUE) private metadataQueue: Queue,
-    @Inject(forwardRef(() => SyncGateway)) private syncGateway: SyncGateway,
+    private readonly prisma: PrismaService,
+    private readonly nasService: NasService,
+    private readonly metadataService: MetadataService,
+    @InjectQueue(METADATA_SYNC_QUEUE) private readonly metadataQueue: Queue,
+    @Inject(forwardRef(() => SyncGateway)) private readonly syncGateway: SyncGateway,
   ) {}
 
-  async fullSync(triggeredBy = 'manual') {
+  async fullSync(cineClubId: number, nasUsername: string, nasPassword: string, triggeredBy = 'manual') {
     if (this.isSyncing) {
       this.logger.warn('Sync already in progress, skipping');
       return { message: 'Sync already in progress' };
@@ -30,17 +30,20 @@ export class SyncService {
 
     this.isSyncing = true;
     const syncLog = await this.prisma.syncLog.create({
-      data: { type: 'full_scan', status: 'running', triggeredBy },
+      data: { cineClubId, type: 'full_scan', status: 'running', triggeredBy },
     });
 
     try {
+      const club = await this.prisma.cineClub.findUniqueOrThrow({ where: { id: cineClubId } });
+      if (!club.nasBaseUrl) throw new Error('NAS base URL not configured for this CineClub');
+
       // Step 1: Get all video files from NAS
-      await this.nasService.login();
-      const nasFiles = await this.nasService.listAllVideoFiles();
+      const session = await this.nasService.login(club.nasBaseUrl, nasUsername, nasPassword);
+      const nasFiles = await this.nasService.listAllVideoFiles(session, club.nasSharedFolders);
       this.logger.log(`Found ${nasFiles.length} video files on NAS`);
 
       // Step 2: Reconcile Media records
-      const existingMedia = await this.prisma.media.findMany({ select: { id: true, nasPath: true } });
+      const existingMedia = await this.prisma.media.findMany({ where: { cineClubId }, select: { id: true, nasPath: true } });
       const nasPaths = new Set(nasFiles.map((f) => f.path));
       const orphaned = existingMedia.filter((m) => !nasPaths.has(m.nasPath));
 
@@ -51,7 +54,10 @@ export class SyncService {
 
       // Step 2b: Reconcile Episode nasPath (episode files removed from NAS)
       const existingEpisodes = await this.prisma.episode.findMany({
-        where: { nasPath: { not: null } },
+        where: {
+          nasPath: { not: null },
+          season: { media: { cineClubId } },
+        },
         select: { id: true, nasPath: true },
       });
       const orphanedEpisodes = existingEpisodes.filter((e) => e.nasPath && !nasPaths.has(e.nasPath));
@@ -74,7 +80,7 @@ export class SyncService {
           const episodeExists = await this.prisma.episode.findUnique({ where: { nasPath: file.path } });
           if (episodeExists) { processedItems++; continue; }
 
-          const existing = await this.prisma.media.findUnique({ where: { nasPath: file.path } });
+          const existing = await this.prisma.media.findUnique({ where: { cineClubId_nasPath: { cineClubId, nasPath: file.path } } });
           if (existing) {
             // Update nasAddedAt from NAS mtime/crtime if not yet set
             const existingMtime = Number(file.additional?.time?.mtime) || Number(file.additional?.time?.crtime) || 0;
@@ -107,6 +113,7 @@ export class SyncService {
 
           await this.prisma.media.create({
             data: {
+              cineClubId,
               type: parsed.season !== undefined ? MediaType.SERIES : MediaType.MOVIE,
               titleOriginal: parsed.title || file.name,
               nasPath: file.path,
@@ -123,18 +130,19 @@ export class SyncService {
           });
 
           processedItems++;
-        } catch (error: any) {
+        } catch (error: unknown) {
           errorCount++;
-          errors.push(`${file.name}: ${error.message}`);
-          this.logger.error(`Error processing ${file.name}: ${error.message}`);
+          const msg = error instanceof Error ? error.message : String(error);
+          errors.push(`${file.name}: ${msg}`);
+          this.logger.error(`Error processing ${file.name}: ${msg}`);
         }
       }
 
       // Step 4: Enqueue metadata sync for PENDING items
-      const queued = await this.enqueuePendingMetadata();
+      const queued = await this.enqueuePendingMetadata(cineClubId);
       this.logger.log(`Enqueued ${queued} metadata sync jobs`);
 
-      await this.nasService.logout();
+      await this.nasService.logout(session);
 
       await this.prisma.syncLog.update({
         where: { id: syncLog.id },
@@ -148,8 +156,8 @@ export class SyncService {
         },
       });
 
-      await this.prisma.nasConfig.updateMany({
-        where: { isActive: true },
+      await this.prisma.cineClub.update({
+        where: { id: cineClubId },
         data: { lastSyncAt: new Date() },
       });
 
@@ -161,10 +169,11 @@ export class SyncService {
         errors: errorCount,
         metadataQueued: queued,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
       await this.prisma.syncLog.update({
         where: { id: syncLog.id },
-        data: { status: 'failed', errorDetails: error.message, completedAt: new Date() },
+        data: { status: 'failed', errorDetails: msg, completedAt: new Date() },
       });
       throw error;
     } finally {
@@ -172,13 +181,13 @@ export class SyncService {
     }
   }
 
-  async diffSync(changes: { added?: string[]; removed?: string[]; moved?: Array<{ from: string; to: string }> }) {
+  async diffSync(cineClubId: number, changes: { added?: string[]; removed?: string[]; moved?: Array<{ from: string; to: string }> }) {
     const { added = [], removed = [], moved = [] } = changes;
-    this.logger.log(`DiffSync: +${added.length} added, -${removed.length} removed, ~${moved.length} moved`);
+    this.logger.log(`DiffSync [club ${cineClubId}]: +${added.length} added, -${removed.length} removed, ~${moved.length} moved`);
 
     // Suppressions
     if (removed.length > 0) {
-      await this.prisma.media.deleteMany({ where: { nasPath: { in: removed } } });
+      await this.prisma.media.deleteMany({ where: { cineClubId, nasPath: { in: removed } } });
       await this.prisma.episode.deleteMany({ where: { nasPath: { in: removed } } });
       this.logger.log(`Removed ${removed.length} file(s) from DB`);
     }
@@ -187,15 +196,15 @@ export class SyncService {
     let movedCount = 0;
     for (const { from, to } of moved) {
       const filename = to.split('/').pop() || '';
-      const mediaUpdated = await this.prisma.media.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
+      const mediaUpdated = await this.prisma.media.updateMany({ where: { cineClubId, nasPath: from }, data: { nasPath: to, nasFilename: filename } });
       const episodeUpdated = await this.prisma.episode.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
 
       if (mediaUpdated.count === 0 && episodeUpdated.count === 0) {
-        // Fallback: le NAS a envoyé un chemin de dossier — chercher tous les fichiers dont le chemin commence par ce préfixe
+        // Fallback: the NAS sent a folder path — find all files whose path starts with this prefix
         const fromPrefix = from.endsWith('/') ? from : `${from}/`;
         const toPrefix = to.endsWith('/') ? to : `${to}/`;
 
-        const mediaInFolder = await this.prisma.media.findMany({ where: { nasPath: { startsWith: fromPrefix } } });
+        const mediaInFolder = await this.prisma.media.findMany({ where: { cineClubId, nasPath: { startsWith: fromPrefix } } });
         for (const m of mediaInFolder) {
           const newPath = toPrefix + m.nasPath.slice(fromPrefix.length);
           await this.prisma.media.update({ where: { id: m.id }, data: { nasPath: newPath } });
@@ -223,13 +232,13 @@ export class SyncService {
 
       const episodeExists = await this.prisma.episode.findUnique({ where: { nasPath: filePath } });
       if (episodeExists) continue;
-      const existing = await this.prisma.media.findUnique({ where: { nasPath: filePath } });
+      const existing = await this.prisma.media.findUnique({ where: { cineClubId_nasPath: { cineClubId, nasPath: filePath } } });
       if (existing) continue;
 
-      // Fallback : le NAS a envoyé le fichier comme "ajouté" alors qu'il a été déplacé (non détecté comme move)
-      // Si un Media SYNCED avec le même nom de fichier existe à un chemin différent, on met juste à jour son chemin
+      // Fallback: NAS sent file as "added" but it was actually moved (not detected as move)
+      // If a SYNCED Media with the same filename exists at a different path, just update the path
       const sameFilename = await this.prisma.media.findFirst({
-        where: { nasFilename: filename, syncStatus: SyncStatus.SYNCED, nasPath: { not: filePath } },
+        where: { cineClubId, nasFilename: filename, syncStatus: SyncStatus.SYNCED, nasPath: { not: filePath } },
       });
       if (sameFilename) {
         await this.prisma.media.update({ where: { id: sameFilename.id }, data: { nasPath: filePath } });
@@ -250,6 +259,7 @@ export class SyncService {
 
       await this.prisma.media.create({
         data: {
+          cineClubId,
           type: parsed.season !== undefined ? MediaType.SERIES : MediaType.MOVIE,
           titleOriginal: parsed.title || filename,
           nasPath: filePath,
@@ -267,7 +277,7 @@ export class SyncService {
     }
 
     if (added.length > 0) {
-      const queued = await this.enqueuePendingMetadata();
+      const queued = await this.enqueuePendingMetadata(cineClubId);
       this.logger.log(`Added ${added.length} file(s), enqueued ${queued} metadata job(s)`);
     }
   }
@@ -340,9 +350,9 @@ export class SyncService {
     return { cleaned: failed.length + completed.length };
   }
 
-  async enqueuePendingMetadata(): Promise<number> {
+  async enqueuePendingMetadata(cineClubId: number): Promise<number> {
     const pending = await this.prisma.media.findMany({
-      where: { syncStatus: { in: [SyncStatus.PENDING, SyncStatus.FAILED, SyncStatus.NOT_FOUND] } },
+      where: { cineClubId, syncStatus: { in: [SyncStatus.PENDING, SyncStatus.FAILED, SyncStatus.NOT_FOUND] } },
       select: { id: true },
     });
     if (pending.length === 0) return 0;
@@ -350,7 +360,7 @@ export class SyncService {
     await this.metadataQueue.addBulk(
       pending.map((m) => ({
         name: 'sync-metadata',
-        data: { mediaId: m.id },
+        data: { mediaId: m.id, cineClubId },
         opts: {
           jobId: `media-${m.id}`,
           attempts: 3,
@@ -363,8 +373,8 @@ export class SyncService {
     return pending.length;
   }
 
-  async syncSingleMedia(mediaId: number, { ignoreTmdbId = false } = {}) {
-    const media = await this.prisma.media.findUnique({ where: { id: mediaId } });
+  async syncSingleMedia(mediaId: number, cineClubId: number, { ignoreTmdbId = false } = {}) {
+    const media = await this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } });
     if (!media) throw new Error('Media not found');
 
     await this.prisma.media.update({ where: { id: mediaId }, data: { syncStatus: SyncStatus.SYNCING } });
@@ -386,12 +396,12 @@ export class SyncService {
         this.logger.log(`[Sync #${mediaId}] tmdbId manually set to ${media.tmdbId}, skipping search`);
         const detectedType = isSeries ? MediaType.SERIES : (media.type ?? MediaType.MOVIE);
         if (detectedType === MediaType.SERIES) {
-          await this.syncTvDetails(mediaId, media.tmdbId);
+          await this.syncTvDetails(mediaId, media.tmdbId, cineClubId);
           if (parsed.season !== undefined && parsed.episode !== undefined) {
-            await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId ?? undefined);
+            await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId ?? undefined, cineClubId);
           }
         } else {
-          await this.syncMovieDetails(mediaId, media.tmdbId);
+          await this.syncMovieDetails(mediaId, media.tmdbId, cineClubId);
         }
         this.logger.log(`[Sync #${mediaId}] ✓ Sync complete via manual tmdbId → SYNCED`);
         return;
@@ -400,15 +410,15 @@ export class SyncService {
       this.logger.log(`[Sync #${mediaId}] Title resolved: "${title}"${year ? ` (${year})` : ''}`);
       this.logger.log(`[Sync #${mediaId}] Detected type: ${isSeries ? 'SERIES' : 'MOVIE'}`);
 
-      let tmdbResult: any = null;
+      let tmdbResult: TmdbSearchResult | null = null;
       let mediaType: MediaType;
 
       if (isSeries) {
         this.logger.log(`[Sync #${mediaId}] Searching TMDB TV: "${title}"${year ? ` year=${year}` : ''}`);
-        const tvResults = await this.metadataService.searchTv(title, year);
+        const tvResults = await this.metadataService.searchTv(title, year, cineClubId);
         tmdbResult = this.pickBestResult(tvResults, title, year);
         if (!tmdbResult && year) {
-          const tvNoYear = await this.metadataService.searchTv(title);
+          const tvNoYear = await this.metadataService.searchTv(title, undefined, cineClubId);
           tmdbResult = this.pickBestResult(tvNoYear, title, year);
         }
         if (tmdbResult) {
@@ -416,18 +426,18 @@ export class SyncService {
           this.logger.log(`[Sync #${mediaId}] TV match: "${tmdbResult.name || tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         } else {
           this.logger.log(`[Sync #${mediaId}] No TV match, trying movie search`);
-          const movieResults = await this.metadataService.searchMovie(title, year);
+          const movieResults = await this.metadataService.searchMovie(title, year, cineClubId);
           tmdbResult = this.pickBestResult(movieResults, title, year);
           mediaType = MediaType.MOVIE;
           if (tmdbResult) this.logger.log(`[Sync #${mediaId}] Movie match: "${tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         }
       } else {
         this.logger.log(`[Sync #${mediaId}] Searching TMDB movie: "${title}"${year ? ` year=${year}` : ''}`);
-        const movieResults = await this.metadataService.searchMovie(title, year);
+        const movieResults = await this.metadataService.searchMovie(title, year, cineClubId);
         tmdbResult = this.pickBestResult(movieResults, title, year);
         if (!tmdbResult && year) {
           // Fallback: search without year in case TMDB has a slightly different release date
-          const movieNoYear = await this.metadataService.searchMovie(title);
+          const movieNoYear = await this.metadataService.searchMovie(title, undefined, cineClubId);
           tmdbResult = this.pickBestResult(movieNoYear, title, year);
         }
         if (tmdbResult) {
@@ -435,7 +445,7 @@ export class SyncService {
           this.logger.log(`[Sync #${mediaId}] Movie match: "${tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         } else {
           this.logger.log(`[Sync #${mediaId}] No movie match, trying TV search`);
-          const tvResults = await this.metadataService.searchTv(title, year);
+          const tvResults = await this.metadataService.searchTv(title, year, cineClubId);
           tmdbResult = this.pickBestResult(tvResults, title, year);
           mediaType = MediaType.SERIES;
           if (tmdbResult) this.logger.log(`[Sync #${mediaId}] TV match: "${tmdbResult.name}" (TMDB #${tmdbResult.id})`);
@@ -453,13 +463,13 @@ export class SyncService {
 
       // --- Series episode deduplication ---
       // For series: if another Media record already represents this show, link the file as an episode
-      if (mediaType === MediaType.SERIES) {
+      if (mediaType! === MediaType.SERIES) {
         const existingSeries = await this.prisma.media.findFirst({
-          where: { tmdbId: tmdbResult.id, type: MediaType.SERIES, id: { not: mediaId } },
+          where: { cineClubId, tmdbId: tmdbResult.id, type: MediaType.SERIES, id: { not: mediaId } },
         });
         if (existingSeries) {
           this.logger.log(`[Sync #${mediaId}] Series episode → linking to existing series #${existingSeries.id} "${existingSeries.titleVf || existingSeries.titleOriginal}"`);
-          await this.linkEpisodeFile(existingSeries.id, media, parsed, tmdbResult.id);
+          await this.linkEpisodeFile(existingSeries.id, media, parsed, tmdbResult.id, cineClubId);
           await this.prisma.media.delete({ where: { id: mediaId } });
           return {
             redirectTo: {
@@ -473,21 +483,22 @@ export class SyncService {
       // Movies with the same tmdbId are allowed (multiple copies/qualities on NAS)
 
       // Sync full details from TMDB
-      this.logger.log(`[Sync #${mediaId}] Fetching full ${mediaType} details from TMDB #${tmdbResult.id}`);
-      if (mediaType === MediaType.MOVIE) {
-        await this.syncMovieDetails(mediaId, tmdbResult.id);
+      this.logger.log(`[Sync #${mediaId}] Fetching full ${mediaType!} details from TMDB #${tmdbResult.id}`);
+      if (mediaType! === MediaType.MOVIE) {
+        await this.syncMovieDetails(mediaId, tmdbResult.id, cineClubId);
       } else {
-        await this.syncTvDetails(mediaId, tmdbResult.id);
+        await this.syncTvDetails(mediaId, tmdbResult.id, cineClubId);
         // Also link this source episode file to its Episode record
         if (parsed.season !== undefined && parsed.episode !== undefined) {
-          await this.linkEpisodeFile(mediaId, media, parsed, tmdbResult.id);
+          await this.linkEpisodeFile(mediaId, media, parsed, tmdbResult.id, cineClubId);
         }
       }
       this.logger.log(`[Sync #${mediaId}] ✓ Sync complete → SYNCED`);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
       await this.prisma.media.update({
         where: { id: mediaId },
-        data: { syncStatus: SyncStatus.FAILED, syncError: error.message },
+        data: { syncStatus: SyncStatus.FAILED, syncError: msg },
       });
       throw error;
     }
@@ -502,6 +513,7 @@ export class SyncService {
     media: { nasPath: string; nasFilename: string; nasSize: bigint | null },
     parsed: ParsedMediaInfo,
     tmdbSeriesId?: number,
+    cineClubId?: number,
   ) {
     const seasonNumber = parsed.season ?? 1;
     const episodeNumber = parsed.episode;
@@ -520,7 +532,7 @@ export class SyncService {
     // Fetch episode metadata from TMDB if we have the series ID
     let episodeMeta: { name?: string; overview?: string; runtime?: number | null; airDate?: Date | null; stillUrl?: string | null } = {};
     if (tmdbSeriesId) {
-      const detail = await this.metadataService.getTvEpisodeDetail(tmdbSeriesId, seasonNumber, episodeNumber);
+      const detail = await this.metadataService.getTvEpisodeDetail(tmdbSeriesId, seasonNumber, episodeNumber, cineClubId);
       if (detail) {
         episodeMeta = {
           name: detail.name || undefined,
@@ -539,8 +551,8 @@ export class SyncService {
     });
   }
 
-  private async syncMovieDetails(mediaId: number, tmdbId: number) {
-    const detail = await this.metadataService.getMovieDetail(tmdbId);
+  private async syncMovieDetails(mediaId: number, tmdbId: number, cineClubId?: number) {
+    const detail = await this.metadataService.getMovieDetail(tmdbId, cineClubId);
 
     const genreIds: number[] = [];
     for (const g of detail.genres) {
@@ -605,8 +617,8 @@ export class SyncService {
     }
   }
 
-  private async syncTvDetails(mediaId: number, tmdbId: number) {
-    const detail = await this.metadataService.getTvDetail(tmdbId);
+  private async syncTvDetails(mediaId: number, tmdbId: number, cineClubId?: number) {
+    const detail = await this.metadataService.getTvDetail(tmdbId, cineClubId);
 
     const genreIds: number[] = [];
     for (const g of detail.genres) {
@@ -684,14 +696,15 @@ export class SyncService {
     }
   }
 
-  async getSyncLogs(page = 1, limit = 20) {
+  async getSyncLogs(cineClubId: number, page = 1, limit = 20) {
     const [data, total] = await Promise.all([
       this.prisma.syncLog.findMany({
+        where: { cineClubId },
         orderBy: { startedAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       }),
-      this.prisma.syncLog.count(),
+      this.prisma.syncLog.count({ where: { cineClubId } }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }

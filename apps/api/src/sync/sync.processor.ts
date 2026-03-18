@@ -8,6 +8,7 @@ import { PrismaService } from '../common/prisma.service';
 
 export interface MetadataSyncJobData {
   mediaId: number;
+  cineClubId: number;
 }
 
 @Processor(METADATA_SYNC_QUEUE, {
@@ -26,7 +27,7 @@ export class MetadataSyncProcessor extends WorkerHost {
 
   async process(job: Job<MetadataSyncJobData>): Promise<void> {
     this.logger.log(`Processing metadata sync job for media #${job.data.mediaId}`);
-    await this.syncService.syncSingleMedia(job.data.mediaId);
+    await this.syncService.syncSingleMedia(job.data.mediaId, job.data.cineClubId);
   }
 
   // Fires after BullMQ marks the job as complete — active count is already decremented

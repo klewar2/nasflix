@@ -1,35 +1,18 @@
-import { Controller, Get, Put, Body } from '@nestjs/common';
+import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { NasService } from './nas.service';
-import { Public } from '../auth/guards/public.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { JwtPayload } from '../auth/strategies/jwt.strategy';
 
 @Controller('nas')
+@UseGuards(RolesGuard)
 export class NasController {
-  constructor(private nasService: NasService) {}
+  constructor(private readonly nasService: NasService) {}
 
-  @Public()
   @Get('status')
-  async getStatus() {
-    const online = await this.nasService.checkStatus();
-    return {
-      online,
-      lastCheckedAt: new Date().toISOString(),
-    };
-  }
+  async getStatus(@Req() req: { user: JwtPayload }) {
+    if (!req.user.cineClubId) return { online: false, lastCheckedAt: new Date().toISOString() };
 
-  @Get('config')
-  async getConfig() {
-    return this.nasService.getNasConfig();
-  }
-
-  @Put('config')
-  async updateConfig(
-    @Body() data: { baseUrl?: string; username?: string; password?: string; sharedFolders?: string[] },
-  ) {
-    return this.nasService.updateConfig(data);
-  }
-
-  @Get('files')
-  async listFiles() {
-    return this.nasService.listAllVideoFiles();
+    const online = await this.nasService.checkStatusForCineClub(req.user.cineClubId);
+    return { online, lastCheckedAt: new Date().toISOString() };
   }
 }

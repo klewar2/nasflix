@@ -1,12 +1,15 @@
-import { Link, useLocation } from 'react-router';
-import { Search, Film, Tv2, Menu, X, Home, Settings } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router';
+import { Search, Film, Tv2, Menu, X, Home, Settings, LogOut, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth';
 
 export function Navbar() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { logout, isAuthenticated, cineClub } = useAuth();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -148,6 +151,30 @@ export function Navbar() {
               Paramétrage
             </Link>
 
+            {/* Actions utilisateur — desktop seulement */}
+            {isAuthenticated && (
+              <div className="hidden md:flex items-center gap-1">
+                {cineClub && (
+                  <button
+                    onClick={() => navigate('/cineclubs')}
+                    className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 px-3 py-1.5 rounded-lg hover:bg-white/5 transition-all"
+                    title="Changer de CineClub"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span className="hidden lg:inline">{cineClub.name}</span>
+                  </button>
+                )}
+                <button
+                  onClick={logout}
+                  className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-400 px-3 py-1.5 rounded-lg hover:bg-white/5 transition-all"
+                  title="Se déconnecter"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden lg:inline">Déconnexion</span>
+                </button>
+              </div>
+            )}
+
             {/* Burger — mobile seulement */}
             <button
               onClick={() => setMenuOpen((v) => !v)}
@@ -262,6 +289,32 @@ export function Navbar() {
               <Settings className="w-4 h-4 text-zinc-500" />
               <span className="text-sm font-medium">Paramétrage</span>
             </Link>
+
+            {/* Actions utilisateur — mobile */}
+            {isAuthenticated && (
+              <>
+                <div className="mx-5 my-3 h-px bg-white/5" />
+                <p className="px-5 pb-2 text-[10px] font-bold uppercase tracking-widest text-zinc-600">
+                  Compte
+                </p>
+                {cineClub && (
+                  <button
+                    onClick={() => { setMenuOpen(false); navigate('/cineclubs'); }}
+                    className="flex items-center gap-3 mx-2 px-3 py-3 rounded-xl text-zinc-400 hover:text-white hover:bg-white/5 transition-all w-full text-left"
+                  >
+                    <RefreshCw className="w-4 h-4 text-zinc-500" />
+                    <span className="text-sm font-medium">Changer de Ciné Club</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => { setMenuOpen(false); logout(); }}
+                  className="flex items-center gap-3 mx-2 px-3 py-3 rounded-xl text-zinc-400 hover:text-red-400 hover:bg-white/5 transition-all w-full text-left"
+                >
+                  <LogOut className="w-4 h-4 text-zinc-500" />
+                  <span className="text-sm font-medium">Se déconnecter</span>
+                </button>
+              </>
+            )}
           </div>
 
           {/* Pied du panneau — statut NAS */}

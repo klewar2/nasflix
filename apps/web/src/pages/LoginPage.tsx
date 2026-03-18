@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { api } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -8,27 +9,28 @@ import { Film } from 'lucide-react';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { isAuthenticated, hasCineClub, setUser } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (api.isAuthenticated()) {
-      navigate('/admin/dashboard', { replace: true });
-    }
-  }, [navigate]);
+    if (isAuthenticated && hasCineClub) navigate('/', { replace: true });
+    else if (isAuthenticated) navigate('/cineclubs', { replace: true });
+  }, [isAuthenticated, hasCineClub, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const tokens = await api.login(username, password);
-      api.setTokens(tokens);
-      navigate('/admin/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'Identifiants invalides');
+      const result = await api.login(username, password);
+      api.setTokens(result);
+      setUser(result.user);
+      navigate('/cineclubs');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Identifiants invalides');
     } finally {
       setLoading(false);
     }
@@ -39,12 +41,23 @@ export default function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <Film className="w-10 h-10 text-primary mx-auto mb-2" />
-          <CardTitle>Nasflix - Backoffice</CardTitle>
+          <CardTitle>Nasflix</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Input placeholder="Nom d'utilisateur" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
-            <Input type="password" placeholder="Mot de passe" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+            <Input
+              placeholder="Nom d'utilisateur"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+            />
+            <Input
+              type="password"
+              placeholder="Mot de passe"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
             {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Connexion...' : 'Se connecter'}

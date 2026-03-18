@@ -20,144 +20,176 @@ enum SyncStatus {
   NOT_FOUND
 }
 
-model Media {
-  id              Int         @id @default(autoincrement())
-  type            MediaType
-  titleVf         String?
-  titleOriginal   String
-  nasPath         String      @unique
-  nasFilename     String
-  nasSize         BigInt?
-  nasAddedAt      DateTime?
-  videoQuality    String?
-  hdr             Boolean     @default(false)
-  dolbyVision     Boolean     @default(false)
-  dolbyAtmos      Boolean     @default(false)
-  audioFormat     String?
-  tmdbId          Int?
-  overview        String?
-  posterUrl       String?
-  backdropUrl     String?
-  trailerUrl      String?
-  releaseDate     DateTime?
-  releaseYear     Int?
-  runtime         Int?
-  voteAverage     Float?
-  syncStatus      SyncStatus  @default(PENDING)
-  lastSyncedAt    DateTime?
-  syncError       String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  genres          MediaGenre[]
-  cast            MediaPerson[]
-  seasons         Season[]
+enum MemberRole {
+  ADMIN
+  VIEWER
+}
 
-  @@index([type])
-  @@index([syncStatus])
-  @@index([titleVf])
-  @@index([releaseYear])
-  @@index([createdAt])
+model User {
+  id           Int              @id @default(autoincrement())
+  username     String           @unique
+  firstName    String
+  lastName     String
+  passwordHash String
+  isSuperAdmin Boolean          @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  memberships  CineClubMember[]
+}
+
+model CineClub {
+  id               Int              @id @default(autoincrement())
+  name             String
+  slug             String           @unique
+  nasBaseUrl       String?
+  nasSharedFolders String[]         @default([])
+  tmdbApiKey       String?
+  lastOnlineAt     DateTime?
+  lastSyncAt       DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  members          CineClubMember[]
+  media            Media[]
+  syncLogs         SyncLog[]
+}
+
+model CineClubMember {
+  id          Int        @id @default(autoincrement())
+  userId      Int
+  cineClubId  Int
+  role        MemberRole @default(VIEWER)
+  nasUsername String?
+  nasPassword String?
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cineClub    CineClub   @relation(fields: [cineClubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cineClubId])
+}
+
+model Media {
+  id            Int           @id @default(autoincrement())
+  cineClubId    Int
+  type          MediaType
+  titleVf       String?
+  titleOriginal String
+  nasPath       String
+  nasFilename   String
+  nasSize       BigInt?
+  nasAddedAt    DateTime?
+  videoQuality  String?
+  hdr           Boolean       @default(false)
+  dolbyVision   Boolean       @default(false)
+  dolbyAtmos    Boolean       @default(false)
+  audioFormat   String?
+  tmdbId        Int?
+  overview      String?
+  posterUrl     String?
+  backdropUrl   String?
+  trailerUrl    String?
+  releaseDate   DateTime?
+  releaseYear   Int?
+  runtime       Int?
+  voteAverage   Float?
+  syncStatus    SyncStatus    @default(PENDING)
+  lastSyncedAt  DateTime?
+  syncError     String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  cineClub      CineClub      @relation(fields: [cineClubId], references: [id], onDelete: Cascade)
+  genres        MediaGenre[]
+  cast          MediaPerson[]
+  seasons       Season[]
+
+  @@unique([cineClubId, nasPath])
+  @@index([cineClubId, type])
+  @@index([cineClubId, syncStatus])
+  @@index([cineClubId, titleVf])
+  @@index([cineClubId, releaseYear])
+  @@index([cineClubId, createdAt])
 }
 
 model Genre {
-  id        Int          @id @default(autoincrement())
-  tmdbId    Int          @unique
-  name      String
-  media     MediaGenre[]
+  id     Int          @id @default(autoincrement())
+  tmdbId Int          @unique
+  name   String
+  media  MediaGenre[]
 }
 
 model MediaGenre {
-  mediaId   Int
-  genreId   Int
-  media     Media   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-  genre     Genre   @relation(fields: [genreId], references: [id], onDelete: Cascade)
+  mediaId Int
+  genreId Int
+  media   Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  genre   Genre  @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
   @@id([mediaId, genreId])
 }
 
 model Person {
-  id        Int            @id @default(autoincrement())
-  tmdbId    Int            @unique
-  name      String
-  photoUrl  String?
-  media     MediaPerson[]
+  id       Int           @id @default(autoincrement())
+  tmdbId   Int           @unique
+  name     String
+  photoUrl String?
+  media    MediaPerson[]
 }
 
 model MediaPerson {
-  id          Int      @id @default(autoincrement())
-  role        String
-  character   String?
-  order       Int      @default(0)
-  mediaId     Int
-  media       Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-  personId    Int
-  person      Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  id        Int    @id @default(autoincrement())
+  role      String
+  character String?
+  order     Int    @default(0)
+  mediaId   Int
+  personId  Int
+  media     Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  person    Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
   @@unique([mediaId, personId, role])
   @@index([mediaId, role])
 }
 
 model Season {
-  id              Int       @id @default(autoincrement())
-  seasonNumber    Int
-  name            String?
-  overview        String?
-  posterUrl       String?
-  episodeCount    Int?
-  airDate         DateTime?
-  mediaId         Int
-  media           Media     @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-  episodes        Episode[]
+  id           Int       @id @default(autoincrement())
+  seasonNumber Int
+  name         String?
+  overview     String?
+  posterUrl    String?
+  episodeCount Int?
+  airDate      DateTime?
+  mediaId      Int
+  media        Media     @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  episodes     Episode[]
+
   @@unique([mediaId, seasonNumber])
 }
 
 model Episode {
-  id              Int       @id @default(autoincrement())
-  episodeNumber   Int
-  name            String?
-  overview        String?
-  runtime         Int?
-  airDate         DateTime?
-  stillUrl        String?
-  nasPath         String?   @unique
-  nasFilename     String?
-  nasSize         BigInt?
-  seasonId        Int
-  season          Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  id            Int       @id @default(autoincrement())
+  episodeNumber Int
+  name          String?
+  overview      String?
+  runtime       Int?
+  airDate       DateTime?
+  stillUrl      String?
+  nasPath       String?   @unique
+  nasFilename   String?
+  nasSize       BigInt?
+  seasonId      Int
+  season        Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
   @@unique([seasonId, episodeNumber])
 }
 
-model NasConfig {
-  id              Int       @id @default(autoincrement())
-  name            String    @default("primary") @unique
-  baseUrl         String
-  username        String
-  passwordEnc     String
-  sharedFolders   String[]
-  isActive        Boolean   @default(true)
-  lastOnlineAt    DateTime?
-  lastSyncAt      DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-}
-
-model ApiConfig {
-  id              Int       @id @default(autoincrement())
-  provider        String    @unique
-  apiKey          String
-  baseUrl         String
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-}
-
 model SyncLog {
-  id              Int       @id @default(autoincrement())
-  type            String
-  status          String
-  totalItems      Int?
-  processedItems  Int?
-  errorCount      Int?
-  errorDetails    String?
-  startedAt       DateTime  @default(now())
-  completedAt     DateTime?
-  triggeredBy     String?
+  id             Int       @id @default(autoincrement())
+  cineClubId     Int?
+  type           String
+  status         String
+  totalItems     Int?
+  processedItems Int?
+  errorCount     Int?
+  errorDetails   String?
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  triggeredBy    String?
+  cineClub       CineClub? @relation(fields: [cineClubId], references: [id], onDelete: SetNull)
 }

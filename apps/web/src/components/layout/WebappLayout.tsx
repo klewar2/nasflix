@@ -1,7 +1,14 @@
-import { Outlet } from 'react-router';
+import { Outlet, Navigate } from 'react-router';
 import { Navbar } from './Navbar';
+import { useAuth } from '@/lib/auth';
 
 export function WebappLayout() {
+  const { isAuthenticated, hasCineClub, isLoading } = useAuth();
+
+  if (isLoading) return null;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!hasCineClub) return <Navigate to="/cineclubs" replace />;
+
   return (
     <div className="min-h-screen bg-zinc-950">
       <Navbar />

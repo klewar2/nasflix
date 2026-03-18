@@ -5,12 +5,14 @@ import FilmsPage from './pages/FilmsPage';
 import SeriesPage from './pages/SeriesPage';
 import MediaDetailPage from './pages/MediaDetailPage';
 import SearchPage from './pages/SearchPage';
-import LoginPage from './pages/backoffice/LoginPage';
+import LoginPage from './pages/LoginPage';
+import CineClubSelectorPage from './pages/CineClubSelectorPage';
 import DashboardPage from './pages/backoffice/DashboardPage';
 import MediaListPage from './pages/backoffice/MediaListPage';
 import MediaEditPage from './pages/backoffice/MediaEditPage';
 import SyncPage from './pages/backoffice/SyncPage';
 import SettingsPage from './pages/backoffice/SettingsPage';
+import UsersPage from './pages/backoffice/UsersPage';
 import { WebappLayout } from './components/layout/WebappLayout';
 import { BackofficeLayout } from './components/layout/BackofficeLayout';
 
@@ -19,6 +21,8 @@ export const router = createBrowserRouter([
     path: '/',
     element: <App />,
     children: [
+      { path: 'login', element: <LoginPage /> },
+      { path: 'cineclubs', element: <CineClubSelectorPage /> },
       {
         element: <WebappLayout />,
         children: [
@@ -32,7 +36,6 @@ export const router = createBrowserRouter([
       {
         path: 'admin',
         children: [
-          { path: 'login', element: <LoginPage /> },
           {
             element: <BackofficeLayout />,
             children: [
@@ -41,6 +44,7 @@ export const router = createBrowserRouter([
               { path: 'media/:id', element: <MediaEditPage /> },
               { path: 'sync', element: <SyncPage /> },
               { path: 'settings', element: <SettingsPage /> },
+              { path: 'users', element: <UsersPage /> },
             ],
           },
           { index: true, element: <Navigate to="/admin/dashboard" replace /> },

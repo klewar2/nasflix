@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { MediaType, SyncStatus } from '@prisma/client';
 
 @Injectable()
 export class MediaService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private readonly includeRelations = {
     genres: { include: { genre: true } },
@@ -12,18 +12,19 @@ export class MediaService {
   };
 
   async findAll(params: {
+    cineClubId: number;
     type?: MediaType;
     genreId?: number;
     year?: number;
     page?: number;
     limit?: number;
   }) {
-    const { type, genreId, year, page = 1, limit = 20 } = params;
-    const where: any = {};
+    const { cineClubId, type, genreId, year, page = 1, limit = 20 } = params;
+    const where: Record<string, unknown> = { cineClubId };
 
     if (type) where.type = type;
-    if (year) where.releaseYear = year;
-    if (genreId) where.genres = { some: { genreId } };
+    if (year) where.releaseYear = Number(year);
+    if (genreId) where.genres = { some: { genreId: Number(genreId) } };
     // Only show synced items on public endpoints
     where.syncStatus = SyncStatus.SYNCED;
 
@@ -47,9 +48,9 @@ export class MediaService {
     };
   }
 
-  async findById(id: number) {
-    return this.prisma.media.findUnique({
-      where: { id },
+  async findById(id: number, cineClubId: number) {
+    const media = await this.prisma.media.findFirst({
+      where: { id, cineClubId },
       include: {
         ...this.includeRelations,
         seasons: {
@@ -58,10 +59,13 @@ export class MediaService {
         },
       },
     });
+    if (!media) throw new NotFoundException('Média introuvable');
+    return media;
   }
 
-  async search(query: string, page = 1, limit = 20) {
+  async search(query: string, cineClubId: number, page = 1, limit = 20) {
     const where = {
+      cineClubId,
       OR: [
         { titleVf: { contains: query, mode: 'insensitive' as const } },
         { titleOriginal: { contains: query, mode: 'insensitive' as const } },
@@ -83,17 +87,17 @@ export class MediaService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async findRecent(limit = 40) {
+  async findRecent(cineClubId: number, limit = 40) {
     return this.prisma.media.findMany({
-      where: { syncStatus: SyncStatus.SYNCED },
+      where: { cineClubId, syncStatus: SyncStatus.SYNCED },
       include: this.includeRelations,
       orderBy: [{ nasAddedAt: 'desc' }, { createdAt: 'desc' }],
-      take: limit,
+      take: Number(limit),
     });
   }
 
-  async findByQuality(quality: 'UHD' | 'HDR' | 'FHD', limit = 20) {
-    const where: any = { syncStatus: SyncStatus.SYNCED };
+  async findByQuality(quality: 'UHD' | 'HDR' | 'FHD', cineClubId: number, limit = 20) {
+    const where: Record<string, unknown> = { cineClubId, syncStatus: SyncStatus.SYNCED };
     if (quality === 'UHD') where.videoQuality = '4K';
     else if (quality === 'HDR') where.OR = [{ hdr: true }, { dolbyVision: true }];
     else if (quality === 'FHD') where.videoQuality = '1080p';
@@ -102,11 +106,12 @@ export class MediaService {
       where,
       include: this.includeRelations,
       orderBy: [{ nasAddedAt: 'desc' }, { createdAt: 'desc' }],
-      take: limit,
+      take: Number(limit),
     });
   }
 
   async findAllAdmin(params: {
+    cineClubId: number;
     type?: MediaType;
     status?: SyncStatus;
     title?: string;
@@ -119,8 +124,8 @@ export class MediaService {
     page?: number;
     limit?: number;
   }) {
-    const { type, status, title, videoQuality, dolbyVision, hdr, dolbyAtmos, sortBy = 'nasAddedAt', sortOrder = 'desc', page = 1, limit = 20 } = params;
-    const where: any = {};
+    const { cineClubId, type, status, title, videoQuality, dolbyVision, hdr, dolbyAtmos, sortBy = 'nasAddedAt', sortOrder = 'desc', page = 1, limit = 20 } = params;
+    const where: Record<string, unknown> = { cineClubId };
     if (type) where.type = type;
     if (status) where.syncStatus = status;
     if (title) {
@@ -137,9 +142,9 @@ export class MediaService {
 
     const sortField = sortBy === 'title' ? 'titleVf' : sortBy;
     // nasAddedAt can be null; fall back to createdAt for nulls
-    const orderBy: any = sortField === 'nasAddedAt'
-      ? [{ nasAddedAt: { sort: sortOrder, nulls: 'last' } }, { createdAt: sortOrder }]
-      : { [sortField]: sortOrder };
+    const orderBy = sortField === 'nasAddedAt'
+      ? [{ nasAddedAt: { sort: sortOrder, nulls: 'last' as const } }, { createdAt: sortOrder }]
+      : [{ [sortField]: sortOrder }];
 
     const [data, total] = await Promise.all([
       this.prisma.media.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy }),
@@ -149,8 +154,9 @@ export class MediaService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async findUnsynchronized(page = 1, limit = 20) {
+  async findUnsynchronized(cineClubId: number, page = 1, limit = 20) {
     const where = {
+      cineClubId,
       syncStatus: { in: [SyncStatus.PENDING, SyncStatus.FAILED, SyncStatus.NOT_FOUND] },
     };
 
@@ -167,24 +173,13 @@ export class MediaService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async findByGenre(genreId: number, type?: MediaType, limit = 20) {
-    return this.prisma.media.findMany({
-      where: {
-        syncStatus: SyncStatus.SYNCED,
-        genres: { some: { genreId } },
-        ...(type ? { type } : {}),
-      },
-      include: this.includeRelations,
-      orderBy: { voteAverage: 'desc' },
-      take: limit,
-    });
-  }
-
-  async delete(id: number) {
+  async delete(id: number, cineClubId: number) {
+    await this.findById(id, cineClubId);
     return this.prisma.media.delete({ where: { id } });
   }
 
-  async update(id: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null }>) {
+  async update(id: number, cineClubId: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null }>) {
+    await this.findById(id, cineClubId);
     // When re-queuing for sync without an explicit tmdbId, clear stale TMDB data so the
     // next sync searches from scratch instead of reusing a potentially wrong tmdbId.
     const patch: typeof data = { ...data };
@@ -195,8 +190,16 @@ export class MediaService {
     return this.prisma.media.update({ where: { id }, data: patch });
   }
 
-  async getGenres() {
+  async getGenres(cineClubId: number) {
+    // Return genres that have at least one media item in this cineclub
     return this.prisma.genre.findMany({
+      where: {
+        media: {
+          some: {
+            media: { cineClubId },
+          },
+        },
+      },
       orderBy: { name: 'asc' },
     });
   }

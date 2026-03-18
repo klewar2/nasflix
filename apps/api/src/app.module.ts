@@ -9,6 +9,8 @@ import { NasModule } from './nas/nas.module';
 import { MetadataModule } from './metadata/metadata.module';
 import { SyncModule } from './sync/sync.module';
 import { HealthModule } from './health/health.module';
+import { CineClubsModule } from './cineclubs/cineclubs.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -35,6 +37,8 @@ import { HealthModule } from './health/health.module';
     MetadataModule,
     SyncModule,
     HealthModule,
+    CineClubsModule,
+    UsersModule,
   ],
 })
 export class AppModule {}

@@ -81,16 +81,15 @@ export class MetadataService {
   private readonly imageBaseUrl = 'https://image.tmdb.org/t/p';
 
   constructor(
-    private prisma: PrismaService,
-    private configService: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
   ) {}
 
-  private async getApiKey(): Promise<string> {
-    // Try DB first, then env var
-    const config = await this.prisma.apiConfig.findFirst({
-      where: { provider: 'tmdb', isActive: true },
-    });
-    if (config) return config.apiKey;
+  async getApiKeyForCineClub(cineClubId?: number): Promise<string> {
+    if (cineClubId) {
+      const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+      if (club?.tmdbApiKey) return club.tmdbApiKey;
+    }
 
     const envKey = this.configService.get<string>('TMDB_API_KEY');
     if (envKey) return envKey;
@@ -98,10 +97,10 @@ export class MetadataService {
     throw new Error('No TMDB API key configured');
   }
 
-  private async tmdbFetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-    const apiKey = await this.getApiKey();
+  private async tmdbFetch<T>(path: string, params: Record<string, string> = {}, apiKey?: string): Promise<T> {
+    const key = apiKey ?? (await this.getApiKeyForCineClub());
     const url = new URL(`https://api.themoviedb.org/3${path}`);
-    url.searchParams.set('api_key', apiKey);
+    url.searchParams.set('api_key', key);
     url.searchParams.set('language', 'fr-FR');
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
@@ -109,16 +108,18 @@ export class MetadataService {
     if (!response.ok) {
       throw new Error(`TMDB API error: ${response.status} ${response.statusText}`);
     }
-    return response.json();
+    return response.json() as Promise<T>;
   }
 
-  async searchMulti(query: string, year?: number): Promise<TmdbSearchResult[]> {
+  async searchMulti(query: string, year?: number, cineClubId?: number): Promise<TmdbSearchResult[]> {
+    const apiKey = await this.getApiKeyForCineClub(cineClubId);
     const params: Record<string, string> = { query };
     if (year) params.year = String(year);
 
     const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>(
       '/search/multi',
       params,
+      apiKey,
     );
 
     return result.results.filter(
@@ -126,41 +127,48 @@ export class MetadataService {
     );
   }
 
-  async searchMovie(query: string, year?: number): Promise<TmdbSearchResult[]> {
+  async searchMovie(query: string, year?: number, cineClubId?: number): Promise<TmdbSearchResult[]> {
+    const apiKey = await this.getApiKeyForCineClub(cineClubId);
     const params: Record<string, string> = { query };
     if (year) params.year = String(year);
 
-    const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>('/search/movie', params);
+    const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>('/search/movie', params, apiKey);
     return result.results;
   }
 
-  async searchTv(query: string, year?: number): Promise<TmdbSearchResult[]> {
+  async searchTv(query: string, year?: number, cineClubId?: number): Promise<TmdbSearchResult[]> {
+    const apiKey = await this.getApiKeyForCineClub(cineClubId);
     const params: Record<string, string> = { query };
     if (year) params.first_air_date_year = String(year);
 
-    const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>('/search/tv', params);
+    const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>('/search/tv', params, apiKey);
     return result.results;
   }
 
-  async getTvEpisodeDetail(seriesId: number, season: number, episode: number): Promise<TmdbEpisodeDetail | null> {
+  async getTvEpisodeDetail(seriesId: number, season: number, episode: number, cineClubId?: number): Promise<TmdbEpisodeDetail | null> {
     try {
-      return await this.tmdbFetch<TmdbEpisodeDetail>(`/tv/${seriesId}/season/${season}/episode/${episode}`);
+      const apiKey = await this.getApiKeyForCineClub(cineClubId);
+      return await this.tmdbFetch<TmdbEpisodeDetail>(`/tv/${seriesId}/season/${season}/episode/${episode}`, {}, apiKey);
     } catch {
       return null;
     }
   }
 
-  async getMovieDetail(tmdbId: number): Promise<TmdbMovieDetail> {
+  async getMovieDetail(tmdbId: number, cineClubId?: number): Promise<TmdbMovieDetail> {
+    const apiKey = await this.getApiKeyForCineClub(cineClubId);
     return this.tmdbFetch<TmdbMovieDetail>(
       `/movie/${tmdbId}`,
       { append_to_response: 'credits,videos' },
+      apiKey,
     );
   }
 
-  async getTvDetail(tmdbId: number): Promise<TmdbTvDetail> {
+  async getTvDetail(tmdbId: number, cineClubId?: number): Promise<TmdbTvDetail> {
+    const apiKey = await this.getApiKeyForCineClub(cineClubId);
     return this.tmdbFetch<TmdbTvDetail>(
       `/tv/${tmdbId}`,
       { append_to_response: 'credits,videos' },
+      apiKey,
     );
   }
 
@@ -192,25 +200,5 @@ export class MetadataService {
       return teaser ? `https://www.youtube.com/watch?v=${teaser.key}` : null;
     }
     return `https://www.youtube.com/watch?v=${trailer.key}`;
-  }
-
-  async updateApiConfig(provider: string, apiKey: string, baseUrl?: string) {
-    return this.prisma.apiConfig.upsert({
-      where: { provider },
-      update: { apiKey, ...(baseUrl ? { baseUrl } : {}) },
-      create: {
-        provider,
-        apiKey,
-        baseUrl: baseUrl || 'https://api.themoviedb.org/3',
-      },
-    });
-  }
-
-  async getApiConfigs() {
-    const configs = await this.prisma.apiConfig.findMany();
-    return configs.map((c) => ({
-      ...c,
-      apiKey: c.apiKey.slice(0, 4) + '***',
-    }));
   }
 }

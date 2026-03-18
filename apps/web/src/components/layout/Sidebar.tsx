@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router';
-import { LayoutDashboard, Film, RefreshCw, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/admin/media', icon: Film, label: 'Médias' },
   { to: '/admin/sync', icon: RefreshCw, label: 'Synchronisation' },
   { to: '/admin/settings', icon: Settings, label: 'Paramètres' },
+  { to: '/admin/users', icon: Users, label: 'Utilisateurs' },
 ];
 
 export function Sidebar() {

@@ -1,22 +1,17 @@
-import { Controller, Get, Put, Body, Query } from '@nestjs/common';
+import { Controller, Get, Query, Req, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { MetadataService } from './metadata.service';
+import { JwtPayload } from '../auth/strategies/jwt.strategy';
 
 @Controller('metadata')
 export class MetadataController {
-  constructor(private metadataService: MetadataService) {}
+  constructor(private readonly metadataService: MetadataService) {}
 
   @Get('search')
-  async search(@Query('q') query: string, @Query('year') year?: number) {
-    return this.metadataService.searchMulti(query, year);
-  }
-
-  @Get('config')
-  async getConfigs() {
-    return this.metadataService.getApiConfigs();
-  }
-
-  @Put('config')
-  async updateConfig(@Body() data: { provider: string; apiKey: string; baseUrl?: string }) {
-    return this.metadataService.updateApiConfig(data.provider, data.apiKey, data.baseUrl);
+  search(
+    @Query('q') query: string,
+    @Query('year', new DefaultValuePipe(undefined), new ParseIntPipe({ optional: true })) year: number | undefined,
+    @Req() req: { user: JwtPayload },
+  ) {
+    return this.metadataService.searchMulti(query, year, req.user.cineClubId);
   }
 }
