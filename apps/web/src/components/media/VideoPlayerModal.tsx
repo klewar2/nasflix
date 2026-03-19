@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Hls from 'hls.js';
 import { Loader2, Maximize, Minimize, Pause, Play, Volume2, VolumeX, X } from 'lucide-react';
 
 interface VideoPlayerModalProps {
   url: string;
   title: string;
   onClose: () => void;
+  isHls?: boolean;
 }
 
-export function VideoPlayerModal({ url, title, onClose }: VideoPlayerModalProps) {
+export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPlayerModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const hlsRef = useRef<Hls | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -53,13 +56,46 @@ export function VideoPlayerModal({ url, title, onClose }: VideoPlayerModalProps)
     return () => { document.body.style.overflow = ''; };
   }, []);
 
-  // Initialise explicitement le volume au montage (le navigateur peut persister un état muet)
+  // Initialisation source : HLS via hls.js ou URL directe
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    v.volume = 1;
-    v.muted = false;
-  }, []);
+
+    if (isHls) {
+      // L'URL est un chemin relatif (/nas/hls-manifest?...) → on préfixe avec l'API base
+      const apiBase = import.meta.env.VITE_API_URL || '/api';
+      const fullHlsUrl = `${apiBase}${url}`;
+      const token = localStorage.getItem('accessToken');
+
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          xhrSetup: (xhr) => {
+            if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+          },
+        });
+        hlsRef.current = hls;
+        hls.loadSource(fullHlsUrl);
+        hls.attachMedia(v);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          v.volume = 1;
+          v.muted = false;
+        });
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) setError('Impossible de lire la vidéo. Vérifiez que le NAS est accessible.');
+        });
+        return () => { hls.destroy(); hlsRef.current = null; };
+      } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari — HLS natif (le token est dans l'URL via _sid, pas besoin d'en-tête)
+        v.src = fullHlsUrl;
+        v.volume = 1;
+        v.muted = false;
+      }
+    } else {
+      v.volume = 1;
+      v.muted = false;
+    }
+  }, [url, isHls]);
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
@@ -111,7 +147,7 @@ export function VideoPlayerModal({ url, title, onClose }: VideoPlayerModalProps)
         {/* Video element */}
         <video
           ref={videoRef}
-          src={url}
+          src={isHls ? undefined : (url.startsWith('/') ? `${import.meta.env.VITE_API_URL || '/api'}${url}` : url)}
           className="w-full h-full object-contain"
           playsInline
           onPlay={() => { setPlaying(true); scheduleHide(true); }}

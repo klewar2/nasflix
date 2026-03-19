@@ -36,14 +36,14 @@ export class NasService {
     return response.json() as Promise<SynoResponse<T>>;
   }
 
-  async login(baseUrl: string, username: string, password: string): Promise<NasSession> {
+  async login(baseUrl: string, username: string, password: string, session = 'FileStation'): Promise<NasSession> {
     const url = new URL('/webapi/auth.cgi', baseUrl);
     url.searchParams.set('api', 'SYNO.API.Auth');
     url.searchParams.set('version', '6');
     url.searchParams.set('method', 'login');
     url.searchParams.set('account', username);
     url.searchParams.set('passwd', password);
-    url.searchParams.set('session', 'FileStation');
+    url.searchParams.set('session', session);
     url.searchParams.set('format', 'sid');
 
     const response = await fetch(url.toString(), { signal: AbortSignal.timeout(10000) });
@@ -164,12 +164,23 @@ export class NasService {
     return allFiles;
   }
 
+  private buildFileStationUrl(baseUrl: string, path: string, sid: string, mode: 'stream' | 'download'): string {
+    const url = new URL('/webapi/entry.cgi', baseUrl);
+    url.searchParams.set('api', 'SYNO.FileStation.Download');
+    url.searchParams.set('version', '2');
+    url.searchParams.set('method', 'download');
+    url.searchParams.set('path', path);
+    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
+    url.searchParams.set('_sid', sid);
+    return url.toString();
+  }
+
   async getStreamUrl(
     mediaId: number,
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
-  ): Promise<{ url: string }> {
+  ): Promise<{ nasUrl: string }> {
     const [member, media, club] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } }),
@@ -183,16 +194,7 @@ export class NasService {
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
 
     const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-
-    const url = new URL('/webapi/entry.cgi', club.nasBaseUrl);
-    url.searchParams.set('api', 'SYNO.FileStation.Download');
-    url.searchParams.set('version', '2');
-    url.searchParams.set('method', 'download');
-    url.searchParams.set('path', media.nasPath);
-    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
-    url.searchParams.set('_sid', session.sid);
-
-    return { url: url.toString() };
+    return { nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, mode) };
   }
 
   async getEpisodeStreamUrl(
@@ -200,7 +202,7 @@ export class NasService {
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
-  ): Promise<{ url: string }> {
+  ): Promise<{ nasUrl: string }> {
     const [member, episode] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.episode.findFirst({
@@ -218,16 +220,7 @@ export class NasService {
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
 
     const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-
-    const url = new URL('/webapi/entry.cgi', club.nasBaseUrl);
-    url.searchParams.set('api', 'SYNO.FileStation.Download');
-    url.searchParams.set('version', '2');
-    url.searchParams.set('method', 'download');
-    url.searchParams.set('path', episode.nasPath);
-    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
-    url.searchParams.set('_sid', session.sid);
-
-    return { url: url.toString() };
+    return { nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, mode) };
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {

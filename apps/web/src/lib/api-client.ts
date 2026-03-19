@@ -207,11 +207,11 @@ class ApiClient {
   }
 
   getStreamUrl(mediaId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string }>(`/nas/stream/${mediaId}?mode=${mode}`);
+    return this.fetch<{ url: string; isHls: boolean }>(`/nas/stream/${mediaId}?mode=${mode}`);
   }
 
   getEpisodeStreamUrl(episodeId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}`);
+    return this.fetch<{ url: string; isHls: boolean }>(`/nas/stream/episode/${episodeId}?mode=${mode}`);
   }
 
   // Health

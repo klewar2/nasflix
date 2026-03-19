@@ -25,6 +25,7 @@
     "clsx": "^2",
     "embla-carousel-autoplay": "^8",
     "embla-carousel-react": "^8",
+    "hls.js": "^1.6.15",
     "lucide-react": "^0.500",
     "react": "^19",
     "react-dom": "^19",
