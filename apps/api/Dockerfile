@@ -31,7 +31,7 @@ RUN pnpm install --frozen-lockfile --prod
 
 # Generate Prisma client for the target platform
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
-RUN cd apps/api && npx prisma generate
+RUN cd apps/api && pnpm exec prisma generate
 
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/packages/shared ./packages/shared
@@ -40,4 +40,4 @@ WORKDIR /app/apps/api
 
 EXPOSE 4000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main"]
