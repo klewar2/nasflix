@@ -13,6 +13,7 @@ import MediaEditPage from './pages/backoffice/MediaEditPage';
 import SyncPage from './pages/backoffice/SyncPage';
 import SettingsPage from './pages/backoffice/SettingsPage';
 import UsersPage from './pages/backoffice/UsersPage';
+import MyProfilePage from './pages/backoffice/MyProfilePage';
 import { WebappLayout } from './components/layout/WebappLayout';
 import { BackofficeLayout } from './components/layout/BackofficeLayout';
 
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
               { path: 'sync', element: <SyncPage /> },
               { path: 'settings', element: <SettingsPage /> },
               { path: 'users', element: <UsersPage /> },
+              { path: 'profile', element: <MyProfilePage /> },
             ],
           },
           { index: true, element: <Navigate to="/admin/dashboard" replace /> },

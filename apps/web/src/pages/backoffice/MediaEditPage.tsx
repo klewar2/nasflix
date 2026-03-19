@@ -2,6 +2,7 @@ import { useParams, Link, useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useRef } from 'react';
 import { api } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -146,6 +147,8 @@ export default function MediaEditPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { cineClub } = useAuth();
+  const isAdmin = cineClub?.role === 'ADMIN';
   const didScrollRef = useRef(false);
 
   const { data: media, isLoading } = useQuery({
@@ -248,20 +251,20 @@ export default function MediaEditPage() {
               <div className="space-y-3">
                 <div>
                   <label className="text-xs text-zinc-400 mb-1 block">Titre de recherche</label>
-                  <Input value={searchTitle} onChange={(e) => setSearchTitle(e.target.value)} placeholder="Titre de recherche TMDB..." />
+                  <Input value={searchTitle} onChange={(e) => setSearchTitle(e.target.value)} placeholder="Titre de recherche TMDB..." disabled={!isAdmin} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-zinc-400 mb-1 block">TMDB ID (optionnel)</label>
-                    <Input value={tmdbIdInput} onChange={(e) => setTmdbIdInput(e.target.value.replace(/\D/g, ''))} placeholder="ex: 550" type="number" min="1" />
+                    <Input value={tmdbIdInput} onChange={(e) => setTmdbIdInput(e.target.value.replace(/\D/g, ''))} placeholder="ex: 550" type="number" min="1" disabled={!isAdmin} />
                   </div>
                   <div>
                     <label className="text-xs text-zinc-400 mb-1 block">Année de sortie (optionnel)</label>
-                    <Input value={releaseYearInput} onChange={(e) => setReleaseYearInput(e.target.value.replace(/\D/g, ''))} placeholder="ex: 2023" type="number" min="1900" max="2100" />
+                    <Input value={releaseYearInput} onChange={(e) => setReleaseYearInput(e.target.value.replace(/\D/g, ''))} placeholder="ex: 2023" type="number" min="1900" max="2100" disabled={!isAdmin} />
                   </div>
                 </div>
               </div>
-              <Button onClick={handleSaveAndSync} disabled={isPending || !searchTitle.trim()} className="w-full">
+              <Button onClick={handleSaveAndSync} disabled={!isAdmin || isPending || !searchTitle.trim()} className="w-full">
                 {isPending
                   ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />En cours...</>
                   : <><Save className="w-4 h-4 mr-2" />Enregistrer et re-synchroniser</>

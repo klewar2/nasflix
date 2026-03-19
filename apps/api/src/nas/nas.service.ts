@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 
 interface SynoResponse<T = unknown> {
@@ -162,6 +162,72 @@ export class NasService {
     }
 
     return allFiles;
+  }
+
+  async getStreamUrl(
+    mediaId: number,
+    userId: number,
+    cineClubId: number,
+    mode: 'stream' | 'download',
+  ): Promise<{ url: string }> {
+    const [member, media, club] = await Promise.all([
+      this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
+      this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } }),
+      this.prisma.cineClub.findUnique({ where: { id: cineClubId } }),
+    ]);
+
+    if (!member?.nasUsername || !member?.nasPassword) {
+      throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
+    }
+    if (!media?.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
+    if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
+
+    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+
+    const url = new URL('/webapi/entry.cgi', club.nasBaseUrl);
+    url.searchParams.set('api', 'SYNO.FileStation.Download');
+    url.searchParams.set('version', '2');
+    url.searchParams.set('method', 'download');
+    url.searchParams.set('path', media.nasPath);
+    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
+    url.searchParams.set('_sid', session.sid);
+
+    return { url: url.toString() };
+  }
+
+  async getEpisodeStreamUrl(
+    episodeId: number,
+    userId: number,
+    cineClubId: number,
+    mode: 'stream' | 'download',
+  ): Promise<{ url: string }> {
+    const [member, episode] = await Promise.all([
+      this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
+      this.prisma.episode.findFirst({
+        where: { id: episodeId, season: { media: { cineClubId } } },
+        select: { nasPath: true },
+      }),
+    ]);
+
+    if (!member?.nasUsername || !member?.nasPassword) {
+      throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
+    }
+    if (!episode?.nasPath) throw new NotFoundException('Fichier épisode introuvable sur le NAS');
+
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
+
+    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+
+    const url = new URL('/webapi/entry.cgi', club.nasBaseUrl);
+    url.searchParams.set('api', 'SYNO.FileStation.Download');
+    url.searchParams.set('version', '2');
+    url.searchParams.set('method', 'download');
+    url.searchParams.set('path', episode.nasPath);
+    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
+    url.searchParams.set('_sid', session.sid);
+
+    return { url: url.toString() };
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
+import { useAuth } from '@/lib/auth';
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -62,6 +63,8 @@ function formatDateTime(dateStr: string | null | undefined) {
 export default function MediaListPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { cineClub } = useAuth();
+  const isAdmin = cineClub?.role === 'ADMIN';
 
   const typeFilter = searchParams.get('type') || '';
   const statusFilter = searchParams.get('status') || '';
@@ -188,24 +191,26 @@ export default function MediaListPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {isQueueActive && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => drainMutation.mutate()}
-              disabled={drainMutation.isPending}
-              className="border-red-800 text-red-400 hover:bg-red-950 hover:text-red-300"
-            >
-              <Square className="w-3.5 h-3.5 mr-1.5 fill-current" />
-              {drainMutation.isPending ? 'Arrêt...' : 'Stopper la synchronisation'}
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            {isQueueActive && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => drainMutation.mutate()}
+                disabled={drainMutation.isPending}
+                className="border-red-800 text-red-400 hover:bg-red-950 hover:text-red-300"
+              >
+                <Square className="w-3.5 h-3.5 mr-1.5 fill-current" />
+                {drainMutation.isPending ? 'Arrêt...' : 'Stopper la synchronisation'}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => enqueueMutation.mutate()} disabled={enqueueMutation.isPending}>
+              <RefreshCcw className="w-4 h-4 mr-2" />
+              {enqueueMutation.isPending ? 'En cours...' : 'Sync non-synchronisés'}
             </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={() => enqueueMutation.mutate()} disabled={enqueueMutation.isPending}>
-            <RefreshCcw className="w-4 h-4 mr-2" />
-            {enqueueMutation.isPending ? 'En cours...' : 'Sync non-synchronisés'}
-          </Button>
-        </div>
+          </div>
+        )}
       </div>
 
       {enqueueMutation.isSuccess && (
@@ -302,14 +307,16 @@ export default function MediaListPage() {
                     {formatDateTime(m.lastSyncedAt)}
                   </td>
                   <td className="p-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => syncMutation.mutate(m.id)} disabled={syncMutation.isPending} title="Re-synchroniser">
-                        <RefreshCw className="w-4 h-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Supprimer ce média ?')) deleteMutation.mutate(m.id); }} title="Supprimer">
-                        <Trash2 className="w-4 h-4 text-destructive" />
-                      </Button>
-                    </div>
+                    {isAdmin && (
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => syncMutation.mutate(m.id)} disabled={syncMutation.isPending} title="Re-synchroniser">
+                          <RefreshCw className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Supprimer ce média ?')) deleteMutation.mutate(m.id); }} title="Supprimer">
+                          <Trash2 className="w-4 h-4 text-destructive" />
+                        </Button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))

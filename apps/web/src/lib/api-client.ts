@@ -206,6 +206,14 @@ class ApiClient {
     return this.fetch<{ online: boolean; lastCheckedAt: string }>('/nas/status');
   }
 
+  getStreamUrl(mediaId: number, mode: 'stream' | 'download' = 'stream') {
+    return this.fetch<{ url: string }>(`/nas/stream/${mediaId}?mode=${mode}`);
+  }
+
+  getEpisodeStreamUrl(episodeId: number, mode: 'stream' | 'download' = 'stream') {
+    return this.fetch<{ url: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}`);
+  }
+
   // Health
   getHealth() {
     return this.fetch<HealthResponse>('/health');

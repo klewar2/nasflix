@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { UserPlus, Trash2, ChevronDown, ChevronUp, Save } from 'lucide-react';
 import type { UserResponse, CineClubMemberResponse } from '@nasflix/shared';
 
+
 interface UserEditForm {
   username: string;
   firstName: string;
@@ -35,33 +36,6 @@ export default function UsersPage() {
     queryKey: ['cineclubMembers', cineClub?.id],
     queryFn: () => (cineClub ? api.getCineClubMembers(cineClub.id) : Promise.resolve([])),
     enabled: !!cineClub,
-  });
-
-  // ── Mon compte ────────────────────────────────────────────────
-  const [myAccountForm, setMyAccountForm] = useState<UserEditForm>({
-    username: currentUser?.username ?? '',
-    firstName: currentUser?.firstName ?? '',
-    lastName: currentUser?.lastName ?? '',
-    password: '',
-  });
-  const [myAccountError, setMyAccountError] = useState('');
-
-  const updateMyAccountMutation = useMutation({
-    mutationFn: () => {
-      if (!currentUser) throw new Error('Non connecté');
-      return api.updateUser(currentUser.id, {
-        username: myAccountForm.username || undefined,
-        firstName: myAccountForm.firstName || undefined,
-        lastName: myAccountForm.lastName || undefined,
-        password: myAccountForm.password || undefined,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      setMyAccountForm((p) => ({ ...p, password: '' }));
-      setMyAccountError('');
-    },
-    onError: (err: Error) => setMyAccountError(err.message),
   });
 
   // ── Édition d'un utilisateur ──────────────────────────────────
@@ -186,61 +160,7 @@ export default function UsersPage() {
       <h1 className="text-2xl font-bold mb-6">Utilisateurs</h1>
       <div className="space-y-6">
 
-        {/* ── Mon compte ── */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Mon compte</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-zinc-400 mb-1 block">Nom d'utilisateur</label>
-                <Input
-                  value={myAccountForm.username}
-                  onChange={(e) => setMyAccountForm((p) => ({ ...p, username: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-400 mb-1 block">
-                  Nouveau mot de passe
-                  <span className="ml-1 text-zinc-600">(laisser vide pour conserver)</span>
-                </label>
-                <Input
-                  type="password"
-                  placeholder="••••••••"
-                  value={myAccountForm.password}
-                  onChange={(e) => setMyAccountForm((p) => ({ ...p, password: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-400 mb-1 block">Prénom</label>
-                <Input
-                  value={myAccountForm.firstName}
-                  onChange={(e) => setMyAccountForm((p) => ({ ...p, firstName: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-zinc-400 mb-1 block">Nom</label>
-                <Input
-                  value={myAccountForm.lastName}
-                  onChange={(e) => setMyAccountForm((p) => ({ ...p, lastName: e.target.value }))}
-                />
-              </div>
-            </div>
-            {myAccountError && <p className="text-sm text-destructive">{myAccountError}</p>}
-            {updateMyAccountMutation.isSuccess && <p className="text-sm text-green-400">Compte mis à jour</p>}
-            <Button
-              size="sm"
-              onClick={() => updateMyAccountMutation.mutate()}
-              disabled={updateMyAccountMutation.isPending}
-            >
-              <Save className="w-4 h-4 mr-2" />
-              {updateMyAccountMutation.isPending ? 'Sauvegarde...' : 'Sauvegarder'}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* ── Membres du CineClub ── */}
+          {/* ── Membres du CineClub ── */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Membres — {cineClub?.name}</CardTitle>

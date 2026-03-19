@@ -1,19 +1,21 @@
 import { Link, useLocation } from 'react-router';
-import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users } from 'lucide-react';
+import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users, UserCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 
 const navItems = [
-  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/media', icon: Film, label: 'Médias' },
-  { to: '/admin/sync', icon: RefreshCw, label: 'Synchronisation' },
-  { to: '/admin/settings', icon: Settings, label: 'Paramètres' },
-  { to: '/admin/users', icon: Users, label: 'Utilisateurs' },
+  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard', adminOnly: false },
+  { to: '/admin/media', icon: Film, label: 'Médias', adminOnly: false },
+  { to: '/admin/sync', icon: RefreshCw, label: 'Synchronisation', adminOnly: true },
+  { to: '/admin/settings', icon: Settings, label: 'Paramètres', adminOnly: true },
+  { to: '/admin/users', icon: Users, label: 'Utilisateurs', adminOnly: true },
+  { to: '/admin/profile', icon: UserCircle, label: 'Mon profil', adminOnly: false },
 ];
 
 export function Sidebar() {
   const location = useLocation();
-  const { logout } = useAuth();
+  const { logout, cineClub } = useAuth();
+  const isAdmin = cineClub?.role === 'ADMIN';
 
   return (
     <aside className="fixed left-0 top-0 bottom-0 w-60 bg-zinc-900/70 backdrop-blur-2xl border-r border-white/[0.06] flex flex-col z-10">
@@ -22,7 +24,7 @@ export function Sidebar() {
         <p className="text-xs text-zinc-500 mt-1">Backoffice</p>
       </div>
       <nav className="flex-1 p-3 space-y-1">
-        {navItems.map((item) => (
+        {navItems.filter(item => !item.adminOnly || isAdmin).map((item) => (
           <Link
             key={item.to}
             to={item.to}

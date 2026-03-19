@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Navigate } from 'react-router';
 import { api } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -8,6 +10,8 @@ import { useSyncSocket } from '@/hooks/use-sync-socket';
 
 export default function SyncPage() {
   const queryClient = useQueryClient();
+  const { cineClub } = useAuth();
+  if (cineClub?.role !== 'ADMIN') return <Navigate to="/admin/dashboard" replace />;
   const { stats } = useSyncSocket();
   const isQueueActive = stats.active > 0 || stats.waiting > 0;
 
