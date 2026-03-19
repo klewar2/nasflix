@@ -95,7 +95,7 @@ export class NasController {
 
   @Get('transcode')
   @Public()
-  transcode(
+  async transcode(
     @Query('t') token: string,
     @Req() req: Request,
     @Res() res: Response,
@@ -103,12 +103,17 @@ export class NasController {
     const data = this.verifyTranscodeToken(token);
     if (!data) { res.status(403).end(); return; }
 
+    // NestJS fetches from the NAS (Node.js fetch works; FFmpeg direct HTTPS does not)
+    const nasRes = await fetch(data.url);
+    if (!nasRes.ok || !nasRes.body) { res.status(502).end(); return; }
+
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Cache-Control', 'no-cache');
-    // No Content-Length — chunked streaming
+
+    const { Readable } = await import('node:stream');
 
     const ffmpeg = spawn(ffmpegPath, [
-      '-i', data.url,
+      '-i', 'pipe:0',
       '-c:v', 'copy',
       '-c:a', 'aac',
       '-b:a', '192k',
@@ -116,7 +121,10 @@ export class NasController {
       '-f', 'mp4',
       '-movflags', 'frag_keyframe+empty_moov',
       'pipe:1',
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    // Pipe NAS body → FFmpeg stdin
+    Readable.fromWeb(nasRes.body as Parameters<typeof Readable.fromWeb>[0]).pipe(ffmpeg.stdin!);
 
     req.on('close', () => { ffmpeg.kill('SIGKILL'); });
 
