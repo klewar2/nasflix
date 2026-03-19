@@ -17,6 +17,8 @@ RUN cd apps/api && pnpm prisma generate && pnpm build
 
 FROM node:20-alpine
 
+RUN apk add --no-cache ffmpeg
+
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
