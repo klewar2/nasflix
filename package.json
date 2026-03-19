@@ -20,6 +20,7 @@
       "@prisma/client",
       "@prisma/engines",
       "esbuild",
+      "ffmpeg-static",
       "prisma"
     ]
   }

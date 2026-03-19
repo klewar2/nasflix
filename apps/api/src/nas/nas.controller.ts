@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import type { Request, Response } from 'express';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpegPath: string = require('ffmpeg-static');
 import { NasService } from './nas.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Public } from '../auth/guards/public.decorator';
@@ -105,7 +107,7 @@ export class NasController {
     res.setHeader('Cache-Control', 'no-cache');
     // No Content-Length — chunked streaming
 
-    const ffmpeg = spawn('ffmpeg', [
+    const ffmpeg = spawn(ffmpegPath, [
       '-i', data.url,
       '-c:v', 'copy',
       '-c:a', 'aac',
