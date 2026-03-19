@@ -13,7 +13,7 @@ RUN pnpm install --frozen-lockfile
 COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
 
-RUN cd apps/api && pnpm prisma generate && pnpm build
+RUN cd apps/api && pnpm build
 
 FROM node:20-alpine
 
@@ -29,9 +29,11 @@ COPY --from=builder /app/packages/shared/package.json ./packages/shared/
 
 RUN pnpm install --frozen-lockfile --prod
 
-COPY --from=builder /app/apps/api/dist ./apps/api/dist
+# Generate Prisma client for the target platform
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
-COPY --from=builder /app/apps/api/node_modules/.prisma ./apps/api/node_modules/.prisma
+RUN cd apps/api && npx prisma generate
+
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/packages/shared ./packages/shared
 
 WORKDIR /app/apps/api
