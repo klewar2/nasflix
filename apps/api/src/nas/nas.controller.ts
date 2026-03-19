@@ -26,14 +26,14 @@ export class NasController {
     return this.configService.get<string>('JWT_SECRET', 'fallback-secret');
   }
 
-  private signTranscodeToken(nasUrl: string): string {
+  private signTranscodeToken(nasUrl: string, durationSeconds: number): string {
     const exp = Math.floor(Date.now() / 1000) + 4 * 3600; // 4 hours
-    const payload = Buffer.from(JSON.stringify({ url: nasUrl, exp })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ url: nasUrl, duration: durationSeconds, exp })).toString('base64url');
     const sig = createHmac('sha256', this.tokenSecret).update(payload).digest('base64url');
     return `${payload}.${sig}`;
   }
 
-  private verifyTranscodeToken(token: string): { url: string; exp: number } | null {
+  private verifyTranscodeToken(token: string): { url: string; duration: number; exp: number } | null {
     const dot = token.lastIndexOf('.');
     if (dot < 0) return null;
     const payload = token.slice(0, dot);
@@ -68,12 +68,12 @@ export class NasController {
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const { nasUrl } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode);
+    const { nasUrl, durationSeconds } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode);
 
     if (mode === 'stream') {
-      return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl)}`, isHls: false };
+      return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
-    return { url: nasUrl, isHls: false };
+    return { url: nasUrl, isHls: false, durationSeconds };
   }
 
   @Get('stream/:mediaId')
@@ -83,12 +83,12 @@ export class NasController {
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const { nasUrl } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode);
+    const { nasUrl, durationSeconds } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode);
 
     if (mode === 'stream') {
-      return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl)}`, isHls: false };
+      return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
-    return { url: nasUrl, isHls: false };
+    return { url: nasUrl, isHls: false, durationSeconds };
   }
 
   // ── FFmpeg transcode proxy ─────────────────────────────────────────────────
@@ -97,39 +97,106 @@ export class NasController {
   @Public()
   async transcode(
     @Query('t') token: string,
+    @Query('seek') seekStr: string = '0',
     @Req() req: Request,
     @Res() res: Response,
   ) {
     const data = this.verifyTranscodeToken(token);
     if (!data) { res.status(403).end(); return; }
 
-    // NestJS fetches from the NAS (Node.js fetch works; FFmpeg direct HTTPS does not)
-    const nasRes = await fetch(data.url);
-    if (!nasRes.ok || !nasRes.body) { res.status(502).end(); return; }
+    const seek = Math.max(0, parseInt(seekStr) || 0);
 
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Cache-Control', 'no-cache');
+    if (data.duration > 0) {
+      res.setHeader('X-Duration', String(data.duration));
+    }
 
-    const { Readable } = await import('node:stream');
-
-    const ffmpeg = spawn(ffmpegPath, [
-      '-i', 'pipe:0',
-      '-c:v', 'copy',
+    // Try FFmpeg with direct NAS URL first (fast seek with -ss).
+    // Falls back to stdin pipe if FFmpeg can't open the URL.
+    const ffmpegArgs = [
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '5',
+      '-tls_verify', '0',
+      ...(seek > 0 ? ['-ss', String(seek)] : []),
+      '-i', data.url,
+      '-map', '0:v:0',
+      '-map', '0:a:0',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '23',
+      '-vf', 'scale=-2:min(ih\\,1080)',
       '-c:a', 'aac',
       '-b:a', '192k',
       '-ac', '2',
       '-f', 'mp4',
       '-movflags', 'frag_keyframe+empty_moov',
       'pipe:1',
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+    ];
 
-    // Pipe NAS body → FFmpeg stdin
-    Readable.fromWeb(nasRes.body as Parameters<typeof Readable.fromWeb>[0]).pipe(ffmpeg.stdin!);
+    const ffmpeg = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    req.on('close', () => { ffmpeg.kill('SIGKILL'); });
+    // If FFmpeg fails to open the URL, fall back to stdin pipe
+    let directUrlFailed = false;
+    let stdinFallbackStarted = false;
+
+    const startStdinFallback = async () => {
+      if (stdinFallbackStarted || res.headersSent && res.writableEnded) return;
+      stdinFallbackStarted = true;
+      this.logger.warn('[FFmpeg] Direct URL failed, falling back to stdin pipe');
+
+      const { Readable } = await import('node:stream');
+      const abort = new AbortController();
+      const nasRes = await fetch(data.url, { signal: abort.signal }).catch(() => null);
+      if (!nasRes?.ok || !nasRes.body) { if (!res.headersSent) res.status(502).end(); return; }
+
+      const fallbackArgs = [
+        ...(seek > 0 ? ['-ss', String(seek)] : []),
+        '-i', 'pipe:0',
+        '-map', '0:v:0', '-map', '0:a:0',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-vf', 'scale=-2:min(ih\\,1080)',
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov',
+        'pipe:1',
+      ];
+      const fb = spawn(ffmpegPath, fallbackArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+      const nasReadable = Readable.fromWeb(nasRes.body as Parameters<typeof Readable.fromWeb>[0]);
+      nasReadable.on('error', () => {});
+      fb.stdin?.on('error', () => {});
+      nasReadable.pipe(fb.stdin!);
+      req.on('close', () => { fb.kill('SIGKILL'); nasReadable.destroy(); abort.abort(); });
+      fb.stderr?.on('data', (c: Buffer) => this.logger.debug(`[FFmpeg-fb] ${c.toString().trim()}`));
+      fb.stdout?.pipe(res);
+    };
+
+    // Detect if FFmpeg can't open the URL (5s timeout with no output)
+    const urlTimeout = setTimeout(() => {
+      if (!directUrlFailed && !res.writableEnded) {
+        directUrlFailed = true;
+        ffmpeg.kill('SIGKILL');
+        startStdinFallback();
+      }
+    }, 5000);
+
+    ffmpeg.stdout?.once('data', () => clearTimeout(urlTimeout));
+
+    req.on('close', () => {
+      clearTimeout(urlTimeout);
+      ffmpeg.kill('SIGKILL');
+    });
 
     ffmpeg.stderr?.on('data', (chunk: Buffer) => {
-      this.logger.debug(`[FFmpeg] ${chunk.toString().trim()}`);
+      const line = chunk.toString().trim();
+      this.logger.debug(`[FFmpeg] ${line}`);
+      // Detect connection errors → trigger fallback immediately
+      if (!directUrlFailed && (line.includes('Connection refused') || line.includes('Network unreachable') || line.includes('No such file'))) {
+        directUrlFailed = true;
+        clearTimeout(urlTimeout);
+        ffmpeg.kill('SIGKILL');
+        startStdinFallback();
+      }
     });
 
     ffmpeg.on('error', (err) => {

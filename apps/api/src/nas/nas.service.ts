@@ -180,7 +180,7 @@ export class NasService {
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
-  ): Promise<{ nasUrl: string }> {
+  ): Promise<{ nasUrl: string; durationSeconds: number }> {
     const [member, media, club] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } }),
@@ -194,7 +194,10 @@ export class NasService {
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
 
     const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-    return { nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, mode) };
+    return {
+      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, mode),
+      durationSeconds: (media.runtime ?? 0) * 60,
+    };
   }
 
   async getEpisodeStreamUrl(
@@ -202,12 +205,12 @@ export class NasService {
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
-  ): Promise<{ nasUrl: string }> {
+  ): Promise<{ nasUrl: string; durationSeconds: number }> {
     const [member, episode] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.episode.findFirst({
         where: { id: episodeId, season: { media: { cineClubId } } },
-        select: { nasPath: true },
+        select: { nasPath: true, runtime: true },
       }),
     ]);
 
@@ -220,7 +223,10 @@ export class NasService {
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
 
     const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-    return { nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, mode) };
+    return {
+      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, mode),
+      durationSeconds: (episode.runtime ?? 0) * 60,
+    };
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {

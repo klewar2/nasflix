@@ -15,7 +15,7 @@ export default function MediaDetailPage() {
   const isMember = !!cineClub;
 
   const [copied, setCopied] = useState(false);
-  const [player, setPlayer] = useState<{ url: string; title: string; isHls: boolean } | null>(null);
+  const [player, setPlayer] = useState<{ url: string; title: string; isHls: boolean; durationSeconds: number } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const { data: media, isLoading } = useQuery({
@@ -42,11 +42,11 @@ export default function MediaDetailPage() {
     }
   };
 
-  const openPlayer = async (fetchUrl: () => Promise<{ url: string; isHls: boolean }>, title: string, key: string) => {
+  const openPlayer = async (fetchUrl: () => Promise<{ url: string; isHls: boolean; durationSeconds: number }>, title: string, key: string) => {
     setLoadingId(key);
     try {
-      const { url, isHls } = await fetchUrl();
-      setPlayer({ url, title, isHls });
+      const { url, isHls, durationSeconds } = await fetchUrl();
+      setPlayer({ url, title, isHls, durationSeconds });
     } catch {
       // silently fail — NAS may have gone offline between status check and request
     } finally {
@@ -99,6 +99,7 @@ export default function MediaDetailPage() {
           url={player.url}
           title={player.title}
           isHls={player.isHls}
+          durationSeconds={player.durationSeconds}
           onClose={() => setPlayer(null)}
         />
       )}

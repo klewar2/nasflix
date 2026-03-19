@@ -7,9 +7,18 @@ interface VideoPlayerModalProps {
   title: string;
   onClose: () => void;
   isHls?: boolean;
+  durationSeconds?: number;
 }
 
-export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPlayerModalProps) {
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+function resolveUrl(url: string, seek = 0): string {
+  const base = url.startsWith('/') ? `${API_BASE}${url}` : url;
+  if (seek > 0 && url.includes('/nas/transcode')) return `${base}&seek=${seek}`;
+  return base;
+}
+
+export function VideoPlayerModal({ url, title, onClose, isHls = false, durationSeconds = 0 }: VideoPlayerModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -17,13 +26,19 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPl
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [seekOffset, setSeekOffset] = useState(0);   // absolute position of the current stream start
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [buffering, setBuffering] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Total duration: prefer TMDB value, fall back to what the video element reports
+  const totalDuration = durationSeconds > 0 ? durationSeconds : (videoDuration > 0 && isFinite(videoDuration) ? videoDuration : 0);
+  const absoluteTime = seekOffset + currentTime;
+  const progress = totalDuration > 0 ? Math.min((absoluteTime / totalDuration) * 100, 100) : 0;
 
   const formatTime = (s: number) => {
     if (!isFinite(s) || s < 0) return '0:00';
@@ -50,52 +65,45 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPl
     return () => document.removeEventListener('fullscreenchange', onFsc);
   }, []);
 
-  // Prevent page scroll while player is open
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
   }, []);
 
-  // Initialisation source : HLS via hls.js ou URL directe
+  // HLS initialisation
   useEffect(() => {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v || !isHls) return;
 
-    if (isHls) {
-      // L'URL est un chemin relatif (/nas/hls-manifest?...) → on préfixe avec l'API base
-      const apiBase = import.meta.env.VITE_API_URL || '/api';
-      const fullHlsUrl = `${apiBase}${url}`;
-      const token = localStorage.getItem('accessToken');
+    const fullHlsUrl = resolveUrl(url);
+    const token = localStorage.getItem('accessToken');
 
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          xhrSetup: (xhr) => {
-            if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-          },
-        });
-        hlsRef.current = hls;
-        hls.loadSource(fullHlsUrl);
-        hls.attachMedia(v);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          v.volume = 1;
-          v.muted = false;
-        });
-        hls.on(Hls.Events.ERROR, (_, data) => {
-          if (data.fatal) setError('Impossible de lire la vidéo. Vérifiez que le NAS est accessible.');
-        });
-        return () => { hls.destroy(); hlsRef.current = null; };
-      } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari — HLS natif (le token est dans l'URL via _sid, pas besoin d'en-tête)
-        v.src = fullHlsUrl;
-        v.volume = 1;
-        v.muted = false;
-      }
-    } else {
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        xhrSetup: (xhr) => { if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`); },
+      });
+      hlsRef.current = hls;
+      hls.loadSource(fullHlsUrl);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { v.volume = 1; v.muted = false; });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) setError('Impossible de lire la vidéo. Vérifiez que le NAS est accessible.');
+      });
+      return () => { hls.destroy(); hlsRef.current = null; };
+    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      v.src = fullHlsUrl;
       v.volume = 1;
       v.muted = false;
     }
   }, [url, isHls]);
+
+  // Init volume for non-HLS
+  useEffect(() => {
+    if (isHls) return;
+    const v = videoRef.current;
+    if (v) { v.volume = 1; v.muted = false; }
+  }, [isHls]);
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
@@ -128,13 +136,30 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPl
     return () => document.removeEventListener('keydown', handler);
   }, [onClose, togglePlay, toggleFullscreen, toggleMute]);
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (totalDuration <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    if (videoRef.current) videoRef.current.currentTime = ratio * duration;
+    const seekTo = Math.floor(ratio * totalDuration);
+
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (url.includes('/nas/transcode')) {
+      // Restart stream from seek position
+      setSeekOffset(seekTo);
+      setCurrentTime(0);
+      setBuffering(true);
+      setPlaying(false);
+      v.src = resolveUrl(url, seekTo);
+      v.play().catch(() => {});
+    } else {
+      // Native seek (HLS or direct file)
+      v.currentTime = ratio * (videoDuration || totalDuration);
+    }
   };
+
+  const videoSrc = isHls ? undefined : resolveUrl(url, 0);
 
   return (
     <div className="fixed inset-0 z-50 bg-black">
@@ -147,13 +172,13 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPl
         {/* Video element */}
         <video
           ref={videoRef}
-          src={isHls ? undefined : (url.startsWith('/') ? `${import.meta.env.VITE_API_URL || '/api'}${url}` : url)}
+          src={videoSrc}
           className="w-full h-full object-contain"
           playsInline
           onPlay={() => { setPlaying(true); scheduleHide(true); }}
           onPause={() => { setPlaying(false); clearTimeout(hideTimer.current); setShowControls(true); }}
           onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}
-          onDurationChange={() => setDuration(videoRef.current?.duration ?? 0)}
+          onDurationChange={() => setVideoDuration(videoRef.current?.duration ?? 0)}
           onWaiting={() => setBuffering(true)}
           onCanPlay={() => setBuffering(false)}
           onLoadedData={() => setBuffering(false)}
@@ -215,16 +240,11 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPl
               className="relative h-1 group cursor-pointer rounded-full overflow-visible"
               onClick={handleSeek}
             >
-              {/* Track */}
               <div className="absolute inset-0 bg-white/20 rounded-full" />
-              {/* Buffered (visual only, approximate) */}
-              <div className="absolute left-0 top-0 h-full bg-white/10 rounded-full" style={{ width: `${Math.min(progress + 10, 100)}%` }} />
-              {/* Played */}
               <div
                 className="absolute left-0 top-0 h-full bg-[#e50914] rounded-full transition-none"
                 style={{ width: `${progress}%` }}
               />
-              {/* Thumb */}
               <div
                 className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1/2"
                 style={{ left: `${progress}%` }}
@@ -273,7 +293,7 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false }: VideoPl
 
               {/* Time */}
               <span className="text-white/80 text-xs font-mono tabular-nums">
-                {formatTime(currentTime)} / {formatTime(duration)}
+                {formatTime(absoluteTime)} / {totalDuration > 0 ? formatTime(totalDuration) : '--:--'}
               </span>
 
               <div className="flex-1" />
