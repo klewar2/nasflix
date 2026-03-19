@@ -3,6 +3,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "apps/api/Dockerfile"
 
 [deploy]
-startCommand = "pnpm exec prisma migrate deploy && node dist/main"
+startCommand = "./apps/api/node_modules/.bin/prisma migrate deploy --schema=./apps/api/prisma/schema.prisma && node apps/api/dist/main"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 5
