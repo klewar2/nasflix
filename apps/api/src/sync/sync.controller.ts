@@ -2,6 +2,7 @@ import { Controller, Post, Get, Param, Query, ParseIntPipe, DefaultValuePipe, He
 import { SyncService } from './sync.service';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma.service';
+import { SyncGateway } from './sync.gateway';
 import { Public } from '../auth/guards/public.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/guards/roles.decorator';
@@ -16,6 +17,7 @@ export class SyncController {
     private readonly syncService: SyncService,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly syncGateway: SyncGateway,
   ) {}
 
   @Post('full')
@@ -58,20 +60,41 @@ export class SyncController {
   async webhook(
     @Headers('x-sync-secret') secret: string,
     @Headers('x-cineclubid') cineClubIdHeader: string,
-    @Body() body: { added?: string[]; removed?: string[]; moved?: Array<{ from: string; to: string }> },
+    @Body() body: { trigger?: string; added?: string[]; removed?: string[]; moved?: Array<{ from: string; to: string }> },
   ) {
-    const expectedSecret = this.configService.get<string>('SYNC_WEBHOOK_SECRET');
-    if (!expectedSecret || secret !== expectedSecret) {
-      throw new UnauthorizedException('Webhook secret invalide');
+    // Résolution du CineClub : 1) par webhookSecret en DB (auto-identifiant, pas de header requis)
+    //                           2) fallback legacy : env var global + header x-cineclubid
+    let cineClubId: number;
+
+    const clubBySecret = secret
+      ? await this.prisma.cineClub.findUnique({ where: { webhookSecret: secret } })
+      : null;
+
+    if (clubBySecret) {
+      cineClubId = clubBySecret.id;
+    } else {
+      // Fallback legacy pour les installations existantes
+      const globalSecret = this.configService.get<string>('SYNC_WEBHOOK_SECRET');
+      if (!globalSecret || secret !== globalSecret) {
+        throw new UnauthorizedException('Webhook secret invalide');
+      }
+      cineClubId = parseInt(cineClubIdHeader, 10);
+      if (!cineClubId) throw new ForbiddenException('X-CineClubId header manquant (migrez vers un webhookSecret par CineClub)');
     }
-    const cineClubId = parseInt(cineClubIdHeader, 10);
-    if (!cineClubId) throw new ForbiddenException('X-CineClubId header manquant');
+
+    // Détection du boot NAS → mise à jour lastOnlineAt + notification WebSocket
+    if (body?.trigger === 'nas_boot') {
+      await this.prisma.cineClub.update({ where: { id: cineClubId }, data: { lastOnlineAt: new Date() } });
+      this.syncGateway.emitNasOnline(cineClubId);
+      // Profiter du boot pour enqueuer les métadonnées en attente
+      this.syncService.enqueuePendingMetadata(cineClubId).catch((err) => console.error('Boot metadata sync failed:', err));
+      return { message: 'Boot détecté, sync enclenchée' };
+    }
 
     const hasDiff = (body?.added?.length ?? 0) + (body?.removed?.length ?? 0) + (body?.moved?.length ?? 0) > 0;
     if (hasDiff) {
       this.syncService.diffSync(cineClubId, body).catch((err) => console.error('Webhook diff sync failed:', err));
     } else {
-      // For webhook full sync, we need NAS credentials — just enqueue pending metadata
       this.syncService.enqueuePendingMetadata(cineClubId).catch((err) => console.error('Webhook sync failed:', err));
     }
 

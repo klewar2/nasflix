@@ -30,9 +30,23 @@ export class CineClubsController {
   @Roles(MemberRole.ADMIN)
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { name?: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string },
+    @Body() body: {
+      name?: string;
+      nasBaseUrl?: string;
+      nasSharedFolders?: string[];
+      tmdbApiKey?: string;
+      nasWolMac?: string | null;
+      nasWolHost?: string | null;
+      nasWolPort?: number | null;
+    },
   ) {
     return this.cineClubsService.update(id, body);
+  }
+
+  @Post(':id/generate-webhook-secret')
+  @Roles(MemberRole.ADMIN)
+  generateWebhookSecret(@Param('id', ParseIntPipe) id: number) {
+    return this.cineClubsService.generateWebhookSecret(id);
   }
 
   @Delete(':id')

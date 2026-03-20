@@ -45,6 +45,10 @@ model CineClub {
   nasBaseUrl       String?
   nasSharedFolders String[]         @default([])
   tmdbApiKey       String?
+  webhookSecret    String?          @unique
+  nasWolMac        String?
+  nasWolHost       String?
+  nasWolPort       Int?
   lastOnlineAt     DateTime?
   lastSyncAt       DateTime?
   createdAt        DateTime         @default(now())

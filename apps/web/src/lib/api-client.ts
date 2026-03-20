@@ -82,8 +82,12 @@ class ApiClient {
     return this.fetch<CineClubResponse>(`/cineclubs/${id}`);
   }
 
-  updateCineClub(id: number, data: Partial<Pick<CineClubResponse, 'name' | 'nasBaseUrl' | 'nasSharedFolders' | 'tmdbApiKey'>>) {
+  updateCineClub(id: number, data: Partial<Pick<CineClubResponse, 'name' | 'nasBaseUrl' | 'nasSharedFolders' | 'tmdbApiKey' | 'nasWolMac' | 'nasWolHost' | 'nasWolPort'>>) {
     return this.fetch<CineClubResponse>(`/cineclubs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
+  generateWebhookSecret(cineClubId: number) {
+    return this.fetch<{ webhookSecret: string }>(`/cineclubs/${cineClubId}/generate-webhook-secret`, { method: 'POST' });
   }
 
   createCineClub(data: { name: string; slug: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {
@@ -204,6 +208,10 @@ class ApiClient {
   // NAS
   getNasStatus() {
     return this.fetch<{ online: boolean; lastCheckedAt: string }>('/nas/status');
+  }
+
+  wakeNas() {
+    return this.fetch<{ sent: boolean; message: string }>('/nas/wake', { method: 'POST' });
   }
 
   getStreamUrl(mediaId: number, mode: 'stream' | 'download' = 'stream') {

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Save } from 'lucide-react';
+import { Copy, RefreshCw, Save } from 'lucide-react';
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -14,17 +14,24 @@ export default function SettingsPage() {
 
   const isAdmin = cineClub?.role === 'ADMIN';
 
-  // CineClub settings
   const [clubName, setClubName] = useState(cineClub?.name ?? '');
   const [nasUrl, setNasUrl] = useState(cineClub?.nasBaseUrl ?? '');
   const [nasFolders, setNasFolders] = useState(cineClub?.nasSharedFolders?.join(', ') ?? '');
   const [tmdbKey, setTmdbKey] = useState('');
+  const [wolMac, setWolMac] = useState(cineClub?.nasWolMac ?? '');
+  const [wolHost, setWolHost] = useState(cineClub?.nasWolHost ?? '');
+  const [wolPort, setWolPort] = useState(String(cineClub?.nasWolPort ?? 9));
+  const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (cineClub) {
       setClubName(cineClub.name);
       setNasUrl(cineClub.nasBaseUrl ?? '');
       setNasFolders(cineClub.nasSharedFolders?.join(', ') ?? '');
+      setWolMac(cineClub.nasWolMac ?? '');
+      setWolHost(cineClub.nasWolHost ?? '');
+      setWolPort(String(cineClub.nasWolPort ?? 9));
     }
   }, [cineClub]);
 
@@ -36,6 +43,9 @@ export default function SettingsPage() {
         nasBaseUrl: nasUrl || undefined,
         nasSharedFolders: nasFolders.split(',').map((f) => f.trim()).filter(Boolean),
         ...(tmdbKey ? { tmdbApiKey: tmdbKey } : {}),
+        nasWolMac: wolMac || null,
+        nasWolHost: wolHost || null,
+        nasWolPort: wolPort ? parseInt(wolPort) : null,
       });
     },
     onSuccess: (updated) => {
@@ -45,12 +55,32 @@ export default function SettingsPage() {
     },
   });
 
+  const secretMutation = useMutation({
+    mutationFn: () => {
+      if (!cineClub) throw new Error('Aucun CineClub sélectionné');
+      return api.generateWebhookSecret(cineClub.id);
+    },
+    onSuccess: ({ webhookSecret }) => {
+      setGeneratedSecret(webhookSecret);
+      setCopied(false);
+      queryClient.invalidateQueries({ queryKey: ['cineclub'] });
+    },
+  });
+
+  const handleCopySecret = () => {
+    if (!generatedSecret) return;
+    navigator.clipboard.writeText(generatedSecret);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Paramètres</h1>
       {!cineClub && <p className="text-zinc-400">Aucun CineClub sélectionné.</p>}
       {cineClub && (
         <div className="space-y-6">
+          {/* Paramètres généraux */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -61,41 +91,20 @@ export default function SettingsPage() {
             <CardContent className="space-y-4">
               <div>
                 <label className="text-sm text-zinc-400 mb-1 block">Nom du CineClub</label>
-                <Input
-                  placeholder="Mon CineClub"
-                  value={clubName}
-                  onChange={(e) => setClubName(e.target.value)}
-                  disabled={!isAdmin}
-                />
+                <Input placeholder="Mon CineClub" value={clubName} onChange={(e) => setClubName(e.target.value)} disabled={!isAdmin} />
               </div>
               <div>
                 <label className="text-sm text-zinc-400 mb-1 block">URL du NAS</label>
-                <Input
-                  placeholder="https://mon-nas.synology.me:5001"
-                  value={nasUrl}
-                  onChange={(e) => setNasUrl(e.target.value)}
-                  disabled={!isAdmin}
-                />
+                <Input placeholder="https://mon-nas.synology.me:5001" value={nasUrl} onChange={(e) => setNasUrl(e.target.value)} disabled={!isAdmin} />
               </div>
               <div>
                 <label className="text-sm text-zinc-400 mb-1 block">Dossiers à scanner (séparés par des virgules)</label>
-                <Input
-                  placeholder="/volume1/video/Films, /volume1/video/Series"
-                  value={nasFolders}
-                  onChange={(e) => setNasFolders(e.target.value)}
-                  disabled={!isAdmin}
-                />
+                <Input placeholder="/volume1/video/Films, /volume1/video/Series" value={nasFolders} onChange={(e) => setNasFolders(e.target.value)} disabled={!isAdmin} />
               </div>
               <div>
                 <label className="text-sm text-zinc-400 mb-1 block">Clé TMDB API</label>
                 <p className="text-xs text-zinc-500 mb-1">{cineClub.tmdbApiKey ? 'Clé configurée (masquée)' : 'Aucune clé — utilise la clé serveur par défaut'}</p>
-                {isAdmin && (
-                  <Input
-                    placeholder="Nouvelle clé TMDB (optionnel)"
-                    value={tmdbKey}
-                    onChange={(e) => setTmdbKey(e.target.value)}
-                  />
-                )}
+                {isAdmin && <Input placeholder="Nouvelle clé TMDB (optionnel)" value={tmdbKey} onChange={(e) => setTmdbKey(e.target.value)} />}
               </div>
               {isAdmin && (
                 <>
@@ -113,6 +122,71 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Wake-on-LAN */}
+          {isAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Wake-on-LAN</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs text-zinc-500">Permet d'allumer le NAS depuis l'interface. Nécessite que WoL soit activé dans DSM et un port-forward UDP 9 sur le routeur.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm text-zinc-400 mb-1 block">Adresse MAC du NAS</label>
+                    <Input placeholder="00:11:32:AA:BB:CC" value={wolMac} onChange={(e) => setWolMac(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm text-zinc-400 mb-1 block">Hôte WoL (IP publique ou DynDNS)</label>
+                    <Input placeholder="klewar2.synology.me" value={wolHost} onChange={(e) => setWolHost(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm text-zinc-400 mb-1 block">Port UDP <span className="text-zinc-600">(défaut : 9)</span></label>
+                    <Input type="number" placeholder="9" value={wolPort} onChange={(e) => setWolPort(e.target.value)} />
+                  </div>
+                </div>
+                <Button onClick={() => cineClubMutation.mutate()} disabled={cineClubMutation.isPending} size="sm">
+                  <Save className="w-4 h-4 mr-2" />
+                  Sauvegarder WoL
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Secret webhook */}
+          {isAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Secret webhook NAS</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs text-zinc-500">
+                  Identifie ce CineClub auprès de l'API sans header <code className="bg-zinc-800 px-1 rounded">x-cineclubid</code>. À renseigner dans <code className="bg-zinc-800 px-1 rounded">watch-downloads.sh</code> et <code className="bg-zinc-800 px-1 rounded">sync-on-boot.sh</code> comme valeur de <code className="bg-zinc-800 px-1 rounded">SECRET</code>.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Badge variant={cineClub.webhookSecretSet ? 'success' : 'secondary'}>
+                    {cineClub.webhookSecretSet ? 'Secret configuré' : 'Aucun secret'}
+                  </Badge>
+                  <Button size="sm" variant="outline" onClick={() => secretMutation.mutate()} disabled={secretMutation.isPending}>
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    {cineClub.webhookSecretSet ? 'Regénérer' : 'Générer un secret'}
+                  </Button>
+                </div>
+                {generatedSecret && (
+                  <div className="rounded-md bg-zinc-900 border border-zinc-700 p-3 space-y-2">
+                    <p className="text-xs text-yellow-400">Copiez ce secret maintenant — il ne sera plus affiché.</p>
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs text-zinc-200 font-mono break-all flex-1">{generatedSecret}</code>
+                      <Button size="sm" variant="ghost" onClick={handleCopySecret}>
+                        <Copy className="w-4 h-4" />
+                        {copied ? 'Copié !' : ''}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
     </div>

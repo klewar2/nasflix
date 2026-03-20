@@ -32,6 +32,11 @@ export class SyncGateway implements OnGatewayConnection {
     this.server.emit('sync:media-updated', { mediaId, syncStatus });
   }
 
+  emitNasOnline(cineClubId: number) {
+    if (!this.server) return;
+    this.server.emit('nas:online', { cineClubId });
+  }
+
   private async getStats(): Promise<SyncStats> {
     const [active, waiting] = await Promise.all([
       this.metadataQueue.getActiveCount(),

@@ -52,6 +52,10 @@ export interface CineClubResponse {
   nasBaseUrl: string | null;
   nasSharedFolders: string[];
   tmdbApiKey: string | null;
+  webhookSecretSet: boolean;
+  nasWolMac: string | null;
+  nasWolHost: string | null;
+  nasWolPort: number | null;
   lastOnlineAt: string | null;
   lastSyncAt: string | null;
   role?: 'ADMIN' | 'VIEWER';

@@ -1,4 +1,4 @@
-import { Controller, ForbiddenException, Get, Logger, Param, ParseIntPipe, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Logger, Param, ParseIntPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -7,8 +7,10 @@ import type { Request, Response } from 'express';
 const ffmpegPath: string = require('ffmpeg-static');
 import { NasService } from './nas.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/guards/roles.decorator';
 import { Public } from '../auth/guards/public.decorator';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { MemberRole } from '@prisma/client';
 
 @Controller('nas')
 @UseGuards(RolesGuard)
@@ -49,6 +51,16 @@ export class NasController {
     return data;
   }
 
+  // ── Wake-on-LAN ────────────────────────────────────────────────────────────
+
+  @Post('wake')
+  @Roles(MemberRole.ADMIN)
+  async wake(@Req() req: { user: JwtPayload }) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    await this.nasService.sendWakeOnLan(req.user.cineClubId);
+    return { sent: true, message: 'Magic packet envoyé. Le NAS devrait démarrer dans 1 à 3 minutes.' };
+  }
+
   // ── Status ─────────────────────────────────────────────────────────────────
 
   @Get('status')
@@ -68,9 +80,11 @@ export class NasController {
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const { nasUrl, durationSeconds } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode);
+    const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode);
 
     if (mode === 'stream') {
+      // VideoStation HLS → browser streams directly from NAS (no Railway proxy)
+      if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     return { url: nasUrl, isHls: false, durationSeconds };
@@ -83,9 +97,11 @@ export class NasController {
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const { nasUrl, durationSeconds } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode);
+    const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode);
 
     if (mode === 'stream') {
+      // VideoStation HLS → browser streams directly from NAS (no Railway proxy)
+      if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     return { url: nasUrl, isHls: false, durationSeconds };

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../common/prisma.service';
 import { MemberRole } from '@prisma/client';
 
@@ -8,36 +9,59 @@ export class CineClubsService {
 
   async findAll(userId: number, isSuperAdmin: boolean) {
     if (isSuperAdmin) {
-      return this.prisma.cineClub.findMany({ orderBy: { name: 'asc' } });
+      const clubs = await this.prisma.cineClub.findMany({ orderBy: { name: 'asc' } });
+      return clubs.map((c) => this.sanitize(c));
     }
     const memberships = await this.prisma.cineClubMember.findMany({
       where: { userId },
       include: { cineClub: true },
       orderBy: { cineClub: { name: 'asc' } },
     });
-    return memberships.map((m) => m.cineClub);
+    return memberships.map((m) => this.sanitize(m.cineClub));
   }
 
   async findOne(id: number) {
     const club = await this.prisma.cineClub.findUnique({ where: { id } });
     if (!club) throw new NotFoundException('CineClub introuvable');
-    return club;
+    return this.sanitize(club);
+  }
+
+  /** Masque webhookSecret en booléen pour ne jamais l'exposer côté API */
+  private sanitize(club: Parameters<typeof Object.assign>[0] & { webhookSecret?: string | null }) {
+    const { webhookSecret, ...rest } = club;
+    return { ...rest, webhookSecretSet: !!webhookSecret };
   }
 
   async create(data: { name: string; slug: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {
     const existing = await this.prisma.cineClub.findUnique({ where: { slug: data.slug } });
     if (existing) throw new ConflictException('Ce slug est déjà utilisé');
-    return this.prisma.cineClub.create({ data });
+    return this.sanitize(await this.prisma.cineClub.create({ data }));
   }
 
-  async update(id: number, data: { name?: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {
+  async update(id: number, data: {
+    name?: string;
+    nasBaseUrl?: string;
+    nasSharedFolders?: string[];
+    tmdbApiKey?: string;
+    nasWolMac?: string | null;
+    nasWolHost?: string | null;
+    nasWolPort?: number | null;
+  }) {
     await this.findOne(id);
-    return this.prisma.cineClub.update({ where: { id }, data });
+    return this.sanitize(await this.prisma.cineClub.update({ where: { id }, data }));
+  }
+
+  /** Génère un nouveau webhookSecret et le retourne en clair (une seule fois). */
+  async generateWebhookSecret(id: number): Promise<{ webhookSecret: string }> {
+    await this.findOne(id);
+    const webhookSecret = randomBytes(32).toString('hex');
+    await this.prisma.cineClub.update({ where: { id }, data: { webhookSecret } });
+    return { webhookSecret };
   }
 
   async remove(id: number) {
     await this.findOne(id);
-    return this.prisma.cineClub.delete({ where: { id } });
+    return this.prisma.cineClub.delete({ where: { id } }).then((c) => this.sanitize(c));
   }
 
   async getMembers(cineClubId: number) {
