@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 68 100">
+  <path d="M0 0 L22 0 L34 22 L46 0 L68 0 L68 100 L46 100 L46 78 L34 56 L22 78 L22 100 L0 100 Z
+           M22 0 L22 40 L34 62 L46 40 L46 0
+           M0 0 L0 100 L22 100 L22 60 L0 0
+           M46 100 L68 100 L68 0 L46 40 L46 100" fill="none"/>
+  <!-- Nasflix N shape — deux barres verticales + diagonale -->
+  <rect x="0" y="0" width="18" height="100" fill="#e50914"/>
+  <rect x="50" y="0" width="18" height="100" fill="#e50914"/>
+  <polygon points="0,0 18,0 68,100 50,100" fill="#e50914"/>
+</svg>

@@ -1,0 +1,15 @@
+{
+  "id": "com.nasflix.tv",
+  "title": "Nasflix",
+  "main": "index.html",
+  "icon": "icons/icon80x80.png",
+  "largeIcon": "icons/icon130x130.png",
+  "splashBackground": "#09090b",
+  "type": "web",
+  "version": "1.0.0",
+  "vendor": "Florian Roberge",
+  "resolution": "1920x1080",
+  "allowAudioCapture": false,
+  "allowVideoCapture": false,
+  "allowDownloadMode": false
+}
