@@ -77,14 +77,16 @@ export class NasController {
   async getEpisodeStreamUrl(
     @Param('episodeId', ParseIntPipe) episodeId: number,
     @Query('mode') mode: 'stream' | 'download' = 'stream',
+    @Query('passthrough') passthrough: string = '0',
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode);
 
     if (mode === 'stream') {
-      // VideoStation HLS → browser streams directly from NAS (no Railway proxy)
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
+      // passthrough=1 : retourner l'URL brute (TV app, pas de transcodage)
+      if (passthrough === '1') return { url: nasUrl, isHls: false, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     return { url: nasUrl, isHls: false, durationSeconds };
@@ -94,14 +96,16 @@ export class NasController {
   async getStreamUrl(
     @Param('mediaId', ParseIntPipe) mediaId: number,
     @Query('mode') mode: 'stream' | 'download' = 'stream',
+    @Query('passthrough') passthrough: string = '0',
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode);
 
     if (mode === 'stream') {
-      // VideoStation HLS → browser streams directly from NAS (no Railway proxy)
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
+      // passthrough=1 : retourner l'URL brute (TV app, pas de transcodage)
+      if (passthrough === '1') return { url: nasUrl, isHls: false, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     return { url: nasUrl, isHls: false, durationSeconds };

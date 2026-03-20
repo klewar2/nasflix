@@ -16,11 +16,6 @@ interface VideoStationFile {
   size?: number;
 }
 
-interface VideoStationVideo {
-  id: number;
-  title?: string;
-  file?: VideoStationFile[];
-}
 
 export interface SynoFileInfo {
   path: string;
@@ -48,6 +43,33 @@ export class NasService {
     const url = new URL('/webapi/entry.cgi', baseUrl);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     const response = await fetch(url.toString(), { signal: AbortSignal.timeout(10000) });
+    return response.json() as Promise<SynoResponse<T>>;
+  }
+
+  /**
+   * POST form-urlencoded — format utilisé par VideoStation web pour les paramètres complexes.
+   * Les valeurs objet/tableau sont sérialisées en JSON string dans le body.
+   * Le _sid est envoyé en query param URL (obligatoire pour les APIs Synology).
+   */
+  private async requestFormPost<T>(
+    baseUrl: string,
+    sid: string,
+    fields: Record<string, unknown>,
+  ): Promise<SynoResponse<T>> {
+    const url = new URL('/webapi/entry.cgi', baseUrl);
+    url.searchParams.set('_sid', sid);
+
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(fields)) {
+      body.set(k, typeof v === 'string' ? v : JSON.stringify(v));
+    }
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      signal: AbortSignal.timeout(15000),
+    });
     return response.json() as Promise<SynoResponse<T>>;
   }
 
@@ -213,19 +235,26 @@ export class NasService {
     if (mode === 'stream') {
       try {
         const vsSession = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword, 'VideoStation');
-        // Title hints: ptt title from nasFilename (primary), then TMDB VF & original
+        this.logger.debug(`[Stream #${mediaId}] VideoStation login OK (sid=${vsSession.sid.slice(0, 8)}…)`);
+
         const { title: pttTitle } = parseMediaFilename(media.nasFilename);
         const titleHints = [pttTitle, media.titleVf, media.titleOriginal].filter(Boolean) as string[];
-        const vsVideo = await this.findVideoStationVideo(vsSession, media.nasPath, titleHints);
+        this.logger.debug(`[Stream #${mediaId}] nasPath="${media.nasPath}" nasFilename="${media.nasFilename}" pttTitle="${pttTitle}" hints=${JSON.stringify(titleHints)}`);
+
+        const vsVideo = await this.findVideoStationVideo(vsSession, media.nasPath, titleHints, 'movie');
         if (vsVideo) {
-          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId);
+          this.logger.debug(`[Stream #${mediaId}] VS video found (id=${vsVideo.videoId} fileId=${vsVideo.fileId}), opening stream…`);
+          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId);
           if (hlsUrl) {
-            this.logger.log(`[Stream #${mediaId}] VideoStation HLS OK`);
+            this.logger.log(`[Stream #${mediaId}] VideoStation HLS OK → ${hlsUrl.slice(0, 80)}…`);
             return { nasUrl: hlsUrl, durationSeconds, isHls: true };
           }
+          this.logger.warn(`[Stream #${mediaId}] VS video found but stream open returned null`);
+        } else {
+          this.logger.warn(`[Stream #${mediaId}] No VideoStation match → fallback FFmpeg`);
         }
       } catch (err) {
-        this.logger.warn(`[Stream #${mediaId}] VideoStation unavailable, falling back to FFmpeg: ${err}`);
+        this.logger.warn(`[Stream #${mediaId}] VideoStation error → fallback FFmpeg: ${err}`);
       }
     }
 
@@ -264,20 +293,28 @@ export class NasService {
     if (mode === 'stream') {
       try {
         const vsSession = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword, 'VideoStation');
+        this.logger.debug(`[Stream ep#${episodeId}] VideoStation login OK (sid=${vsSession.sid.slice(0, 8)}…)`);
+
         const nasFilename = episode.nasFilename ?? episode.nasPath.split('/').pop() ?? '';
         const { title: pttTitle } = parseMediaFilename(nasFilename);
         const seriesMedia = episode.season?.media;
         const titleHints = [pttTitle, seriesMedia?.titleVf, seriesMedia?.titleOriginal].filter(Boolean) as string[];
-        const vsVideo = await this.findVideoStationVideo(vsSession, episode.nasPath, titleHints);
+        this.logger.debug(`[Stream ep#${episodeId}] nasPath="${episode.nasPath}" nasFilename="${nasFilename}" pttTitle="${pttTitle}" hints=${JSON.stringify(titleHints)}`);
+
+        const vsVideo = await this.findVideoStationVideo(vsSession, episode.nasPath, titleHints, 'episode');
         if (vsVideo) {
-          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId);
+          this.logger.debug(`[Stream ep#${episodeId}] VS video found (id=${vsVideo.videoId} fileId=${vsVideo.fileId}), opening stream…`);
+          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId);
           if (hlsUrl) {
-            this.logger.log(`[Stream episode #${episodeId}] VideoStation HLS OK`);
+            this.logger.log(`[Stream ep#${episodeId}] VideoStation HLS OK → ${hlsUrl.slice(0, 80)}…`);
             return { nasUrl: hlsUrl, durationSeconds, isHls: true };
           }
+          this.logger.warn(`[Stream ep#${episodeId}] VS video found but stream open returned null`);
+        } else {
+          this.logger.warn(`[Stream ep#${episodeId}] No VideoStation match → fallback FFmpeg`);
         }
       } catch (err) {
-        this.logger.warn(`[Stream episode #${episodeId}] VideoStation unavailable, falling back to FFmpeg: ${err}`);
+        this.logger.warn(`[Stream ep#${episodeId}] VideoStation error → fallback FFmpeg: ${err}`);
       }
     }
 
@@ -334,73 +371,166 @@ export class NasService {
 
   // ── VideoStation ──────────────────────────────────────────────────────────
 
-  /**
-   * Searches for a video in the VideoStation library.
-   * Strategy:
-   *  1. Path match against `nasPath` (most reliable)
-   *  2. Title match using hints: ptt-extracted filename title, TMDB titles (VF + original)
-   * Tries VideoStation2 (DSM 7+) then VideoStation1 (DSM 6) for compatibility.
-   */
   private async findVideoStationVideo(
     session: NasSession,
     nasPath: string,
     titleHints: string[],
-  ): Promise<{ videoId: number } | null> {
-    const normalize = (s: string) =>
-      s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    mediaType: 'movie' | 'episode',
+  ): Promise<{ videoId: number; fileId?: string } | null> {
+    if (mediaType === 'movie') {
+      return this.findVsMovie(session, nasPath, titleHints);
+    }
+    return this.findVsEpisode(session, nasPath);
+  }
 
-    for (const api of ['SYNO.VideoStation2.Video', 'SYNO.VideoStation.Video']) {
-      try {
-        const result = await this.request<{ total: number; video?: VideoStationVideo[] }>(
-          session.baseUrl,
-          { api, version: '1', method: 'list', library_id: '0', offset: '0', limit: '5000', additional: '["file"]', _sid: session.sid },
-        );
-        if (!result.success || !result.data?.video?.length) continue;
+  /**
+   * Movie search: keyword-based via SYNO.VideoStation2.Movie (DSM 7+)
+   * then SYNO.VideoStation.Movie (DSM 6).
+   * Tries each title hint until a result is found.
+   */
+  private async findVsMovie(
+    session: NasSession,
+    nasPath: string,
+    titleHints: string[],
+  ): Promise<{ videoId: number; fileId?: string } | null> {
+    type VSMovie = { id: number; mapper_id?: number; title?: string; file?: VideoStationFile[] };
 
-        // 1. Path match
-        for (const video of result.data.video) {
-          if ((video.file ?? []).some((f) => f.path === nasPath)) {
-            this.logger.log(`[VideoStation] Found by path: "${video.title}" (id=${video.id})`);
-            return { videoId: video.id };
+    const movieApis = ['SYNO.VideoStation2.Movie'];
+
+    for (const api of movieApis) {
+      for (const keyword of titleHints) {
+        try {
+          this.logger.debug(`[VideoStation] ${api} keyword="${keyword}"…`);
+          const result = await this.request<{ total: number; movie?: VSMovie[] }>(
+            session.baseUrl,
+            { api, version: '1', method: 'list', library_id: '0', keyword, offset: '0', limit: '10', _sid: session.sid },
+          );
+
+          if (!result.success) {
+            this.logger.debug(`[VideoStation] ${api} error=${JSON.stringify(result.error)} — skipping API`);
+            break;
           }
-        }
 
-        // 2. Title match — use all hints (ptt title from filename, TMDB VF, TMDB original)
-        const needles = titleHints.filter(Boolean).map(normalize).filter((n) => n.length >= 3);
-        for (const video of result.data.video) {
-          const vt = normalize(video.title ?? '');
-          if (needles.some((n) => vt === n || vt.startsWith(n + ' ') || n.startsWith(vt + ' '))) {
-            this.logger.log(`[VideoStation] Found by title: "${video.title}" (id=${video.id})`);
-            return { videoId: video.id };
+          const movies = result.data?.movie ?? [];
+          this.logger.debug(`[VideoStation] ${api} keyword="${keyword}" → ${movies.length} résultat(s)`);
+
+          if (movies.length === 0) continue;
+
+          const pickMovie = (movie: VSMovie) => {
+            // mapper_id est l'identifiant du fichier utilisé par SYNO.VideoStation2.Streaming
+            const fileId = movie.mapper_id != null ? String(movie.mapper_id) : movie.file?.[0]?.id;
+            this.logger.debug(`[VideoStation] movie.id=${movie.id} mapper_id=${movie.mapper_id} file[0]=${JSON.stringify(movie.file?.[0])} → fileId=${fileId}`);
+            return { videoId: movie.id, fileId };
+          };
+
+          // Correspondance par chemin (le plus fiable)
+          for (const movie of movies) {
+            if ((movie.file ?? []).some((f) => f.path === nasPath)) {
+              this.logger.log(`[VideoStation] ✅ Film trouvé par chemin: "${movie.title}" (id=${movie.id})`);
+              return pickMovie(movie);
+            }
           }
-        }
 
-        return null; // API responded but no match found
-      } catch (err) {
-        this.logger.debug(`[VideoStation] ${api} list failed: ${err}`);
+          // Un seul résultat → on fait confiance au keyword
+          if (movies.length === 1) {
+            this.logger.log(`[VideoStation] ✅ Film trouvé par keyword (résultat unique): "${movies[0].title}" (id=${movies[0].id})`);
+            return pickMovie(movies[0]);
+          }
+
+          this.logger.debug(`[VideoStation] ${movies.length} résultats pour "${keyword}", aucun avec ce chemin: ${movies.map((m) => `"${m.title}"`).join(', ')}`);
+        } catch (err) {
+          this.logger.debug(`[VideoStation] ${api} search exception: ${err}`);
+          break;
+        }
       }
     }
+
+    this.logger.debug(`[VideoStation] Aucun film trouvé pour nasPath="${nasPath}"`);
     return null;
   }
 
-  private async openVideoStationStream(session: NasSession, videoId: number): Promise<string | null> {
-    for (const api of ['SYNO.VideoStation2.Streaming', 'SYNO.VideoStation.Streaming']) {
+  /**
+   * Episode search: path-based via SYNO.VideoStation2.TVShowEpisode (DSM 7+)
+   * then SYNO.VideoStation.TVShowEpisode (DSM 6).
+   */
+  private async findVsEpisode(
+    session: NasSession,
+    nasPath: string,
+  ): Promise<{ videoId: number; fileId?: string } | null> {
+    type VSEpisode = { id: number; title?: string; file?: VideoStationFile[] };
+
+    const episodeApis = ['SYNO.VideoStation2.TVShowEpisode'];
+
+    for (const api of episodeApis) {
       try {
-        const result = await this.request<{ playlist_url?: string }>(
+        this.logger.debug(`[VideoStation] ${api} list (recherche par chemin)… nasPath="${nasPath}"`);
+        const result = await this.request<{ total: number; episode?: VSEpisode[] }>(
           session.baseUrl,
-          { api, version: '1', method: 'open', id: String(videoId), accept_format: 'm3u8', transcode: '1', _sid: session.sid },
+          { api, version: '1', method: 'list', offset: '0', limit: '5000', additional: '["file"]', _sid: session.sid },
         );
-        if (result.success && result.data?.playlist_url) {
-          let url = result.data.playlist_url;
-          if (url.startsWith('/')) {
-            url = `${session.baseUrl.replace(/\/$/, '')}${url}`;
-          }
-          return url;
+
+        if (!result.success) {
+          this.logger.debug(`[VideoStation] ${api} error=${JSON.stringify(result.error)}`);
+          continue;
         }
+
+        const episodes = result.data?.episode ?? [];
+        this.logger.debug(`[VideoStation] ${api} → ${episodes.length} épisode(s)`);
+
+        for (const ep of episodes) {
+          if ((ep.file ?? []).some((f) => f.path === nasPath)) {
+            const fileId = ep.file?.[0]?.id;
+            this.logger.log(`[VideoStation] ✅ Épisode trouvé par chemin: "${ep.title}" (id=${ep.id}) fileId=${fileId}`);
+            return { videoId: ep.id, fileId };
+          }
+        }
+
+        const samplePaths = episodes.flatMap((e) => (e.file ?? []).map((f) => f.path)).slice(0, 5);
+        this.logger.debug(`[VideoStation] Aucun épisode correspondant. Exemples de chemins VS: ${JSON.stringify(samplePaths)}`);
+        return null;
       } catch (err) {
-        this.logger.debug(`[VideoStation] ${api} stream open failed: ${err}`);
+        this.logger.debug(`[VideoStation] ${api} exception: ${err}`);
       }
     }
+
+    return null;
+  }
+
+  private async openVideoStationStream(
+    session: NasSession,
+    videoId: number,
+    fileId?: string,
+  ): Promise<string | null> {
+    // Essayer différentes combinaisons de paramètres pour VideoStation2 vs VideoStation1
+    // VS2 (DSM 7+) attend `file=<fileId>`, VS1 attend `id=<videoId>`
+    const fidNum = fileId != null ? Number(fileId) : videoId;
+
+    // Format exact découvert via DevTools VideoStation :
+    // file={"id":<mapper_id>}, hls_remux={"hls_header":true,"audio_track":1}, pin="", version=2
+    // Essayer d'abord hls_remux (pas de ré-encodage), puis transcode (compatible plus de formats)
+    const variants: Array<{ label: string; extra: Record<string, unknown> }> = [
+      { label: 'hls_remux', extra: { hls_remux: { hls_header: true, audio_track: 1 } } },
+      { label: 'transcode', extra: { transcode: { video_codec: 'h264', audio_codec: 'aac' } } },
+      { label: 'bare', extra: {} },
+    ];
+
+    for (const { label, extra } of variants) {
+      const body = { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '', ...extra };
+      this.logger.debug(`[VideoStation] POST Streaming v2 [${label}] file.id=${fidNum}`);
+      try {
+        const result = await this.requestFormPost<{ playlist_url?: string }>(session.baseUrl, session.sid, body);
+        if (result.success && result.data?.playlist_url) {
+          let url = result.data.playlist_url;
+          if (url.startsWith('/')) url = `${session.baseUrl.replace(/\/$/, '')}${url}`;
+          this.logger.log(`[VideoStation] ✅ Stream ouvert [${label}] → ${url.slice(0, 80)}…`);
+          return url;
+        }
+        this.logger.debug(`[VideoStation] [${label}]: success=${result.success} error=${JSON.stringify(result.error)}`);
+      } catch (err) {
+        this.logger.debug(`[VideoStation] [${label}] exception: ${err}`);
+      }
+    }
+
     return null;
   }
 

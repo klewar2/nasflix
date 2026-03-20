@@ -78,9 +78,9 @@ export function wakeNas() {
 }
 
 export function getStreamUrl(mediaId: number) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream`);
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1`);
 }
 
 export function getEpisodeStreamUrl(episodeId: number) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream`);
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1`);
 }
