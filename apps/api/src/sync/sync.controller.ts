@@ -1,4 +1,19 @@
-import { Controller, Post, Get, Param, Query, ParseIntPipe, DefaultValuePipe, Headers, Body, UnauthorizedException, Req, UseGuards, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Param,
+  Query,
+  ParseIntPipe,
+  DefaultValuePipe,
+  Headers,
+  Body,
+  UnauthorizedException,
+  Req,
+  UseGuards,
+  ForbiddenException,
+  Logger
+} from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma.service';
@@ -13,6 +28,8 @@ import { JwtPayload } from '../auth/strategies/jwt.strategy';
 @UseGuards(RolesGuard)
 @Roles(MemberRole.ADMIN)
 export class SyncController {
+  private readonly logger = new Logger(SyncController.name);
+
   constructor(
     private readonly syncService: SyncService,
     private readonly configService: ConfigService,
@@ -66,9 +83,12 @@ export class SyncController {
     //                           2) fallback legacy : env var global + header x-cineclubid
     let cineClubId: number;
 
+    this.logger.log(`Webhook received secret: ${secret}`);
     const clubBySecret = secret
       ? await this.prisma.cineClub.findUnique({ where: { webhookSecret: secret } })
       : null;
+
+    this.logger.log(`clubBySecret: ${clubBySecret?.id}`);
 
     if (clubBySecret) {
       cineClubId = clubBySecret.id;
