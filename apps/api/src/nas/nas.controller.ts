@@ -100,10 +100,12 @@ export class NasController {
     @Param('episodeId', ParseIntPipe) episodeId: number,
     @Query('mode') mode: 'stream' | 'download' = 'stream',
     @Query('passthrough') passthrough: string = '0',
+    @Query('audioTrack') audioTrackQuery: string = '1',
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode);
+    const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
+    const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
 
     if (mode === 'stream') {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
@@ -119,10 +121,12 @@ export class NasController {
     @Param('mediaId', ParseIntPipe) mediaId: number,
     @Query('mode') mode: 'stream' | 'download' = 'stream',
     @Query('passthrough') passthrough: string = '0',
+    @Query('audioTrack') audioTrackQuery: string = '1',
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode);
+    const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
+    const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
 
     if (mode === 'stream') {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };

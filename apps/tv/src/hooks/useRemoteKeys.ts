@@ -12,8 +12,9 @@ type Handler = (e: KeyboardEvent) => void;
 /** Attache un listener keydown sur document, retiré au unmount. */
 export function useRemoteKeys(handler: Handler, deps: unknown[] = []) {
   useEffect(() => {
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    // capture:true pour intercepter avant que webOS ne traite la touche BACK
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }

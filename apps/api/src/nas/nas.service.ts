@@ -240,6 +240,7 @@ export class NasService {
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
+    audioTrack = 1,
   ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean }> {
     const [member, media, club] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
@@ -267,7 +268,7 @@ export class NasService {
         const vsVideo = await this.findVideoStationVideo(vsSession, media.nasPath, titleHints, 'movie');
         if (vsVideo) {
           this.logger.debug(`[Stream #${mediaId}] VS video found (id=${vsVideo.videoId} fileId=${vsVideo.fileId}), opening stream…`);
-          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId);
+          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId, audioTrack);
           if (hlsUrl) {
             this.logger.log(`[Stream #${mediaId}] VideoStation HLS OK → ${hlsUrl.slice(0, 80)}…`);
             return { nasUrl: hlsUrl, durationSeconds, isHls: true };
@@ -294,6 +295,7 @@ export class NasService {
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
+    audioTrack = 1,
   ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean }> {
     const [member, episode] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
@@ -327,7 +329,7 @@ export class NasService {
         const vsVideo = await this.findVideoStationVideo(vsSession, episode.nasPath, titleHints, 'episode');
         if (vsVideo) {
           this.logger.debug(`[Stream ep#${episodeId}] VS video found (id=${vsVideo.videoId} fileId=${vsVideo.fileId}), opening stream…`);
-          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId);
+          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId, audioTrack);
           if (hlsUrl) {
             this.logger.log(`[Stream ep#${episodeId}] VideoStation HLS OK → ${hlsUrl.slice(0, 80)}…`);
             return { nasUrl: hlsUrl, durationSeconds, isHls: true };
@@ -523,6 +525,7 @@ export class NasService {
     session: NasSession,
     videoId: number,
     fileId?: string,
+    audioTrack = 1,
   ): Promise<string | null> {
     // Essayer différentes combinaisons de paramètres pour VideoStation2 vs VideoStation1
     // VS2 (DSM 7+) attend `file=<fileId>`, VS1 attend `id=<videoId>`
@@ -532,7 +535,7 @@ export class NasService {
     // file={"id":<mapper_id>}, hls_remux={"hls_header":true,"audio_track":1}, pin="", version=2
     // Essayer d'abord hls_remux (pas de ré-encodage), puis transcode (compatible plus de formats)
     const variants: Array<{ label: string; extra: Record<string, unknown> }> = [
-      { label: 'hls_remux', extra: { hls_remux: { hls_header: true, audio_track: 1 } } },
+      { label: 'hls_remux', extra: { hls_remux: { hls_header: true, audio_track: audioTrack } } },
       { label: 'transcode', extra: { transcode: { video_codec: 'h264', audio_codec: 'aac' } } },
       { label: 'bare', extra: {} },
     ];

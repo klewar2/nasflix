@@ -13,8 +13,8 @@
   --radius: 8px;
   --font: 'Helvetica Neue', Arial, sans-serif;
 
-  /* TV sizing — base 20px pour être lisible à 3m */
-  font-size: 20px;
+  /* TV sizing — base 32px pour TV 72" à 3m */
+  font-size: 32px;
 }
 
 html, body, #root {
@@ -32,8 +32,7 @@ html, body, #root {
 [data-focused="true"] {
   outline: var(--focus-ring);
   outline-offset: 4px;
-  transform: scale(1.06);
-  transition: transform 0.1s ease, outline 0.1s ease;
+  transition: outline 0.1s ease;
   z-index: 10;
 }
 

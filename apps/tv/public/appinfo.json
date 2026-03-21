@@ -4,7 +4,6 @@
   "main": "index.html",
   "icon": "icons/icon80x80.png",
   "largeIcon": "icons/icon130x130.png",
-  "splashBackground": "#09090b",
   "type": "web",
   "version": "1.0.0",
   "vendor": "Florian Roberge",

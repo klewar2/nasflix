@@ -5,8 +5,11 @@ import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 interface Media {
   id: number;
   title: string;
-  posterPath?: string;
+  posterUrl?: string;
+  backdropUrl?: string;
   releaseYear?: number;
+  voteAverage?: number;
+  overview?: string;
   type: 'movie' | 'series';
 }
 
@@ -15,11 +18,12 @@ interface Props {
   items: Media[];
   rowFocused: boolean;
   onSelect: (media: Media) => void;
+  onPreview?: (media: Media) => void;
   onUp?: () => void;
   onDown?: () => void;
 }
 
-export default function MediaRow({ title, items, rowFocused, onSelect, onUp, onDown }: Props) {
+export default function MediaRow({ title, items, rowFocused, onSelect, onPreview, onUp, onDown }: Props) {
   const [focusedIdx, setFocusedIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -28,6 +32,13 @@ export default function MediaRow({ title, items, rowFocused, onSelect, onUp, onD
     if (!rowFocused || !scrollRef.current) return;
     const cards = scrollRef.current.querySelectorAll<HTMLElement>('[data-card]');
     cards[focusedIdx]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }, [focusedIdx, rowFocused]);
+
+  // Notify parent of preview change when row is focused
+  useEffect(() => {
+    if (rowFocused && items[focusedIdx] && onPreview) {
+      onPreview(items[focusedIdx]);
+    }
   }, [focusedIdx, rowFocused]);
 
   useRemoteKeys(
@@ -54,26 +65,28 @@ export default function MediaRow({ title, items, rowFocused, onSelect, onUp, onD
   );
 
   return (
-    <div style={{ marginBottom: '2rem' }}>
-      <h2
-        style={{
-          fontSize: '0.9rem',
-          fontWeight: 700,
-          marginBottom: '0.75rem',
-          paddingLeft: '3rem',
-          color: rowFocused ? 'var(--text)' : 'var(--text-muted)',
-        }}
-      >
+    <div style={{ marginBottom: '1.2rem' }}>
+      <h2 style={{
+        fontSize: '0.6rem',
+        fontWeight: 700,
+        marginBottom: '0.6rem',
+        paddingLeft: '2.5rem',
+        color: rowFocused ? '#fff' : 'rgba(255,255,255,0.45)',
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        transition: 'color 0.2s',
+      }}>
         {title}
       </h2>
       <div
         ref={scrollRef}
         style={{
           display: 'flex',
-          gap: '0.75rem',
-          paddingLeft: '3rem',
-          paddingRight: '3rem',
+          gap: '0.6rem',
+          paddingLeft: '2.5rem',
+          paddingRight: '2.5rem',
           overflowX: 'hidden',
+          paddingBottom: '0.5rem',
         }}
       >
         {items.map((media, idx) => (

@@ -82,12 +82,12 @@ export function wakeNas() {
   return request<{ sent: boolean; message: string }>('/nas/wake', { method: 'POST' });
 }
 
-export function getStreamUrl(mediaId: number) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1`);
+export function getStreamUrl(mediaId: number, audioTrack = 1) {
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
 }
 
-export function getEpisodeStreamUrl(episodeId: number) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1`);
+export function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
 }
 
 export function getMediaTracks(mediaId: number) {
@@ -96,4 +96,20 @@ export function getMediaTracks(mediaId: number) {
 
 export function getEpisodeTracks(episodeId: number) {
   return request<MediaTracks>(`/nas/tracks/episode/${episodeId}`);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function searchMedia(query: string, limit = 30): Promise<{ data: any[]; total: number }> {
+  const q = new URLSearchParams({ q: query, limit: String(limit) });
+  return request(`/media/search?${q}`);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getGenres(): Promise<{ id: number; name: string }[]> {
+  return request('/media/genres');
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getQualityMedia(type: 'UHD' | 'HDR', limit = 20): Promise<any[]> {
+  return request(`/media/quality/${type}?limit=${limit}`);
 }

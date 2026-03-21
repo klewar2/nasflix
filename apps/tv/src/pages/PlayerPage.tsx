@@ -5,10 +5,11 @@ import { getStreamUrl, getEpisodeStreamUrl, getMediaTracks, getEpisodeTracks } f
 interface Props {
   mediaId: number;
   episodeId?: number;
+  title?: string;
   onBack: () => void;
 }
 
-export default function PlayerPage({ mediaId, episodeId, onBack }: Props) {
+export default function PlayerPage({ mediaId, episodeId, title, onBack }: Props) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['stream', mediaId, episodeId],
     queryFn: () =>
@@ -96,7 +97,10 @@ export default function PlayerPage({ mediaId, episodeId, onBack }: Props) {
       url={data.url}
       isHls={data.isHls}
       durationSeconds={data.durationSeconds}
+      title={title}
       tracks={tracks}
+      mediaId={mediaId}
+      episodeId={episodeId}
       onBack={onBack}
     />
   );

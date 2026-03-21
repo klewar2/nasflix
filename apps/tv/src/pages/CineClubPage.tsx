@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getMyCineClubs, selectCineClub } from '../lib/api';
 import { tokens } from '../lib/tokens';
@@ -16,6 +16,14 @@ export default function CineClubPage({ onSelect }: Props) {
     queryKey: ['cineClubs'],
     queryFn: getMyCineClubs,
   });
+
+  // Auto-sélection si un seul CineClub
+  useEffect(() => {
+    if (clubs.length === 1 && !loading) {
+      handleSelect(clubs[0].id, clubs[0]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clubs]);
 
   const handleSelect = async (id: number, club: unknown) => {
     setLoading(true);

@@ -41,24 +41,56 @@ function pngChunk(type, data) {
   return Buffer.concat([len, t, data, crcBuf]);
 }
 
-function makePng(w, h, r, g, b) {
+/** Génère un PNG RGB avec fond rouge (#e50914) et un "N" blanc centré. */
+function makePng(w, h) {
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
   const ihdrData = Buffer.alloc(13);
   ihdrData.writeUInt32BE(w, 0);
   ihdrData.writeUInt32BE(h, 4);
-  ihdrData[8] = 8; // bit depth
-  ihdrData[9] = 2; // RGB
+  ihdrData[8] = 8; ihdrData[9] = 2; // 8-bit RGB
 
-  // Scanlines: filter byte (0) + RGB pixels
+  // Pixels : fond rouge
+  const pixels = new Uint8Array(w * h * 3);
+  for (let i = 0; i < w * h; i++) {
+    pixels[i * 3] = 229; pixels[i * 3 + 1] = 9; pixels[i * 3 + 2] = 20; // #e50914
+  }
+
+  // Dessiner un "N" blanc — coordonnées relatives à une grille 10×10
+  const pad = Math.round(w * 0.18);
+  const gw = w - pad * 2;  // largeur utile
+  const gh = h - pad * 2;  // hauteur utile
+  const stroke = Math.max(2, Math.round(w * 0.11)); // épaisseur des traits
+
+  function setWhite(x, y) {
+    if (x < 0 || x >= w || y < 0 || y >= h) return;
+    const i = (y * w + x) * 3;
+    pixels[i] = 255; pixels[i + 1] = 255; pixels[i + 2] = 255;
+  }
+  function fillRect(x0, y0, rw, rh) {
+    for (let dy = 0; dy < rh; dy++) for (let dx = 0; dx < rw; dx++) setWhite(x0 + dx, y0 + dy);
+  }
+
+  // Jambe gauche du N
+  fillRect(pad, pad, stroke, gh);
+  // Jambe droite du N
+  fillRect(pad + gw - stroke, pad, stroke, gh);
+  // Diagonale du N (de haut-gauche vers bas-droite)
+  const steps = gh;
+  for (let s = 0; s < steps; s++) {
+    const x = Math.round(pad + stroke + (gw - stroke * 2) * s / steps);
+    const y = pad + s;
+    fillRect(x, y, Math.max(1, stroke - 1), 1);
+  }
+
+  // Scanlines PNG
   const raw = Buffer.alloc(h * (1 + w * 3));
   for (let y = 0; y < h; y++) {
-    const base = y * (1 + w * 3);
-    raw[base] = 0; // filter: None
+    raw[y * (1 + w * 3)] = 0; // filter: None
     for (let x = 0; x < w; x++) {
-      raw[base + 1 + x * 3] = r;
-      raw[base + 1 + x * 3 + 1] = g;
-      raw[base + 1 + x * 3 + 2] = b;
+      const src = (y * w + x) * 3;
+      const dst = y * (1 + w * 3) + 1 + x * 3;
+      raw[dst] = pixels[src]; raw[dst + 1] = pixels[src + 1]; raw[dst + 2] = pixels[src + 2];
     }
   }
 
@@ -79,11 +111,11 @@ const icon80 = resolve(iconsDir, 'icon80x80.png');
 const icon130 = resolve(iconsDir, 'icon130x130.png');
 
 if (!existsSync(icon80)) {
-  writeFileSync(icon80, makePng(80, 80, 229, 9, 20)); // #e50914
+  writeFileSync(icon80, makePng(80, 80));
   console.log('✅  icon80x80.png généré');
 }
 if (!existsSync(icon130)) {
-  writeFileSync(icon130, makePng(130, 130, 229, 9, 20)); // #e50914
+  writeFileSync(icon130, makePng(130, 130));
   console.log('✅  icon130x130.png généré');
 }
 
