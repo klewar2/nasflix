@@ -71,6 +71,28 @@ export class NasController {
     return { online, lastCheckedAt: new Date().toISOString() };
   }
 
+  // ── Track probing ──────────────────────────────────────────────────────────
+
+  @Get('tracks/episode/:episodeId')
+  async getEpisodeTracks(
+    @Param('episodeId', ParseIntPipe) episodeId: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    const nasUrl = await this.nasService.getEpisodeFileUrl(episodeId, req.user.sub, req.user.cineClubId);
+    return this.nasService.probeMediaTracks(nasUrl);
+  }
+
+  @Get('tracks/:mediaId')
+  async getMediaTracks(
+    @Param('mediaId', ParseIntPipe) mediaId: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    const nasUrl = await this.nasService.getMediaFileUrl(mediaId, req.user.sub, req.user.cineClubId);
+    return this.nasService.probeMediaTracks(nasUrl);
+  }
+
   // ── Stream URLs ────────────────────────────────────────────────────────────
 
   @Get('stream/episode/:episodeId')

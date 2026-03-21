@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import VideoPlayer from '../components/VideoPlayer';
-import { getStreamUrl, getEpisodeStreamUrl } from '../lib/api';
+import { getStreamUrl, getEpisodeStreamUrl, getMediaTracks, getEpisodeTracks } from '../lib/api';
 
 interface Props {
   mediaId: number;
@@ -13,6 +13,13 @@ export default function PlayerPage({ mediaId, episodeId, onBack }: Props) {
     queryKey: ['stream', mediaId, episodeId],
     queryFn: () =>
       episodeId ? getEpisodeStreamUrl(episodeId) : getStreamUrl(mediaId),
+    staleTime: Infinity,
+  });
+
+  // Lancé en parallèle — ne bloque pas la lecture
+  const { data: tracks } = useQuery({
+    queryKey: ['tracks', mediaId, episodeId],
+    queryFn: () => episodeId ? getEpisodeTracks(episodeId) : getMediaTracks(mediaId),
     staleTime: Infinity,
   });
 
@@ -89,6 +96,7 @@ export default function PlayerPage({ mediaId, episodeId, onBack }: Props) {
       url={data.url}
       isHls={data.isHls}
       durationSeconds={data.durationSeconds}
+      tracks={tracks}
       onBack={onBack}
     />
   );

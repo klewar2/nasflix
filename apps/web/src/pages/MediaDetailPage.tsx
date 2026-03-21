@@ -176,7 +176,7 @@ export default function MediaDetailPage() {
                 </p>
               )}
 
-              {/* Stream / Download buttons — Movies only (series handled per-episode) */}
+              {/* Download button — Movies only (series handled per-episode) */}
               {isMember && media.type === 'MOVIE' && media.nasPath && (
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
                   {/* NAS offline indicator */}
@@ -186,15 +186,6 @@ export default function MediaDetailPage() {
                       NAS hors ligne
                     </span>
                   )}
-
-                  <button
-                    disabled={!nasOnline || loadingId === `play-${id}`}
-                    onClick={() => openPlayer(() => api.getStreamUrl(Number(id)), mediaTitle, `play-${id}`)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#e50914] hover:bg-[#c4070f] disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors"
-                  >
-                    {loadingId === `play-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-white stroke-none" />}
-                    Regarder
-                  </button>
 
                   <button
                     disabled={!nasOnline || loadingId === `dl-${id}`}
@@ -313,25 +304,14 @@ export default function MediaDetailPage() {
                                     </span>
                                   )}
                                   {isMember && ep.nasPath && (
-                                    <>
-                                      <button
-                                        disabled={!nasOnline || loadingId === `play-${epKey}`}
-                                        onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`)}
-                                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#e50914] hover:bg-[#c4070f] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium transition-colors"
-                                        title={nasOnline ? 'Regarder' : 'NAS hors ligne'}
-                                      >
-                                        {loadingId === `play-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white stroke-none" />}
-                                        Regarder
-                                      </button>
-                                      <button
-                                        disabled={!nasOnline || loadingId === `dl-${epKey}`}
-                                        onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
-                                        className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-400 hover:text-white transition-colors border border-zinc-700"
-                                        title={nasOnline ? 'Télécharger' : 'NAS hors ligne'}
-                                      >
-                                        {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                                      </button>
-                                    </>
+                                    <button
+                                      disabled={!nasOnline || loadingId === `dl-${epKey}`}
+                                      onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
+                                      className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-400 hover:text-white transition-colors border border-zinc-700"
+                                      title={nasOnline ? 'Télécharger' : 'NAS hors ligne'}
+                                    >
+                                      {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                                    </button>
                                   )}
                                 </div>
                               </div>

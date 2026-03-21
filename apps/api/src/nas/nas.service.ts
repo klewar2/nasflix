@@ -1,8 +1,11 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
+import { spawn } from 'node:child_process';
 import { PrismaService } from '../common/prisma.service';
 import { parseMediaFilename } from '../common/media-parser';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpegPath: string = require('ffmpeg-static');
 
 interface SynoResponse<T = unknown> {
   success: boolean;
@@ -14,6 +17,26 @@ interface VideoStationFile {
   id: string;
   path: string;
   size?: number;
+}
+
+export interface AudioTrackInfo {
+  index: number;
+  language: string;
+  title: string;
+  codec: string;
+  channels: number;
+}
+
+export interface SubtitleTrackInfo {
+  index: number;
+  language: string;
+  title: string;
+  codec: string;
+}
+
+export interface MediaTracks {
+  audio: AudioTrackInfo[];
+  subtitles: SubtitleTrackInfo[];
 }
 
 
@@ -532,6 +555,105 @@ export class NasService {
     }
 
     return null;
+  }
+
+  // ── Track probing ──────────────────────────────────────────────────────────
+
+  async getMediaFileUrl(mediaId: number, userId: number, cineClubId: number): Promise<string> {
+    const [member, media, club] = await Promise.all([
+      this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
+      this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } }),
+      this.prisma.cineClub.findUnique({ where: { id: cineClubId } }),
+    ]);
+    if (!member?.nasUsername || !member?.nasPassword) throw new UnauthorizedException('Credentials NAS non configurés');
+    if (!media?.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
+    if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré');
+    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    return this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, 'stream');
+  }
+
+  async getEpisodeFileUrl(episodeId: number, userId: number, cineClubId: number): Promise<string> {
+    const [member, episode] = await Promise.all([
+      this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
+      this.prisma.episode.findFirst({
+        where: { id: episodeId, season: { media: { cineClubId } } },
+        select: { nasPath: true },
+      }),
+    ]);
+    if (!member?.nasUsername || !member?.nasPassword) throw new UnauthorizedException('Credentials NAS non configurés');
+    if (!episode?.nasPath) throw new NotFoundException('Fichier épisode introuvable sur le NAS');
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré');
+    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    return this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream');
+  }
+
+  async probeMediaTracks(nasFileUrl: string): Promise<MediaTracks> {
+    return new Promise((resolve) => {
+      // ffmpeg -i <url> prints stream info to stderr then exits with error (no output specified)
+      const proc = spawn(ffmpegPath, [
+        '-reconnect', '1', '-reconnect_streamed', '1', '-tls_verify', '0',
+        '-i', nasFileUrl,
+      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+      let stderr = '';
+      proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+      const kill = setTimeout(() => proc.kill('SIGKILL'), 12_000);
+      const done = () => { clearTimeout(kill); resolve(this.parseFfmpegStreamInfo(stderr)); };
+      proc.on('close', done);
+      proc.on('error', () => { clearTimeout(kill); resolve({ audio: [], subtitles: [] }); });
+    });
+  }
+
+  private parseFfmpegStreamInfo(stderr: string): MediaTracks {
+    const audio: AudioTrackInfo[] = [];
+    const subtitles: SubtitleTrackInfo[] = [];
+    let audioIdx = 0;
+    let subIdx = 0;
+
+    for (const line of stderr.split('\n')) {
+      const aMatch = line.match(/Stream #\d+:\d+(?:\((\w+)\))?(?:,\s*\w+)?: Audio: (\w+)(.*)/);
+      if (aMatch) {
+        const lang = aMatch[1] || 'und';
+        const rest = aMatch[3];
+        const channels = this.parseChannels(rest);
+        audio.push({ index: audioIdx++, language: lang, title: this.langLabel(lang), codec: aMatch[2].toUpperCase(), channels });
+      }
+
+      const sMatch = line.match(/Stream #\d+:\d+(?:\((\w+)\))?(?:,\s*\w+)?: Subtitle: (\w+)/);
+      if (sMatch) {
+        const lang = sMatch[1] || 'und';
+        subtitles.push({ index: subIdx++, language: lang, title: this.langLabel(lang), codec: sMatch[2].toUpperCase() });
+      }
+    }
+
+    return { audio, subtitles };
+  }
+
+  private parseChannels(rest: string): number {
+    if (/\b7\.1\b/.test(rest)) return 8;
+    if (/\b5\.1\b/.test(rest)) return 6;
+    if (/\b2\.1\b/.test(rest)) return 3;
+    if (/\bstereo\b/i.test(rest)) return 2;
+    if (/\bmono\b/i.test(rest)) return 1;
+    const m = rest.match(/(\d+) channels/);
+    return m ? parseInt(m[1]) : 2;
+  }
+
+  private langLabel(code: string): string {
+    const map: Record<string, string> = {
+      fra: 'Français', fre: 'Français', fr: 'Français',
+      eng: 'English', en: 'English',
+      deu: 'Deutsch', ger: 'Deutsch', de: 'Deutsch',
+      spa: 'Español', es: 'Español',
+      ita: 'Italiano', it: 'Italiano',
+      jpn: '日本語', ja: '日本語',
+      kor: '한국어', ko: '한국어',
+      por: 'Português', pt: 'Português',
+      und: 'Indéfini',
+    };
+    return map[code.toLowerCase()] || code.toUpperCase();
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {

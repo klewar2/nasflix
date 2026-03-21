@@ -69,6 +69,11 @@ export function getMediaById(id: number): Promise<any> {
 
 // ── NAS ───────────────────────────────────────────────────────────────────
 
+export interface MediaTracks {
+  audio: { index: number; language: string; title: string; codec: string; channels: number }[];
+  subtitles: { index: number; language: string; title: string; codec: string }[];
+}
+
 export function getNasStatus() {
   return request<{ online: boolean }>('/nas/status');
 }
@@ -83,4 +88,12 @@ export function getStreamUrl(mediaId: number) {
 
 export function getEpisodeStreamUrl(episodeId: number) {
   return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1`);
+}
+
+export function getMediaTracks(mediaId: number) {
+  return request<MediaTracks>(`/nas/tracks/${mediaId}`);
+}
+
+export function getEpisodeTracks(episodeId: number) {
+  return request<MediaTracks>(`/nas/tracks/episode/${episodeId}`);
 }
