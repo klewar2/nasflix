@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
-import { createHmac } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { PrismaService } from '../common/prisma.service';
 import { parseMediaFilename } from '../common/media-parser';
@@ -61,7 +62,10 @@ export interface NasSession {
 export class NasService {
   private readonly logger = new Logger(NasService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   private async request<T>(baseUrl: string, params: Record<string, string>): Promise<SynoResponse<T>> {
     const url = new URL('/webapi/entry.cgi', baseUrl);
@@ -363,7 +367,8 @@ export class NasService {
 
     // Méthode préférée : API Freebox (fiable depuis internet)
     if (club.freeboxApiUrl && club.freeboxAppToken) {
-      await this.sendWakeOnLanViaFreebox(club.freeboxApiUrl, club.freeboxAppToken, club.nasWolMac);
+      const appToken = this.decryptToken(club.freeboxAppToken);
+      await this.sendWakeOnLanViaFreebox(club.freeboxApiUrl, appToken, club.nasWolMac);
       this.logger.log(`[WoL] Magic packet envoyé via Freebox API (MAC: ${club.nasWolMac})`);
       return;
     }
@@ -444,41 +449,41 @@ export class NasService {
     }
   }
 
-  async startFreeboxRegistration(cineClubId: number, freeboxApiUrl: string): Promise<{ trackId: number }> {
-    const base = freeboxApiUrl.replace(/\/$/, '');
-
-    const res = await fetch(`${base}/api/v8/login/authorize/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        app_id: 'nasflix',
-        app_name: 'Nasflix',
-        app_version: '1.0.0',
-        device_name: 'Nasflix Server',
-      }),
-    });
-    const data = await res.json() as { success: boolean; result?: { app_token: string; track_id: number }; msg?: string };
-    if (!data.success || !data.result) throw new BadRequestException(`Freebox authorize: ${data.msg ?? 'échec'}`);
-
-    // Stocker l'URL + le token (en attente de validation)
+  async saveFreeboxConfig(cineClubId: number, freeboxApiUrl: string, appToken: string): Promise<void> {
+    const encrypted = this.encryptToken(appToken);
     await this.prisma.cineClub.update({
       where: { id: cineClubId },
-      data: { freeboxApiUrl, freeboxAppToken: data.result.app_token },
+      data: { freeboxApiUrl, freeboxAppToken: encrypted },
     });
-
-    return { trackId: data.result.track_id };
   }
 
-  async pollFreeboxRegistration(cineClubId: number, trackId: number): Promise<{ status: string }> {
-    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
-    if (!club?.freeboxApiUrl) throw new BadRequestException('URL Freebox non configurée');
+  // ── Chiffrement AES-256-GCM ────────────────────────────────────────────────
 
-    const base = club.freeboxApiUrl.replace(/\/$/, '');
-    const res = await fetch(`${base}/api/v8/login/authorize/${trackId}`);
-    const data = await res.json() as { success: boolean; result?: { status: string }; msg?: string };
-    if (!data.success || !data.result) throw new BadRequestException(`Freebox poll: ${data.msg ?? 'échec'}`);
+  private getEncryptionKey(): Buffer {
+    const hex = this.config.get<string>('FREEBOX_ENCRYPTION_KEY');
+    if (!hex) throw new BadRequestException('FREEBOX_ENCRYPTION_KEY non configurée dans les variables d\'env');
+    const key = Buffer.from(hex, 'hex');
+    if (key.length !== 32) throw new BadRequestException('FREEBOX_ENCRYPTION_KEY doit être 32 bytes (64 caractères hex)');
+    return key;
+  }
 
-    return { status: data.result.status }; // pending_validation | granted | denied | timeout
+  private encryptToken(plaintext: string): string {
+    const key = this.getEncryptionKey();
+    const iv = randomBytes(16);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+  }
+
+  private decryptToken(ciphertext: string): string {
+    const key = this.getEncryptionKey();
+    const parts = ciphertext.split(':');
+    if (parts.length !== 3) throw new Error('Format de token chiffré invalide');
+    const [ivHex, tagHex, encHex] = parts;
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]).toString('utf8');
   }
 
   // ── VideoStation ──────────────────────────────────────────────────────────

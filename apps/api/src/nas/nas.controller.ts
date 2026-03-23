@@ -61,26 +61,17 @@ export class NasController {
     return { sent: true, message: 'Magic packet envoyé. Le NAS devrait démarrer dans 1 à 3 minutes.' };
   }
 
-  // ── Freebox registration ───────────────────────────────────────────────────
+  // ── Freebox token ──────────────────────────────────────────────────────────
 
-  @Post('freebox/authorize')
+  @Post('freebox/token')
   @Roles(MemberRole.ADMIN)
-  async freeboxAuthorize(
+  async saveFreeboxToken(
     @Req() req: { user: JwtPayload },
-    @Body() body: { freeboxApiUrl: string },
+    @Body() body: { freeboxApiUrl: string; appToken: string },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    return this.nasService.startFreeboxRegistration(req.user.cineClubId, body.freeboxApiUrl);
-  }
-
-  @Get('freebox/authorize/:trackId')
-  @Roles(MemberRole.ADMIN)
-  async freeboxPoll(
-    @Req() req: { user: JwtPayload },
-    @Param('trackId', ParseIntPipe) trackId: number,
-  ) {
-    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    return this.nasService.pollFreeboxRegistration(req.user.cineClubId, trackId);
+    await this.nasService.saveFreeboxConfig(req.user.cineClubId, body.freeboxApiUrl, body.appToken);
+    return { saved: true };
   }
 
   // ── Status ─────────────────────────────────────────────────────────────────

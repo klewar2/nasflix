@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Copy, RefreshCw, Save, Wifi } from 'lucide-react';
+import { Copy, RefreshCw, Save } from 'lucide-react';
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -22,8 +22,7 @@ export default function SettingsPage() {
   const [wolHost, setWolHost] = useState(cineClub?.nasWolHost ?? '');
   const [wolPort, setWolPort] = useState(String(cineClub?.nasWolPort ?? 9));
   const [freeboxUrl, setFreeboxUrl] = useState(cineClub?.freeboxApiUrl ?? '');
-  const [freeboxStatus, setFreeboxStatus] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [freeboxToken, setFreeboxToken] = useState('');
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -59,23 +58,14 @@ export default function SettingsPage() {
     },
   });
 
-  const freeboxMutation = useMutation({
-    mutationFn: () => api.startFreeboxRegistration(freeboxUrl),
-    onSuccess: ({ trackId }) => {
-      setFreeboxStatus('pending_validation');
-      pollRef.current = setInterval(async () => {
-        try {
-          const { status } = await api.pollFreeboxRegistration(trackId);
-          setFreeboxStatus(status);
-          if (status !== 'pending_validation') {
-            clearInterval(pollRef.current!);
-            if (status === 'granted') queryClient.invalidateQueries({ queryKey: ['cineclub'] });
-          }
-        } catch {
-          clearInterval(pollRef.current!);
-          setFreeboxStatus('error');
-        }
-      }, 2000);
+  const freeboxTokenMutation = useMutation({
+    mutationFn: () => {
+      if (!cineClub) throw new Error('Aucun CineClub sélectionné');
+      return api.saveFreeboxToken(freeboxUrl, freeboxToken);
+    },
+    onSuccess: () => {
+      setFreeboxToken('');
+      queryClient.invalidateQueries({ queryKey: ['cineclub'] });
     },
   });
 
@@ -154,14 +144,14 @@ export default function SettingsPage() {
                 <CardTitle>Wake-on-LAN</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-xs text-zinc-500">Permet d'allumer le NAS depuis l'interface. Nécessite que WoL soit activé dans DSM et un port-forward UDP 9 sur le routeur.</p>
+                <p className="text-xs text-zinc-500">Adresse MAC requise. Le WoL passe par la Freebox si un token est configuré, sinon par UDP direct (nécessite port-forward).</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-zinc-400 mb-1 block">Adresse MAC du NAS</label>
                     <Input placeholder="00:11:32:AA:BB:CC" value={wolMac} onChange={(e) => setWolMac(e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-sm text-zinc-400 mb-1 block">Hôte WoL (IP publique ou DynDNS)</label>
+                    <label className="text-sm text-zinc-400 mb-1 block">Hôte WoL fallback <span className="text-zinc-600">(UDP direct)</span></label>
                     <Input placeholder="klewar2.synology.me" value={wolHost} onChange={(e) => setWolHost(e.target.value)} />
                   </div>
                   <div>
@@ -177,53 +167,55 @@ export default function SettingsPage() {
             </Card>
           )}
 
-          {/* Freebox WoL */}
+          {/* Token Freebox */}
           {isAdmin && (
             <Card>
               <CardHeader>
-                <CardTitle>Wake-on-LAN via Freebox</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Freebox API</CardTitle>
+                  <Badge variant={cineClub.freeboxAppTokenSet ? 'success' : 'secondary'}>
+                    {cineClub.freeboxAppTokenSet ? 'Token configuré' : 'Non configuré'}
+                  </Badge>
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-xs text-zinc-500">
-                  Méthode recommandée. La Freebox envoie elle-même le magic packet sur le LAN — fonctionne depuis internet sans port-forward UDP.
-                  Nécessite d'activer la gestion à distance sur la Freebox OS et d'autoriser l'app (bouton physique).
+                  Permet au WoL de passer par la Freebox (méthode fiable depuis internet). Le token est chiffré en base — récupérez-le avec les commandes curl décrites dans la documentation.
                 </p>
-                <div className="flex items-center gap-2">
-                  <Badge variant={cineClub.freeboxAppTokenSet ? 'success' : 'secondary'}>
-                    {cineClub.freeboxAppTokenSet ? 'Connecté' : 'Non connecté'}
-                  </Badge>
-                </div>
-                <div>
-                  <label className="text-sm text-zinc-400 mb-1 block">URL API Freebox</label>
-                  <Input
-                    placeholder="https://mafreebox.fbxos.fr"
-                    value={freeboxUrl}
-                    onChange={(e) => setFreeboxUrl(e.target.value)}
-                  />
-                  <p className="text-xs text-zinc-600 mt-1">Trouvable dans Freebox OS → Paramètres → Gestion à distance</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-sm text-zinc-400 mb-1 block">URL API Freebox</label>
+                    <Input
+                      placeholder="https://mafreebox.fbxos.fr"
+                      value={freeboxUrl}
+                      onChange={(e) => setFreeboxUrl(e.target.value)}
+                    />
+                    <p className="text-xs text-zinc-600 mt-1">Champ <code className="bg-zinc-800 px-1 rounded">api_domain</code> retourné par <code className="bg-zinc-800 px-1 rounded">curl http://mafreebox.freebox.fr/api_version</code></p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-zinc-400 mb-1 block">
+                      {cineClub.freeboxAppTokenSet ? 'Nouveau token (laisser vide pour conserver l\'actuel)' : 'Token app Freebox'}
+                    </label>
+                    <Input
+                      type="password"
+                      placeholder={cineClub.freeboxAppTokenSet ? '••••••••••••••••' : 'app_token obtenu via curl'}
+                      value={freeboxToken}
+                      onChange={(e) => setFreeboxToken(e.target.value)}
+                    />
+                  </div>
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => { setFreeboxStatus(null); freeboxMutation.mutate(); }}
-                  disabled={freeboxMutation.isPending || !freeboxUrl || freeboxStatus === 'pending_validation'}
+                  onClick={() => freeboxTokenMutation.mutate()}
+                  disabled={freeboxTokenMutation.isPending || !freeboxUrl || !freeboxToken}
                 >
-                  <Wifi className="w-4 h-4 mr-2" />
-                  {cineClub.freeboxAppTokenSet ? 'Reconnecter' : 'Connecter la Freebox'}
+                  <Save className="w-4 h-4 mr-2" />
+                  {freeboxTokenMutation.isPending ? 'Enregistrement...' : 'Enregistrer le token'}
                 </Button>
-                {freeboxStatus === 'pending_validation' && (
-                  <p className="text-sm text-yellow-400">Appuyez sur le bouton de la Freebox pour autoriser...</p>
-                )}
-                {freeboxStatus === 'granted' && (
-                  <p className="text-sm text-green-400">Freebox connectée avec succes !</p>
-                )}
-                {(freeboxStatus === 'denied' || freeboxStatus === 'timeout' || freeboxStatus === 'error') && (
+                {freeboxTokenMutation.isSuccess && <p className="text-sm text-green-400">Token Freebox enregistré.</p>}
+                {freeboxTokenMutation.isError && (
                   <p className="text-sm text-destructive">
-                    {freeboxStatus === 'denied' ? 'Autorisation refusée.' : freeboxStatus === 'timeout' ? 'Délai dépassé.' : 'Erreur de connexion.'}
-                  </p>
-                )}
-                {freeboxMutation.isError && (
-                  <p className="text-sm text-destructive">
-                    {freeboxMutation.error instanceof Error ? freeboxMutation.error.message : 'Erreur'}
+                    {freeboxTokenMutation.error instanceof Error ? freeboxTokenMutation.error.message : 'Erreur'}
                   </p>
                 )}
               </CardContent>

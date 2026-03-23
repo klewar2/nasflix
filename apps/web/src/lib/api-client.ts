@@ -86,12 +86,8 @@ class ApiClient {
     return this.fetch<CineClubResponse>(`/cineclubs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
-  startFreeboxRegistration(freeboxApiUrl: string) {
-    return this.fetch<{ trackId: number }>('/nas/freebox/authorize', { method: 'POST', body: JSON.stringify({ freeboxApiUrl }) });
-  }
-
-  pollFreeboxRegistration(trackId: number) {
-    return this.fetch<{ status: string }>(`/nas/freebox/authorize/${trackId}`);
+  saveFreeboxToken(freeboxApiUrl: string, appToken: string) {
+    return this.fetch<{ saved: boolean }>('/nas/freebox/token', { method: 'POST', body: JSON.stringify({ freeboxApiUrl, appToken }) });
   }
 
   generateWebhookSecret(cineClubId: number) {
