@@ -43,7 +43,7 @@ export default function CineClubSelectorPage() {
       setCineClub(club);
       navigate('/');
     } catch (err: unknown) {
-      console.error(err.message);
+      console.error('Erreur lors de la sélection');
       setError(err instanceof Error ? err.message : 'Erreur lors de la sélection');
     } finally {
       setSelecting(null);
