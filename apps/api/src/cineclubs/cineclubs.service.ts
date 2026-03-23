@@ -26,10 +26,10 @@ export class CineClubsService {
     return this.sanitize(club);
   }
 
-  /** Masque webhookSecret en booléen pour ne jamais l'exposer côté API */
-  private sanitize(club: Parameters<typeof Object.assign>[0] & { webhookSecret?: string | null }) {
-    const { webhookSecret, ...rest } = club;
-    return { ...rest, webhookSecretSet: !!webhookSecret };
+  /** Masque les secrets sensibles — jamais exposés côté API */
+  private sanitize(club: Parameters<typeof Object.assign>[0] & { webhookSecret?: string | null; freeboxAppToken?: string | null }) {
+    const { webhookSecret, freeboxAppToken, ...rest } = club;
+    return { ...rest, webhookSecretSet: !!webhookSecret, freeboxAppTokenSet: !!freeboxAppToken };
   }
 
   async create(data: { name: string; slug: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {
@@ -46,6 +46,7 @@ export class CineClubsService {
     nasWolMac?: string | null;
     nasWolHost?: string | null;
     nasWolPort?: number | null;
+    freeboxApiUrl?: string | null;
   }) {
     await this.findOne(id);
     return this.sanitize(await this.prisma.cineClub.update({ where: { id }, data }));

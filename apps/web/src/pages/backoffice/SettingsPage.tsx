@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Copy, RefreshCw, Save } from 'lucide-react';
+import { Copy, RefreshCw, Save, Wifi } from 'lucide-react';
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -21,6 +21,9 @@ export default function SettingsPage() {
   const [wolMac, setWolMac] = useState(cineClub?.nasWolMac ?? '');
   const [wolHost, setWolHost] = useState(cineClub?.nasWolHost ?? '');
   const [wolPort, setWolPort] = useState(String(cineClub?.nasWolPort ?? 9));
+  const [freeboxUrl, setFreeboxUrl] = useState(cineClub?.freeboxApiUrl ?? '');
+  const [freeboxStatus, setFreeboxStatus] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -32,6 +35,7 @@ export default function SettingsPage() {
       setWolMac(cineClub.nasWolMac ?? '');
       setWolHost(cineClub.nasWolHost ?? '');
       setWolPort(String(cineClub.nasWolPort ?? 9));
+      setFreeboxUrl(cineClub.freeboxApiUrl ?? '');
     }
   }, [cineClub]);
 
@@ -52,6 +56,26 @@ export default function SettingsPage() {
       setCineClub({ ...updated, role: cineClub?.role });
       setTmdbKey('');
       queryClient.invalidateQueries({ queryKey: ['cineclub'] });
+    },
+  });
+
+  const freeboxMutation = useMutation({
+    mutationFn: () => api.startFreeboxRegistration(freeboxUrl),
+    onSuccess: ({ trackId }) => {
+      setFreeboxStatus('pending_validation');
+      pollRef.current = setInterval(async () => {
+        try {
+          const { status } = await api.pollFreeboxRegistration(trackId);
+          setFreeboxStatus(status);
+          if (status !== 'pending_validation') {
+            clearInterval(pollRef.current!);
+            if (status === 'granted') queryClient.invalidateQueries({ queryKey: ['cineclub'] });
+          }
+        } catch {
+          clearInterval(pollRef.current!);
+          setFreeboxStatus('error');
+        }
+      }, 2000);
     },
   });
 
@@ -149,6 +173,59 @@ export default function SettingsPage() {
                   <Save className="w-4 h-4 mr-2" />
                   Sauvegarder WoL
                 </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Freebox WoL */}
+          {isAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Wake-on-LAN via Freebox</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-xs text-zinc-500">
+                  Méthode recommandée. La Freebox envoie elle-même le magic packet sur le LAN — fonctionne depuis internet sans port-forward UDP.
+                  Nécessite d'activer la gestion à distance sur la Freebox OS et d'autoriser l'app (bouton physique).
+                </p>
+                <div className="flex items-center gap-2">
+                  <Badge variant={cineClub.freeboxAppTokenSet ? 'success' : 'secondary'}>
+                    {cineClub.freeboxAppTokenSet ? 'Connecté' : 'Non connecté'}
+                  </Badge>
+                </div>
+                <div>
+                  <label className="text-sm text-zinc-400 mb-1 block">URL API Freebox</label>
+                  <Input
+                    placeholder="https://mafreebox.fbxos.fr"
+                    value={freeboxUrl}
+                    onChange={(e) => setFreeboxUrl(e.target.value)}
+                  />
+                  <p className="text-xs text-zinc-600 mt-1">Trouvable dans Freebox OS → Paramètres → Gestion à distance</p>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => { setFreeboxStatus(null); freeboxMutation.mutate(); }}
+                  disabled={freeboxMutation.isPending || !freeboxUrl || freeboxStatus === 'pending_validation'}
+                >
+                  <Wifi className="w-4 h-4 mr-2" />
+                  {cineClub.freeboxAppTokenSet ? 'Reconnecter' : 'Connecter la Freebox'}
+                </Button>
+                {freeboxStatus === 'pending_validation' && (
+                  <p className="text-sm text-yellow-400">Appuyez sur le bouton de la Freebox pour autoriser...</p>
+                )}
+                {freeboxStatus === 'granted' && (
+                  <p className="text-sm text-green-400">Freebox connectée avec succes !</p>
+                )}
+                {(freeboxStatus === 'denied' || freeboxStatus === 'timeout' || freeboxStatus === 'error') && (
+                  <p className="text-sm text-destructive">
+                    {freeboxStatus === 'denied' ? 'Autorisation refusée.' : freeboxStatus === 'timeout' ? 'Délai dépassé.' : 'Erreur de connexion.'}
+                  </p>
+                )}
+                {freeboxMutation.isError && (
+                  <p className="text-sm text-destructive">
+                    {freeboxMutation.error instanceof Error ? freeboxMutation.error.message : 'Erreur'}
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}

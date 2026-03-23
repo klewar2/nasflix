@@ -82,8 +82,16 @@ class ApiClient {
     return this.fetch<CineClubResponse>(`/cineclubs/${id}`);
   }
 
-  updateCineClub(id: number, data: Partial<Pick<CineClubResponse, 'name' | 'nasBaseUrl' | 'nasSharedFolders' | 'tmdbApiKey' | 'nasWolMac' | 'nasWolHost' | 'nasWolPort'>>) {
+  updateCineClub(id: number, data: Partial<Pick<CineClubResponse, 'name' | 'nasBaseUrl' | 'nasSharedFolders' | 'tmdbApiKey' | 'nasWolMac' | 'nasWolHost' | 'nasWolPort' | 'freeboxApiUrl'>>) {
     return this.fetch<CineClubResponse>(`/cineclubs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
+  startFreeboxRegistration(freeboxApiUrl: string) {
+    return this.fetch<{ trackId: number }>('/nas/freebox/authorize', { method: 'POST', body: JSON.stringify({ freeboxApiUrl }) });
+  }
+
+  pollFreeboxRegistration(trackId: number) {
+    return this.fetch<{ status: string }>(`/nas/freebox/authorize/${trackId}`);
   }
 
   generateWebhookSecret(cineClubId: number) {

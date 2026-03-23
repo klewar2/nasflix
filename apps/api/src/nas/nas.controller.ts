@@ -1,4 +1,4 @@
-import { Controller, ForbiddenException, Get, Logger, Param, ParseIntPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Logger, Param, ParseIntPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -59,6 +59,28 @@ export class NasController {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     await this.nasService.sendWakeOnLan(req.user.cineClubId);
     return { sent: true, message: 'Magic packet envoyé. Le NAS devrait démarrer dans 1 à 3 minutes.' };
+  }
+
+  // ── Freebox registration ───────────────────────────────────────────────────
+
+  @Post('freebox/authorize')
+  @Roles(MemberRole.ADMIN)
+  async freeboxAuthorize(
+    @Req() req: { user: JwtPayload },
+    @Body() body: { freeboxApiUrl: string },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.startFreeboxRegistration(req.user.cineClubId, body.freeboxApiUrl);
+  }
+
+  @Get('freebox/authorize/:trackId')
+  @Roles(MemberRole.ADMIN)
+  async freeboxPoll(
+    @Req() req: { user: JwtPayload },
+    @Param('trackId', ParseIntPipe) trackId: number,
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.pollFreeboxRegistration(req.user.cineClubId, trackId);
   }
 
   // ── Status ─────────────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ export class CineClubsController {
       nasWolMac?: string | null;
       nasWolHost?: string | null;
       nasWolPort?: number | null;
+      freeboxApiUrl?: string | null;
     },
   ) {
     return this.cineClubsService.update(id, body);

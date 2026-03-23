@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
+import { createHmac } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { PrismaService } from '../common/prisma.service';
 import { parseMediaFilename } from '../common/media-parser';
@@ -356,10 +357,19 @@ export class NasService {
   async sendWakeOnLan(cineClubId: number): Promise<void> {
     const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
     if (!club?.nasWolMac) throw new BadRequestException('Adresse MAC WoL non configurée pour ce CineClub');
-    if (!club.nasWolHost) throw new BadRequestException('Hôte WoL non configuré pour ce CineClub');
 
     const mac = club.nasWolMac.replace(/[:\-\s]/g, '');
     if (mac.length !== 12) throw new BadRequestException('Adresse MAC invalide (format attendu: XX:XX:XX:XX:XX:XX)');
+
+    // Méthode préférée : API Freebox (fiable depuis internet)
+    if (club.freeboxApiUrl && club.freeboxAppToken) {
+      await this.sendWakeOnLanViaFreebox(club.freeboxApiUrl, club.freeboxAppToken, club.nasWolMac);
+      this.logger.log(`[WoL] Magic packet envoyé via Freebox API (MAC: ${club.nasWolMac})`);
+      return;
+    }
+
+    // Fallback : UDP direct (nécessite port-forward broadcast côté routeur)
+    if (!club.nasWolHost) throw new BadRequestException('Hôte WoL non configuré pour ce CineClub');
 
     const macBytes = mac.match(/.{2}/g)!.map((h) => parseInt(h, 16));
 
@@ -374,7 +384,7 @@ export class NasService {
       const resolved = await lookup(club.nasWolHost);
       address = resolved.address;
     } catch {
-      address = club.nasWolHost; // fallback : utiliser tel quel si déjà une IP
+      address = club.nasWolHost;
     }
 
     const port = club.nasWolPort ?? 9;
@@ -391,7 +401,84 @@ export class NasService {
       });
     });
 
-    this.logger.log(`[WoL] Magic packet envoyé → ${address}:${port} (MAC: ${club.nasWolMac})`);
+    this.logger.log(`[WoL] Magic packet envoyé (UDP) → ${address}:${port} (MAC: ${club.nasWolMac})`);
+  }
+
+  private async sendWakeOnLanViaFreebox(freeboxApiUrl: string, appToken: string, mac: string): Promise<void> {
+    const base = freeboxApiUrl.replace(/\/$/, '');
+
+    // 1. Récupérer le challenge
+    const loginRes = await fetch(`${base}/api/v8/login/`);
+    const loginData = await loginRes.json() as { success: boolean; result: { challenge: string } };
+    if (!loginData.success) throw new Error('Freebox login: échec récupération challenge');
+
+    // 2. HMAC-SHA1(app_token, challenge)
+    const password = createHmac('sha1', appToken).update(loginData.result.challenge).digest('hex');
+
+    // 3. Ouvrir une session
+    const sessionRes = await fetch(`${base}/api/v8/login/session/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: 'nasflix', password }),
+    });
+    const sessionData = await sessionRes.json() as { success: boolean; result: { session_token: string } };
+    if (!sessionData.success) throw new Error('Freebox login: échec ouverture session');
+
+    const sessionToken = sessionData.result.session_token;
+
+    try {
+      // 4. Envoyer WoL via l'interface pub (LAN)
+      const wolRes = await fetch(`${base}/api/v8/lan/wol/pub/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Fbx-App-Auth': sessionToken },
+        body: JSON.stringify({ mac }),
+      });
+      const wolData = await wolRes.json() as { success: boolean; msg?: string };
+      if (!wolData.success) throw new Error(`Freebox WoL: ${wolData.msg ?? 'échec'}`);
+    } finally {
+      // 5. Fermer la session
+      await fetch(`${base}/api/v8/logout/`, {
+        method: 'POST',
+        headers: { 'X-Fbx-App-Auth': sessionToken },
+      }).catch(() => {});
+    }
+  }
+
+  async startFreeboxRegistration(cineClubId: number, freeboxApiUrl: string): Promise<{ trackId: number }> {
+    const base = freeboxApiUrl.replace(/\/$/, '');
+
+    const res = await fetch(`${base}/api/v8/login/authorize/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        app_id: 'nasflix',
+        app_name: 'Nasflix',
+        app_version: '1.0.0',
+        device_name: 'Nasflix Server',
+      }),
+    });
+    const data = await res.json() as { success: boolean; result?: { app_token: string; track_id: number }; msg?: string };
+    if (!data.success || !data.result) throw new BadRequestException(`Freebox authorize: ${data.msg ?? 'échec'}`);
+
+    // Stocker l'URL + le token (en attente de validation)
+    await this.prisma.cineClub.update({
+      where: { id: cineClubId },
+      data: { freeboxApiUrl, freeboxAppToken: data.result.app_token },
+    });
+
+    return { trackId: data.result.track_id };
+  }
+
+  async pollFreeboxRegistration(cineClubId: number, trackId: number): Promise<{ status: string }> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.freeboxApiUrl) throw new BadRequestException('URL Freebox non configurée');
+
+    const base = club.freeboxApiUrl.replace(/\/$/, '');
+    const res = await fetch(`${base}/api/v8/login/authorize/${trackId}`);
+    const data = await res.json() as { success: boolean; result?: { status: string }; msg?: string };
+    if (!data.success || !data.result) throw new BadRequestException(`Freebox poll: ${data.msg ?? 'échec'}`);
+
+    return { status: data.result.status }; // pending_validation | granted | denied | timeout
   }
 
   // ── VideoStation ──────────────────────────────────────────────────────────

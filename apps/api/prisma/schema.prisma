@@ -49,6 +49,8 @@ model CineClub {
   nasWolMac        String?
   nasWolHost       String?
   nasWolPort       Int?
+  freeboxApiUrl    String?
+  freeboxAppToken  String?
   lastOnlineAt     DateTime?
   lastSyncAt       DateTime?
   createdAt        DateTime         @default(now())
