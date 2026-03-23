@@ -55,7 +55,7 @@ export class CineClubsService {
   /** Génère un nouveau webhookSecret et le retourne en clair (une seule fois). */
   async generateWebhookSecret(id: number): Promise<{ webhookSecret: string }> {
     await this.findOne(id);
-
+    console.log('generate webhook');
     const webhookSecret = randomBytes(32).toString('hex');
     await this.prisma.cineClub.update({ where: { id }, data: { webhookSecret } });
     return { webhookSecret };
