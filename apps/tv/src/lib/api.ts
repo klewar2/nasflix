@@ -89,12 +89,14 @@ export function wakeNas() {
   return request<{ sent: boolean; message: string }>('/nas/wake', { method: 'POST' });
 }
 
-export function getStreamUrl(mediaId: number, audioTrack = 1) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+export async function getStreamUrl(mediaId: number, audioTrack = 1) {
+  const r = await request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+  return { ...r, url: resolveApiUrl(r.url) };
 }
 
-export function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+export async function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
+  const r = await request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+  return { ...r, url: resolveApiUrl(r.url) };
 }
 
 export function getMediaTracks(mediaId: number) {

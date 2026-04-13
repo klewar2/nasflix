@@ -144,10 +144,12 @@ export class NasController {
     if (passthrough === '1') {
       const nasUrl = await this.nasService.getEpisodeFileUrl(episodeId, req.user.sub, req.user.cineClubId);
       const duration = await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId);
+      this.logger.log(`[stream/episode] passthrough episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
       return { url: `/nas/fileproxy?t=${this.signTranscodeToken(nasUrl, duration)}`, isHls: false, durationSeconds: duration };
     }
 
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
+    this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
@@ -170,10 +172,12 @@ export class NasController {
     if (passthrough === '1') {
       const nasUrl = await this.nasService.getMediaFileUrl(mediaId, req.user.sub, req.user.cineClubId);
       const media = await this.nasService.getMediaDuration(mediaId, req.user.cineClubId);
+      this.logger.log(`[stream/media] passthrough mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
       return { url: `/nas/fileproxy?t=${this.signTranscodeToken(nasUrl, media)}`, isHls: false, durationSeconds: media };
     }
 
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
+    this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
@@ -198,31 +202,49 @@ export class NasController {
     const nasUrl = data.url;
     const parsed = new URL(nasUrl);
     const isHttps = parsed.protocol === 'https:';
+
+    // Build headers — only include Range when actually provided by client
+    const reqHeaders: Record<string, string> = {};
+    const rangeHeader = (req.headers as Record<string, string>)['range'];
+    if (rangeHeader) reqHeaders['Range'] = rangeHeader;
+
     const options = {
       hostname: parsed.hostname,
-      port: parseInt(parsed.port) || (isHttps ? 443 : 80),
+      port: Number(parsed.port) || (isHttps ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: 'GET',
-      headers: { Range: (req as Request & { headers: Record<string, string> }).headers['range'] || '' },
+      headers: reqHeaders,
       rejectUnauthorized: false,
+    };
+
+    this.logger.log(`[fileproxy] download=${download} nasHost=${parsed.hostname}:${parsed.port} path=${parsed.pathname.slice(0, 60)}`);
+
+    const sendError = (code: number, reason?: string) => {
+      this.logger.warn(`[fileproxy] error ${code}${reason ? ' — ' + reason : ''}`);
+      if (!res.headersSent) res.status(code).end();
+      else res.destroy();
     };
 
     const lib = isHttps ? require('node:https') : require('node:http');
     const proxyReq = lib.request(options, (proxyRes: import('http').IncomingMessage) => {
+      this.logger.log(`[fileproxy] NAS responded ${proxyRes.statusCode} content-type=${proxyRes.headers['content-type']} content-length=${proxyRes.headers['content-length']}`);
       res.status(proxyRes.statusCode ?? 200);
       const forward = ['content-type', 'content-length', 'content-range', 'accept-ranges'];
       for (const h of forward) {
         const v = proxyRes.headers[h];
-        if (v) res.setHeader(h, v);
+        if (v) res.setHeader(h, v as string);
       }
       res.setHeader('Cache-Control', 'no-cache');
       if (download === '1') {
-        const filename = nasUrl.split('/').pop()?.split('?')[0] ?? 'video';
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        const filename = decodeURIComponent(nasUrl.split('/').pop()?.split('?')[0] ?? 'video');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        this.logger.log(`[fileproxy] download filename="${filename}"`);
       }
+      proxyRes.on('error', (e) => sendError(502, `proxyRes error: ${e.message}`));
       proxyRes.pipe(res);
     });
-    proxyReq.on('error', () => res.status(502).end());
+    proxyReq.on('error', (e: Error) => sendError(502, `proxyReq error: ${e.message}`));
+    proxyReq.setTimeout(30000, () => { proxyReq.destroy(); sendError(504, 'timeout 30s'); });
     proxyReq.end();
   }
 
