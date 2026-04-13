@@ -227,8 +227,26 @@ export class NasController {
 
     const lib = isHttps ? require('node:https') : require('node:http');
     const proxyReq = lib.request(options, (proxyRes: import('http').IncomingMessage) => {
-      this.logger.log(`[fileproxy] NAS responded ${proxyRes.statusCode} content-type=${proxyRes.headers['content-type']} content-length=${proxyRes.headers['content-length']}`);
-      res.status(proxyRes.statusCode ?? 200);
+      const status = proxyRes.statusCode ?? 200;
+      this.logger.log(`[fileproxy] NAS responded ${status} content-type=${proxyRes.headers['content-type']} content-length=${proxyRes.headers['content-length']} location=${proxyRes.headers['location'] ?? '-'}`);
+
+      // NAS redirect = session SID expired → never forward to browser (SSL cert on NAS)
+      if (status >= 300 && status < 400) {
+        this.logger.warn(`[fileproxy] NAS redirect to ${proxyRes.headers['location']} — SID probablement expiré`);
+        proxyRes.resume(); // drain the body
+        sendError(401, 'NAS session expirée, recharge la page et réessaie');
+        return;
+      }
+
+      // Non-2xx from NAS
+      if (status >= 400) {
+        this.logger.warn(`[fileproxy] NAS error ${status}`);
+        proxyRes.resume();
+        sendError(502, `NAS returned ${status}`);
+        return;
+      }
+
+      res.status(status);
       const forward = ['content-type', 'content-length', 'content-range', 'accept-ranges'];
       for (const h of forward) {
         const v = proxyRes.headers[h];
