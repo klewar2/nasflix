@@ -326,7 +326,8 @@ export class NasService {
 
     const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
     return {
-      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, mode),
+      // Always use 'stream' (mode=open) — fileproxy sets Content-Disposition for downloads itself
+      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, 'stream'),
       durationSeconds,
       isHls: false,
     };
@@ -387,7 +388,8 @@ export class NasService {
 
     const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
     return {
-      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, mode),
+      // Always use 'stream' (mode=open) — fileproxy sets Content-Disposition for downloads itself
+      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream'),
       durationSeconds,
       isHls: false,
     };
