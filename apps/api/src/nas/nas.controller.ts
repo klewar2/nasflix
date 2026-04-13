@@ -1,6 +1,7 @@
 import { Body, Controller, ForbiddenException, Get, Logger, Param, ParseIntPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { basename } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Request, Response } from 'express';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -257,13 +258,6 @@ export class NasController {
       data.episodeId != null ? `episodeId=${data.episodeId}` :
       'legacy-url';
 
-    // For downloads: redirect browser directly to NAS (entry.cgi accessible from browser, not from Railway)
-    if (download === '1') {
-      this.logger.log(`[fileproxy] redirect download ${refLabel} → ${nasUrl.slice(0, 100)}`);
-      res.redirect(302, nasUrl);
-      return;
-    }
-
     const parsed = new URL(nasUrl);
     const isHttps = parsed.protocol === 'https:';
 
@@ -284,7 +278,7 @@ export class NasController {
 
     const fullPath = parsed.pathname + parsed.search;
     this.logger.log(
-      `[fileproxy] GET ${refLabel} nasHost=${parsed.hostname}:${parsed.port} decodedPath=${decodedFsPath.slice(0, 280)}${decodedFsPath.length > 280 ? '…' : ''} range=${rangeHeader ?? 'none'} queryChars=${fullPath.length}`,
+      `[fileproxy] GET ${refLabel} download=${download === '1'} nasHost=${parsed.hostname}:${parsed.port} decodedPath=${decodedFsPath.slice(0, 280)}${decodedFsPath.length > 280 ? '…' : ''} range=${rangeHeader ?? 'none'} queryChars=${fullPath.length}`,
     );
 
     const options = {
@@ -335,7 +329,11 @@ export class NasController {
       }
       res.setHeader('Cache-Control', 'no-cache');
       if (download === '1') {
-        const filename = decodeURIComponent(nasUrl.split('/').pop()?.split('?')[0] ?? 'video');
+        const rawName = decodedFsPath ? basename(decodedFsPath) : (nasUrl.split('/').pop()?.split('?')[0] ?? 'video');
+        let filename = rawName;
+        try {
+          filename = decodeURIComponent(rawName);
+        } catch { /* garde rawName */ }
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
         this.logger.log(`[fileproxy] download filename="${filename}"`);
       }
