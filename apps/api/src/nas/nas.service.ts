@@ -301,15 +301,21 @@ export class NasService {
     return allFiles;
   }
 
-  private buildFileStationUrl(baseUrl: string, path: string, sid: string, mode: 'stream' | 'download'): string {
+  /**
+   * URL FileStation.Download — doc Synology : exemple avec mode=%22open%22 (chaîne JSON).
+   * Dupliquer sid + _sid : certains clients / DSM l’exigent (cf. communauté Synology).
+   * @param synoOpenOrDownload stream → API mode "open" (MIME selon fichier) ; download → "download" (octet-stream).
+   */
+  private buildFileStationUrl(baseUrl: string, path: string, sid: string, synoOpenOrDownload: 'stream' | 'download'): string {
     const url = new URL('/webapi/entry.cgi', baseUrl);
     url.searchParams.set('api', 'SYNO.FileStation.Download');
     url.searchParams.set('version', '2');
     url.searchParams.set('method', 'download');
     url.searchParams.set('path', JSON.stringify([path]));
-    // Valeurs littérales open | download (pas de JSON.stringify — sinon %22open%22, le NAS renvoie souvent 404)
-    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
+    const modeVal = synoOpenOrDownload === 'stream' ? 'open' : 'download';
+    url.searchParams.set('mode', JSON.stringify(modeVal));
     url.searchParams.set('_sid', sid);
+    url.searchParams.set('sid', sid);
     return url.toString();
   }
 
@@ -795,7 +801,8 @@ export class NasService {
     if (!media?.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré');
     const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-    return this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, 'stream');
+    // Mode API "download" : évite la page HTML 404 que DSM renvoie pour toute erreur en mode "open" (doc § Download).
+    return this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, 'download');
   }
 
   async getEpisodeFileUrl(episodeId: number, userId: number, cineClubId: number): Promise<string> {
@@ -811,7 +818,7 @@ export class NasService {
     const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré');
     const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-    return this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream');
+    return this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'download');
   }
 
   async probeMediaTracks(nasFileUrl: string): Promise<MediaTracks> {
