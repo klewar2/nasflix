@@ -215,6 +215,9 @@ export class NasController {
     const reqHeaders: Record<string, string> = {};
     const rangeHeader = (req.headers as Record<string, string>)['range'];
     if (rangeHeader) reqHeaders['Range'] = rangeHeader;
+    // DSM accepte souvent _sid en query ; certains reverse proxies / clients attendent aussi le cookie de session
+    const sid = parsed.searchParams.get('_sid');
+    if (sid) reqHeaders['Cookie'] = `id=${sid}`;
 
     const options = {
       hostname: parsed.hostname,

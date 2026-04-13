@@ -99,10 +99,43 @@ export interface NasSession {
 export class NasService {
   private readonly logger = new Logger(NasService.name);
 
+  /** Évite deux logins FileStation concurrents (même NAS / même user) : la 2ᵉ session invalide souvent la 1ʳᵉ → 404 sur fileproxy. */
+  private readonly fileStationSessionTtlMs = 4 * 60 * 1000;
+  private fileStationSidByKey = new Map<string, { sid: string; expiresAt: number }>();
+  private fileStationLoginInFlight = new Map<string, Promise<NasSession>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
   ) {}
+
+  private fileStationSessionKey(baseUrl: string, username: string): string {
+    return `${baseUrl.replace(/\/$/, '')}\u0000${username}`;
+  }
+
+  /** Session FileStation réutilisée (TTL court) + une seule promesse en vol par clé. */
+  async getFileStationSession(baseUrl: string, username: string, password: string): Promise<NasSession> {
+    const key = this.fileStationSessionKey(baseUrl, username);
+    const now = Date.now();
+    const cached = this.fileStationSidByKey.get(key);
+    if (cached && cached.expiresAt > now) {
+      return { baseUrl, sid: cached.sid };
+    }
+    let pending = this.fileStationLoginInFlight.get(key);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const session = await this.login(baseUrl, username, password, 'FileStation');
+          this.fileStationSidByKey.set(key, { sid: session.sid, expiresAt: Date.now() + this.fileStationSessionTtlMs });
+          return session;
+        } finally {
+          this.fileStationLoginInFlight.delete(key);
+        }
+      })();
+      this.fileStationLoginInFlight.set(key, pending);
+    }
+    return pending;
+  }
 
   private async request<T>(baseUrl: string, params: Record<string, string>): Promise<SynoResponse<T>> {
     const url = new URL('/webapi/entry.cgi', baseUrl);
@@ -274,7 +307,8 @@ export class NasService {
     url.searchParams.set('version', '2');
     url.searchParams.set('method', 'download');
     url.searchParams.set('path', JSON.stringify([path]));
-    url.searchParams.set('mode', JSON.stringify(mode === 'stream' ? 'open' : 'download'));
+    // Valeurs littérales open | download (pas de JSON.stringify — sinon %22open%22, le NAS renvoie souvent 404)
+    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
     url.searchParams.set('_sid', sid);
     return url.toString();
   }
@@ -326,7 +360,7 @@ export class NasService {
       }
     }
 
-    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
     return {
       // Always use 'stream' (mode=open) — fileproxy sets Content-Disposition for downloads itself
       nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, 'stream'),
@@ -388,7 +422,7 @@ export class NasService {
       }
     }
 
-    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
     return {
       // Always use 'stream' (mode=open) — fileproxy sets Content-Disposition for downloads itself
       nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream'),
@@ -760,7 +794,7 @@ export class NasService {
     if (!member?.nasUsername || !member?.nasPassword) throw new UnauthorizedException('Credentials NAS non configurés');
     if (!media?.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré');
-    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
     return this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, 'stream');
   }
 
@@ -776,7 +810,7 @@ export class NasService {
     if (!episode?.nasPath) throw new NotFoundException('Fichier épisode introuvable sur le NAS');
     const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
     if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré');
-    const session = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
     return this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream');
   }
 
