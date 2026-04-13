@@ -90,12 +90,12 @@ export function wakeNas() {
 }
 
 export async function getStreamUrl(mediaId: number, audioTrack = 1) {
-  const r = await request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+  const r = await request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&audioTrack=${audioTrack}`);
   return { ...r, url: resolveApiUrl(r.url) };
 }
 
 export async function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
-  const r = await request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+  const r = await request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&audioTrack=${audioTrack}`);
   return { ...r, url: resolveApiUrl(r.url) };
 }
 
