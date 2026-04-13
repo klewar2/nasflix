@@ -203,22 +203,27 @@ export class NasController {
     const parsed = new URL(nasUrl);
     const isHttps = parsed.protocol === 'https:';
 
+    // DSM 7+ requires POST on entry.cgi — move query params to form-urlencoded body
+    const postBody = parsed.search ? parsed.search.slice(1) : ''; // strip leading '?'
+
     // Build headers — only include Range when actually provided by client
-    const reqHeaders: Record<string, string> = {};
+    const reqHeaders: Record<string, string> = {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': String(Buffer.byteLength(postBody)),
+    };
     const rangeHeader = (req.headers as Record<string, string>)['range'];
     if (rangeHeader) reqHeaders['Range'] = rangeHeader;
 
     const options = {
       hostname: parsed.hostname,
       port: Number(parsed.port) || (isHttps ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method: 'GET',
+      path: parsed.pathname, // no query string — params go in POST body
+      method: 'POST',
       headers: reqHeaders,
       rejectUnauthorized: false,
     };
 
-    this.logger.log(`[fileproxy] fullUrl=${nasUrl}`);
-    this.logger.log(`[fileproxy] download=${download} nasHost=${parsed.hostname}:${parsed.port} path=${parsed.pathname}${parsed.search}`);
+    this.logger.log(`[fileproxy] POST nasHost=${parsed.hostname}:${parsed.port} path=${parsed.pathname} body=${postBody.slice(0, 200)}`);
 
     const sendError = (code: number, reason?: string) => {
       this.logger.warn(`[fileproxy] error ${code}${reason ? ' — ' + reason : ''}`);
@@ -268,7 +273,7 @@ export class NasController {
     });
     proxyReq.on('error', (e: Error) => sendError(502, `proxyReq error: ${e.message}`));
     proxyReq.setTimeout(30000, () => { proxyReq.destroy(); sendError(504, 'timeout 30s'); });
-    proxyReq.end();
+    proxyReq.end(postBody);
   }
 
   // ── FFmpeg transcode proxy ─────────────────────────────────────────────────
