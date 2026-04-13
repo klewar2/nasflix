@@ -168,14 +168,15 @@ async function freeboxFetch(base: string, path: string, init?: RequestInit) {
 function FreeboxCard() {
   const queryClient = useQueryClient();
   const { cineClub } = useAuth();
-  const [freeboxUrl, setFreeboxUrl] = useState(cineClub?.freeboxApiUrl ?? '');
+  const [freeboxExternalUrl, setFreeboxExternalUrl] = useState(cineClub?.freeboxApiUrl ?? '');
+  const [freeboxLocalUrl, setFreeboxLocalUrl] = useState('http://mafreebox.freebox.fr');
   const [step, setStep] = useState<FreeboxStep>('idle');
   const [isPending, setIsPending] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (cineClub) setFreeboxUrl(cineClub.freeboxApiUrl ?? '');
+    if (cineClub) setFreeboxExternalUrl(cineClub.freeboxApiUrl ?? '');
   }, [cineClub]);
 
   useEffect(() => {
@@ -190,13 +191,13 @@ function FreeboxCard() {
   };
 
   const handleStart = async () => {
-    if (!freeboxUrl) return;
+    if (!freeboxExternalUrl || !freeboxLocalUrl) return;
     setIsPending(true);
     setErrorMsg('');
     try {
-      const base = freeboxUrl.replace(/\/$/, '');
-      // 1. Demande d'autorisation — doit venir du browser (réseau local)
-      const data = await freeboxFetch(base, '/login/authorize/', {
+      const localBase = freeboxLocalUrl.replace(/\/$/, '');
+      // 1. Autorisation depuis le browser via l'URL locale (HTTP, pas de problème de certificat)
+      const data = await freeboxFetch(localBase, '/login/authorize/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ app_id: 'nasflix', app_name: 'Nasflix', app_version: '1.0.0', device_name: 'Nasflix Web' }),
@@ -208,15 +209,15 @@ function FreeboxCard() {
       setStep('waiting');
       setIsPending(false);
 
-      // 2. Polling status directement depuis le browser
+      // 2. Polling status depuis le browser via URL locale
       pollRef.current = setInterval(async () => {
         try {
-          const statusData = await freeboxFetch(base, `/login/authorize/${track_id}`) as { success: boolean; result?: { status: string } };
+          const statusData = await freeboxFetch(localBase, `/login/authorize/${track_id}`) as { success: boolean; result?: { status: string } };
           const status = statusData.result?.status;
           if (status === 'granted') {
             clearInterval(pollRef.current!);
-            // 3. Sauvegarder le token côté backend
-            await api.saveFreeboxToken(freeboxUrl, app_token);
+            // 3. Sauvegarder le token + l'URL externe côté backend
+            await api.saveFreeboxToken(freeboxExternalUrl, app_token);
             queryClient.invalidateQueries({ queryKey: ['cineclub'] });
             setStep('granted');
           } else if (status === 'denied' || status === 'timeout') {
@@ -249,25 +250,34 @@ function FreeboxCard() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-zinc-500">
-          Permet au WoL de passer par la Freebox (méthode fiable depuis internet). L'autorisation se fait directement depuis ton navigateur — tu dois être sur ton réseau local (ou utiliser l'URL externe avec le bon port).
+          Permet au WoL de passer par la Freebox (méthode fiable depuis internet). Tu dois effectuer la configuration <strong>une seule fois depuis ton réseau local</strong>.
         </p>
-        <div>
-          <label className="text-sm text-zinc-400 mb-1 block">URL API Freebox</label>
-          <Input
-            placeholder="https://xxxxxxxx.fbxos.fr:16958"
-            value={freeboxUrl}
-            onChange={(e) => setFreeboxUrl(e.target.value)}
-            disabled={step === 'waiting'}
-          />
-          <p className="text-xs text-zinc-600 mt-1">
-            Depuis ton réseau local, lance{' '}
-            <code className="bg-zinc-800 px-1 rounded">curl http://mafreebox.freebox.fr/api_version</code>{' '}
-            → utilise <code className="bg-zinc-800 px-1 rounded">api_domain</code> + <code className="bg-zinc-800 px-1 rounded">https_port</code>.
-          </p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm text-zinc-400 mb-1 block">URL externe <span className="text-zinc-600">(utilisée par le serveur pour le WoL)</span></label>
+            <Input
+              placeholder="https://xxxxxxxx.fbxos.fr:16958"
+              value={freeboxExternalUrl}
+              onChange={(e) => setFreeboxExternalUrl(e.target.value)}
+              disabled={step === 'waiting'}
+            />
+            <p className="text-xs text-zinc-600 mt-1">
+              <code className="bg-zinc-800 px-1 rounded">api_domain</code> + <code className="bg-zinc-800 px-1 rounded">https_port</code> depuis <code className="bg-zinc-800 px-1 rounded">curl http://mafreebox.freebox.fr/api_version</code>
+            </p>
+          </div>
+          <div>
+            <label className="text-sm text-zinc-400 mb-1 block">URL locale <span className="text-zinc-600">(utilisée par ton navigateur pour l'autorisation)</span></label>
+            <Input
+              placeholder="http://mafreebox.freebox.fr"
+              value={freeboxLocalUrl}
+              onChange={(e) => setFreeboxLocalUrl(e.target.value)}
+              disabled={step === 'waiting'}
+            />
+          </div>
         </div>
 
         {step === 'idle' && (
-          <Button size="sm" onClick={handleStart} disabled={!freeboxUrl || isPending}>
+          <Button size="sm" onClick={handleStart} disabled={!freeboxExternalUrl || !freeboxLocalUrl || isPending}>
             {isPending ? 'Connexion à la Freebox...' : (cineClub?.freeboxAppTokenSet ? 'Ré-autoriser' : 'Autoriser Nasflix')}
           </Button>
         )}
