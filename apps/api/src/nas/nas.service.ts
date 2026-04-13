@@ -492,6 +492,45 @@ export class NasService {
     });
   }
 
+  // ── Freebox authorization flow ─────────────────────────────────────────────
+
+  async startFreeboxAuthorization(cineClubId: number, freeboxApiUrl: string): Promise<{ trackId: number; appToken: string }> {
+    const base = freeboxApiUrl.replace(/\/$/, '');
+    const res = await fetchInsecure(`${base}/api/v8/login/authorize/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        app_id: 'nasflix',
+        app_name: 'Nasflix',
+        app_version: '1.0.0',
+        device_name: 'Railway',
+      }),
+    });
+    const data = await res.json() as { success: boolean; result?: { app_token: string; track_id: number }; msg?: string };
+    if (!data.success || !data.result) throw new BadRequestException(`Freebox authorize: ${data.msg ?? 'échec'}`);
+
+    // Sauvegarder l'URL et le token en attente de validation
+    const encrypted = this.encryptToken(data.result.app_token);
+    await this.prisma.cineClub.update({
+      where: { id: cineClubId },
+      data: { freeboxApiUrl, freeboxAppToken: encrypted },
+    });
+
+    return { trackId: data.result.track_id, appToken: data.result.app_token };
+  }
+
+  async checkFreeboxAuthorizationStatus(cineClubId: number, trackId: number): Promise<{ status: string; granted: boolean }> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.freeboxApiUrl) throw new BadRequestException('freeboxApiUrl non configurée');
+
+    const base = club.freeboxApiUrl.replace(/\/$/, '');
+    const res = await fetchInsecure(`${base}/api/v8/login/authorize/${trackId}`);
+    const data = await res.json() as { success: boolean; result?: { status: string }; msg?: string };
+    if (!data.success || !data.result) throw new BadRequestException(`Freebox authorize check: ${data.msg ?? 'échec'}`);
+
+    return { status: data.result.status, granted: data.result.status === 'granted' };
+  }
+
   // ── Chiffrement AES-256-GCM ────────────────────────────────────────────────
 
   private getEncryptionKey(): Buffer {

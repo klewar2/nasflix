@@ -74,6 +74,27 @@ export class NasController {
     return { saved: true };
   }
 
+  @Post('freebox/authorize')
+  @Roles(MemberRole.ADMIN)
+  async startFreeboxAuthorization(
+    @Req() req: { user: JwtPayload },
+    @Body() body: { freeboxApiUrl: string },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    const result = await this.nasService.startFreeboxAuthorization(req.user.cineClubId, body.freeboxApiUrl);
+    return { trackId: result.trackId, message: 'Appuyez sur OK sur l\'écran de la Freebox pour autoriser Nasflix' };
+  }
+
+  @Get('freebox/authorize/:trackId')
+  @Roles(MemberRole.ADMIN)
+  async checkFreeboxAuthorizationStatus(
+    @Req() req: { user: JwtPayload },
+    @Param('trackId') trackId: string,
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.checkFreeboxAuthorizationStatus(req.user.cineClubId, parseInt(trackId, 10));
+  }
+
   // ── Status ─────────────────────────────────────────────────────────────────
 
   @Get('status')
