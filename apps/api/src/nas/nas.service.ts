@@ -148,8 +148,10 @@ export class NasService {
     url.searchParams.set('session', session);
     url.searchParams.set('format', 'sid');
 
+    this.logger.log(`[login] url=${url.toString().replace(/(passwd=)[^&]+/, '$1***')}`);
     const response = await fetch(url.toString(), { signal: AbortSignal.timeout(10000) });
     const result: SynoResponse<{ sid: string }> = await response.json();
+    this.logger.log(`[login] httpStatus=${response.status} success=${result.success} error=${JSON.stringify(result.error ?? null)} sid=${result.data?.sid?.slice(0, 8) ?? 'none'}…`);
 
     if (!result.success || !result.data?.sid) {
       throw new Error(`Connexion NAS échouée : ${JSON.stringify(result.error)}`);

@@ -217,7 +217,8 @@ export class NasController {
       rejectUnauthorized: false,
     };
 
-    this.logger.log(`[fileproxy] download=${download} nasHost=${parsed.hostname}:${parsed.port} path=${parsed.pathname.slice(0, 60)}`);
+    this.logger.log(`[fileproxy] fullUrl=${nasUrl}`);
+    this.logger.log(`[fileproxy] download=${download} nasHost=${parsed.hostname}:${parsed.port} path=${parsed.pathname}${parsed.search}`);
 
     const sendError = (code: number, reason?: string) => {
       this.logger.warn(`[fileproxy] error ${code}${reason ? ' — ' + reason : ''}`);
@@ -238,10 +239,14 @@ export class NasController {
         return;
       }
 
-      // Non-2xx from NAS
+      // Non-2xx from NAS — read and log response body for diagnosis
       if (status >= 400) {
-        this.logger.warn(`[fileproxy] NAS error ${status}`);
-        proxyRes.resume();
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (c: Buffer) => { if (chunks.reduce((s, b) => s + b.length, 0) < 1000) chunks.push(c); });
+        proxyRes.on('end', () => {
+          const body = Buffer.concat(chunks).toString('utf-8').slice(0, 500).replace(/\s+/g, ' ');
+          this.logger.warn(`[fileproxy] NAS ${status} body: ${body}`);
+        });
         sendError(502, `NAS returned ${status}`);
         return;
       }
