@@ -487,7 +487,7 @@ export class NasService {
   }
 
   async saveFreeboxConfig(cineClubId: number, freeboxApiUrl: string, appToken: string): Promise<void> {
-    const encrypted = this.encryptToken(appToken);
+    const encrypted = this.encryptToken(appToken.replace(/\\\//g, '/'));
     await this.prisma.cineClub.update({
       where: { id: cineClubId },
       data: { freeboxApiUrl, freeboxAppToken: encrypted },

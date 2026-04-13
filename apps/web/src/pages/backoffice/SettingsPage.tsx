@@ -182,10 +182,10 @@ function FreeboxCard() {
     if (cineClub) setFreeboxUrl(cineClub.freeboxApiUrl ?? '');
   }, [cineClub]);
 
-  const cmd1 = `curl -s -X POST http://mafreebox.freebox.fr/api/v8/login/authorize/ \\\n  -H "Content-Type: application/json" \\\n  -d '{"app_id":"nasflix","app_name":"Nasflix","app_version":"1.0.0","device_name":"Nasflix Web"}'`;
-  const cmd1copy = `curl -s -X POST http://mafreebox.freebox.fr/api/v8/login/authorize/ -H "Content-Type: application/json" -d '{"app_id":"nasflix","app_name":"Nasflix","app_version":"1.0.0","device_name":"Nasflix Web"}'`;
+  const cmd1 = `curl -s -X POST http://mafreebox.freebox.fr/api/v8/login/authorize/ \\\n  -H "Content-Type: application/json" \\\n  -d '{"app_id":"nasflix","app_name":"Nasflix","app_version":"1.0.0","device_name":"Nasflix Web"}' \\\n  | jq -r '.result | "app_token: \\(.app_token)\\ntrack_id: \\(.track_id)"'`;
+  const cmd1copy = `curl -s -X POST http://mafreebox.freebox.fr/api/v8/login/authorize/ -H "Content-Type: application/json" -d '{"app_id":"nasflix","app_name":"Nasflix","app_version":"1.0.0","device_name":"Nasflix Web"}' | jq -r '.result | "app_token: \\(.app_token)\\ntrack_id: \\(.track_id)"'`;
   const trackIdPlaceholder = '<track_id>';
-  const cmd2 = `curl -s http://mafreebox.freebox.fr/api/v8/login/authorize/${trackIdPlaceholder}`;
+  const cmd2 = `curl -s http://mafreebox.freebox.fr/api/v8/login/authorize/${trackIdPlaceholder} | jq '.result.status'`;
 
   const mutation = useMutation({
     mutationFn: () => api.saveFreeboxToken(freeboxUrl, appToken),
