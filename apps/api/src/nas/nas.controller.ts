@@ -152,7 +152,7 @@ export class NasController {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
-    return { url: nasUrl, isHls: false, durationSeconds };
+    return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
   }
 
   @Get('stream/:mediaId')
@@ -178,15 +178,17 @@ export class NasController {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
-    return { url: nasUrl, isHls: false, durationSeconds };
+    // download : proxy via Railway pour éviter le certificat NAS
+    return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
   }
 
-  // ── FileStation proxy (TV passthrough, bypass NAS SSL cert) ──────────────
+  // ── FileStation proxy (TV passthrough + download, bypass NAS SSL cert) ────
 
   @Get('fileproxy')
   @Public()
   async fileProxy(
     @Query('t') token: string,
+    @Query('download') download: string = '0',
     @Req() req: Request,
     @Res() res: Response,
   ) {
@@ -214,6 +216,10 @@ export class NasController {
         if (v) res.setHeader(h, v);
       }
       res.setHeader('Cache-Control', 'no-cache');
+      if (download === '1') {
+        const filename = nasUrl.split('/').pop()?.split('?')[0] ?? 'video';
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      }
       proxyRes.pipe(res);
     });
     proxyReq.on('error', () => res.status(502).end());
