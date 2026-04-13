@@ -3,6 +3,13 @@ import type { CineClubResponse, LoginResponse, UserResponse } from '@nasflix/sha
 
 const BASE = import.meta.env.VITE_API_URL || '/api';
 
+/** Résout une URL relative retournée par le backend en URL absolue. */
+export function resolveApiUrl(url: string): string {
+  if (url.startsWith('http')) return url;
+  const origin = BASE.replace(/\/api$/, '');
+  return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = tokens.getAccess();
   const headers: Record<string, string> = {
@@ -83,11 +90,11 @@ export function wakeNas() {
 }
 
 export function getStreamUrl(mediaId: number, audioTrack = 1) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&audioTrack=${audioTrack}`);
 }
 
 export function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&audioTrack=${audioTrack}`);
 }
 
 export function getMediaTracks(mediaId: number) {

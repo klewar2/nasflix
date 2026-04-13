@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
-import { getStreamUrl, getEpisodeStreamUrl } from '../lib/api';
+import { getStreamUrl, getEpisodeStreamUrl, resolveApiUrl } from '../lib/api';
 import type { MediaTracks } from '../lib/api';
 import { watchProgress } from '../lib/progress';
 
@@ -64,7 +64,8 @@ function mediaErrorMessage(code: number): string {
   }
 }
 
-export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks, mediaId, episodeId, onBack }: Props) {
+export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title, tracks, mediaId, episodeId, onBack }: Props) {
+  const url = resolveApiUrl(rawUrl);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const saveTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
