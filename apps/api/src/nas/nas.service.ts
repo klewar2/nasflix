@@ -4,8 +4,15 @@ import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { PrismaService } from '../common/prisma.service';
 import { parseMediaFilename } from '../common/media-parser';
+
+const insecureDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+
+function fetchInsecure(url: string, init?: Parameters<typeof undiciFetch>[1]): ReturnType<typeof undiciFetch> {
+  return undiciFetch(url, { ...init, dispatcher: insecureDispatcher });
+}
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ffmpegPath: string = require('ffmpeg-static');
 
@@ -413,7 +420,7 @@ export class NasService {
     const base = freeboxApiUrl.replace(/\/$/, '');
 
     // 1. Récupérer le challenge
-    const loginRes = await fetch(`${base}/api/v8/login/`);
+    const loginRes = await fetchInsecure(`${base}/api/v8/login/`);
     const loginData = await loginRes.json() as { success: boolean; result: { challenge: string } };
     if (!loginData.success) throw new Error('Freebox login: échec récupération challenge');
 
@@ -421,7 +428,7 @@ export class NasService {
     const password = createHmac('sha1', appToken).update(loginData.result.challenge).digest('hex');
 
     // 3. Ouvrir une session
-    const sessionRes = await fetch(`${base}/api/v8/login/session/`, {
+    const sessionRes = await fetchInsecure(`${base}/api/v8/login/session/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ app_id: 'nasflix', password }),
@@ -433,7 +440,7 @@ export class NasService {
 
     try {
       // 4. Envoyer WoL via l'interface pub (LAN)
-      const wolRes = await fetch(`${base}/api/v8/lan/wol/pub/`, {
+      const wolRes = await fetchInsecure(`${base}/api/v8/lan/wol/pub/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Fbx-App-Auth': sessionToken },
         body: JSON.stringify({ mac }),
@@ -442,7 +449,7 @@ export class NasService {
       if (!wolData.success) throw new Error(`Freebox WoL: ${wolData.msg ?? 'échec'}`);
     } finally {
       // 5. Fermer la session
-      await fetch(`${base}/api/v8/logout/`, {
+      await fetchInsecure(`${base}/api/v8/logout/`, {
         method: 'POST',
         headers: { 'X-Fbx-App-Auth': sessionToken },
       }).catch(() => {});
