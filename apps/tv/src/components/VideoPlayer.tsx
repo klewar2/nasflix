@@ -111,10 +111,88 @@ function mediaErrorMessage(code: number): string {
   }
 }
 
+// Détecte webOS de façon synchrone (PalmServiceBridge est injecté par le runtime webOS)
+function isWebOS(): boolean {
+  return typeof (window as Window & typeof globalThis & { PalmServiceBridge?: unknown }).PalmServiceBridge !== 'undefined';
+}
+
+// ── Composant webOS : lance le lecteur natif, pas de <video> ──────────────
+
+function NativePlayerScreen({ url, title, onBack }: { url: string; title?: string; onBack: () => void }) {
+  const [launched, setLaunched] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const ok = launchNativePlayer(url, title ?? '');
+    if (ok) setLaunched(true);
+    else setFailed(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useRemoteKeys((e) => {
+    if (e.keyCode === KEY.BACK || e.keyCode === KEY.STOP) {
+      e.preventDefault();
+      onBack();
+    }
+  }, [onBack]);
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: '#09090b',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: '1rem',
+    }}>
+      {failed ? (
+        <>
+          <span style={{ fontSize: '2rem' }}>⚠️</span>
+          <span style={{ color: '#e50914', fontSize: '0.9rem', fontWeight: 700 }}>
+            Lecteur natif non disponible
+          </span>
+          <button onClick={onBack} style={backBtnStyle}>← Retour</button>
+        </>
+      ) : (
+        <>
+          <div style={{
+            width: '4rem', height: '4rem', borderRadius: '50%',
+            background: 'rgba(74,222,128,0.12)', border: '2px solid rgba(74,222,128,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '1.8rem',
+          }}>
+            {launched ? '▶' : '…'}
+          </div>
+          {title && (
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#fff', maxWidth: '70%', textAlign: 'center' }}>
+              {title}
+            </div>
+          )}
+          <div style={{ fontSize: '0.75rem', color: '#4ade80', fontWeight: 600 }}>
+            {launched ? 'Lecture dans le lecteur TV' : 'Lancement…'}
+          </div>
+          <div style={{ fontSize: '0.55rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem' }}>
+            Appuyez sur BACK pour revenir à Nasflix
+          </div>
+          <button onClick={onBack} style={{ ...backBtnStyle, marginTop: '2rem' }}>← Retour</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+const backBtnStyle: React.CSSProperties = {
+  padding: '0.6rem 2rem',
+  background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+  borderRadius: '8px', color: '#fff', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
+};
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title, tracks, mediaId, episodeId, onBack }: Props) {
   const url = resolveApiUrl(rawUrl);
+
+  // Sur webOS : déléguer directement au lecteur natif, sans monter <video>
+  if (isWebOS()) {
+    return <NativePlayerScreen url={url} title={title} onBack={onBack} />;
+  }
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const saveTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -134,17 +212,8 @@ export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
 
-  // Native player state
-  const [nativeLaunched, setNativeLaunched] = useState(false);
+  // Native player state (manual green-key trigger only, for non-webOS)
   const [nativeUnavailable, setNativeUnavailable] = useState(false);
-
-  // ── Auto-launch native player on webOS ───────────────────────────────
-  useEffect(() => {
-    const launched = launchNativePlayer(url, title ?? '');
-    if (launched) setNativeLaunched(true);
-    // else: fall through to <video> element
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Resume prompt
   const savedProgress = watchProgress.get(mediaId, episodeId);
@@ -221,7 +290,6 @@ export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title
     setHlsAudioTracks([]);
     setNativeAudioTracks([]);
     setVideoError(null);
-    setNativeLaunched(false);
 
     const onError = () => {
       const err = video.error;
@@ -387,11 +455,10 @@ export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title
     }
   };
 
-  // ── Native player launch ─────────────────────────────────────────────
+  // ── Native player launch (manual trigger, non-webOS fallback) ───────
   const doLaunchNative = useCallback(() => {
     const launched = launchNativePlayer(url, title ?? '');
-    if (launched) setNativeLaunched(true);
-    else setNativeUnavailable(true);
+    if (!launched) setNativeUnavailable(true);
   }, [url, title]);
 
   // ── Derived state ─────────────────────────────────────────────────────
@@ -504,45 +571,6 @@ export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title
 
   const DEBUG = import.meta.env.VITE_DEBUG === 'true';
 
-  // ── BACK key handler for native-player screen ───────────────────────
-  useRemoteKeys((e) => {
-    if (!nativeLaunched || videoError) return;
-    if (e.keyCode === KEY.BACK || e.keyCode === KEY.STOP) {
-      e.preventDefault();
-      onBack();
-    }
-  }, [nativeLaunched, videoError, onBack]);
-
-  // ── Native player launched: show minimal "now playing" screen ───────
-  if (nativeLaunched && !videoError) {
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, background: '#000',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: '1.2rem',
-      }}>
-        <div style={{ fontSize: '3rem' }}>▶</div>
-        {title && <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#fff' }}>{title}</div>}
-        <div style={{ fontSize: '0.8rem', color: '#4ade80', fontWeight: 600 }}>
-          Lecture dans le lecteur TV
-        </div>
-        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem' }}>
-          Appuyez sur BACK pour revenir à Nasflix
-        </div>
-        <button
-          onClick={onBack}
-          style={{
-            marginTop: '1.5rem', padding: '0.6rem 2rem',
-            background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: '8px', color: '#fff', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          ← Retour
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
       <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline />
@@ -560,16 +588,9 @@ export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title
             {videoError}
           </span>
 
-          {/* Native player CTA */}
+          {/* Native player CTA (desktop fallback only — webOS uses NativePlayerScreen) */}
           <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-            {nativeLaunched ? (
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ color: '#4ade80', fontSize: '0.85rem', fontWeight: 700 }}>✓ Lecteur TV lancé</div>
-                <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem' }}>
-                  Revenez ici avec BACK sur la télécommande
-                </div>
-              </div>
-            ) : nativeUnavailable ? (
+            {nativeUnavailable ? (
               <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.7rem' }}>
                 Lecteur natif non disponible sur cet appareil
               </span>
