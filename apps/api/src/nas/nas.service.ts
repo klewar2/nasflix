@@ -461,8 +461,8 @@ export class NasService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ app_id: 'nasflix', password }),
     });
-    const sessionData = await sessionRes.json() as { success: boolean; result: { session_token: string } };
-    if (!sessionData.success) throw new Error('Freebox login: échec ouverture session');
+    const sessionData = await sessionRes.json() as { success: boolean; msg?: string; error_code?: string; result: { session_token: string } };
+    if (!sessionData.success) throw new Error(`Freebox login: échec ouverture session (${sessionData.error_code ?? sessionData.msg ?? JSON.stringify(sessionData)})`);
 
     const sessionToken = sessionData.result.session_token;
 
