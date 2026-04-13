@@ -15,7 +15,7 @@ interface FetchInit {
   body?: string;
 }
 
-function fetchInsecure(url: string, init: FetchInit = {}): Promise<{ json: () => Promise<unknown> }> {
+function fetchInsecure(url: string, init: FetchInit = {}, timeoutMs = 10000): Promise<{ json: () => Promise<unknown> }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const isHttps = parsed.protocol === 'https:';
@@ -26,6 +26,7 @@ function fetchInsecure(url: string, init: FetchInit = {}): Promise<{ json: () =>
       method: init.method ?? 'GET',
       headers: init.headers ?? {},
       rejectUnauthorized: false,
+      timeout: timeoutMs,
     };
     const lib = isHttps ? https : http;
     const req = lib.request(options, (res) => {
@@ -36,6 +37,7 @@ function fetchInsecure(url: string, init: FetchInit = {}): Promise<{ json: () =>
         resolve({ json: () => Promise.resolve(JSON.parse(text)) });
       });
     });
+    req.on('timeout', () => { req.destroy(new Error(`Timeout (${timeoutMs}ms) — URL injoignable : ${url}`)); });
     req.on('error', reject);
     if (init.body) req.write(init.body);
     req.end();

@@ -160,12 +160,18 @@ function WolCard() {
 // ── Formulaire Freebox ─────────────────────────────────────────────────────────
 type FreeboxStep = 'idle' | 'waiting' | 'granted' | 'error';
 
+async function freeboxFetch(base: string, path: string, init?: RequestInit) {
+  const res = await fetch(`${base}/api/v8${path}`, init);
+  return res.json();
+}
+
 function FreeboxCard() {
+  const queryClient = useQueryClient();
   const { cineClub } = useAuth();
   const [freeboxUrl, setFreeboxUrl] = useState(cineClub?.freeboxApiUrl ?? '');
   const [step, setStep] = useState<FreeboxStep>('idle');
+  const [isPending, setIsPending] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const trackIdRef = useRef<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -176,21 +182,47 @@ function FreeboxCard() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  const authorizeMutation = useMutation({
-    mutationFn: () => api.startFreeboxAuthorization(freeboxUrl),
-    onSuccess: ({ trackId }) => {
-      trackIdRef.current = trackId;
+  const handleReset = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    setStep('idle');
+    setErrorMsg('');
+    setIsPending(false);
+  };
+
+  const handleStart = async () => {
+    if (!freeboxUrl) return;
+    setIsPending(true);
+    setErrorMsg('');
+    try {
+      const base = freeboxUrl.replace(/\/$/, '');
+      // 1. Demande d'autorisation — doit venir du browser (réseau local)
+      const data = await freeboxFetch(base, '/login/authorize/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: 'nasflix', app_name: 'Nasflix', app_version: '1.0.0', device_name: 'Nasflix Web' }),
+      }) as { success: boolean; result?: { app_token: string; track_id: number }; msg?: string };
+
+      if (!data.success || !data.result) throw new Error(data.msg ?? 'Échec de la demande d\'autorisation');
+
+      const { app_token, track_id } = data.result;
       setStep('waiting');
+      setIsPending(false);
+
+      // 2. Polling status directement depuis le browser
       pollRef.current = setInterval(async () => {
         try {
-          const res = await api.checkFreeboxAuthorizationStatus(trackId);
-          if (res.granted) {
+          const statusData = await freeboxFetch(base, `/login/authorize/${track_id}`) as { success: boolean; result?: { status: string } };
+          const status = statusData.result?.status;
+          if (status === 'granted') {
             clearInterval(pollRef.current!);
+            // 3. Sauvegarder le token côté backend
+            await api.saveFreeboxToken(freeboxUrl, app_token);
+            queryClient.invalidateQueries({ queryKey: ['cineclub'] });
             setStep('granted');
-          } else if (res.status === 'denied' || res.status === 'timeout') {
+          } else if (status === 'denied' || status === 'timeout') {
             clearInterval(pollRef.current!);
             setStep('error');
-            setErrorMsg(`Autorisation ${res.status}`);
+            setErrorMsg(`Autorisation ${status}`);
           }
         } catch {
           clearInterval(pollRef.current!);
@@ -198,24 +230,11 @@ function FreeboxCard() {
           setErrorMsg('Erreur lors de la vérification du statut');
         }
       }, 3000);
-    },
-    onError: (e) => {
+    } catch (e) {
       setStep('error');
       setErrorMsg(e instanceof Error ? e.message : 'Erreur');
-    },
-  });
-
-  const handleStart = () => {
-    setStep('idle');
-    setErrorMsg('');
-    authorizeMutation.mutate();
-  };
-
-  const handleReset = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    setStep('idle');
-    setErrorMsg('');
-    authorizeMutation.reset();
+      setIsPending(false);
+    }
   };
 
   return (
@@ -230,25 +249,26 @@ function FreeboxCard() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-zinc-500">
-          Permet au WoL de passer par la Freebox (méthode fiable depuis internet). Le token est généré automatiquement lors de l'autorisation.
+          Permet au WoL de passer par la Freebox (méthode fiable depuis internet). L'autorisation se fait directement depuis ton navigateur — tu dois être sur ton réseau local (ou utiliser l'URL externe avec le bon port).
         </p>
         <div>
           <label className="text-sm text-zinc-400 mb-1 block">URL API Freebox</label>
           <Input
-            placeholder="https://mafreebox.fbxos.fr"
+            placeholder="https://xxxxxxxx.fbxos.fr:16958"
             value={freeboxUrl}
             onChange={(e) => setFreeboxUrl(e.target.value)}
             disabled={step === 'waiting'}
           />
           <p className="text-xs text-zinc-600 mt-1">
-            Champ <code className="bg-zinc-800 px-1 rounded">api_domain</code> retourné par{' '}
-            <code className="bg-zinc-800 px-1 rounded">curl http://mafreebox.freebox.fr/api_version</code>
+            Depuis ton réseau local, lance{' '}
+            <code className="bg-zinc-800 px-1 rounded">curl http://mafreebox.freebox.fr/api_version</code>{' '}
+            → utilise <code className="bg-zinc-800 px-1 rounded">api_domain</code> + <code className="bg-zinc-800 px-1 rounded">https_port</code>.
           </p>
         </div>
 
         {step === 'idle' && (
-          <Button size="sm" onClick={handleStart} disabled={!freeboxUrl || authorizeMutation.isPending}>
-            {authorizeMutation.isPending ? 'Connexion à la Freebox...' : (cineClub?.freeboxAppTokenSet ? 'Ré-autoriser' : 'Autoriser Nasflix')}
+          <Button size="sm" onClick={handleStart} disabled={!freeboxUrl || isPending}>
+            {isPending ? 'Connexion à la Freebox...' : (cineClub?.freeboxAppTokenSet ? 'Ré-autoriser' : 'Autoriser Nasflix')}
           </Button>
         )}
 
