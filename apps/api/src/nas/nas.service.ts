@@ -302,16 +302,31 @@ export class NasService {
   }
 
   /**
+   * Chemins File Station : commencer par le dossier partagé (/video/…), pas par /volume1/video/…
+   * (les sync récentes peuvent stocker le chemin « physique » ; l’API Download refuse alors ou renvoie 404 HTML en mode open).
+   */
+  private normalizeFileStationPath(path: string): string {
+    const trimmed = path.trim();
+    const withSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+    const stripped = withSlash.replace(/^\/volume\d+\//i, '/');
+    if (stripped !== withSlash) {
+      this.logger.log(`[FileStation] chemin normalisé (préfixe /volumeN/ retiré) : "${withSlash}" → "${stripped}"`);
+    }
+    return stripped;
+  }
+
+  /**
    * URL FileStation.Download — doc Synology : exemple avec mode=%22open%22 (chaîne JSON).
    * Dupliquer sid + _sid : certains clients / DSM l’exigent (cf. communauté Synology).
    * @param synoOpenOrDownload stream → API mode "open" (MIME selon fichier) ; download → "download" (octet-stream).
    */
   private buildFileStationUrl(baseUrl: string, path: string, sid: string, synoOpenOrDownload: 'stream' | 'download'): string {
+    const fsPath = this.normalizeFileStationPath(path);
     const url = new URL('/webapi/entry.cgi', baseUrl);
     url.searchParams.set('api', 'SYNO.FileStation.Download');
     url.searchParams.set('version', '2');
     url.searchParams.set('method', 'download');
-    url.searchParams.set('path', JSON.stringify([path]));
+    url.searchParams.set('path', JSON.stringify([fsPath]));
     const modeVal = synoOpenOrDownload === 'stream' ? 'open' : 'download';
     url.searchParams.set('mode', JSON.stringify(modeVal));
     url.searchParams.set('_sid', sid);

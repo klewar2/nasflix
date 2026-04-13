@@ -252,15 +252,27 @@ export class NasController {
     const nasUrl = await this.resolveNasUrlFromStreamToken(data);
     if (!nasUrl) { res.status(403).end(); return; }
 
+    const refLabel =
+      data.mediaId != null ? `mediaId=${data.mediaId}` :
+      data.episodeId != null ? `episodeId=${data.episodeId}` :
+      'legacy-url';
+
     // For downloads: redirect browser directly to NAS (entry.cgi accessible from browser, not from Railway)
     if (download === '1') {
-      this.logger.log(`[fileproxy] redirect download → ${nasUrl.slice(0, 100)}`);
+      this.logger.log(`[fileproxy] redirect download ${refLabel} → ${nasUrl.slice(0, 100)}`);
       res.redirect(302, nasUrl);
       return;
     }
 
     const parsed = new URL(nasUrl);
     const isHttps = parsed.protocol === 'https:';
+
+    let decodedFsPath = '';
+    try {
+      const raw = parsed.searchParams.get('path');
+      const arr = JSON.parse(raw ?? '[]') as unknown;
+      decodedFsPath = Array.isArray(arr) && typeof arr[0] === 'string' ? arr[0] : '';
+    } catch { /* ignore */ }
 
     // Build headers — only include Range when actually provided by client
     const reqHeaders: Record<string, string> = {};
@@ -270,16 +282,19 @@ export class NasController {
     reqHeaders['User-Agent'] = 'Mozilla/5.0 (compatible; Nasflix/1.0)';
     reqHeaders['Accept'] = '*/*';
 
+    const fullPath = parsed.pathname + parsed.search;
+    this.logger.log(
+      `[fileproxy] GET ${refLabel} nasHost=${parsed.hostname}:${parsed.port} decodedPath=${decodedFsPath.slice(0, 280)}${decodedFsPath.length > 280 ? '…' : ''} range=${rangeHeader ?? 'none'} queryChars=${fullPath.length}`,
+    );
+
     const options = {
       hostname: parsed.hostname,
       port: Number(parsed.port) || (isHttps ? 443 : 80),
-      path: parsed.pathname + parsed.search,
+      path: fullPath,
       method: 'GET',
       headers: reqHeaders,
       rejectUnauthorized: false,
     };
-
-    this.logger.log(`[fileproxy] GET nasHost=${parsed.hostname}:${parsed.port} path=${parsed.pathname + parsed.search.slice(0, 100)}`);
 
     const sendError = (code: number, reason?: string) => {
       this.logger.warn(`[fileproxy] error ${code}${reason ? ' — ' + reason : ''}`);
@@ -328,7 +343,8 @@ export class NasController {
       proxyRes.pipe(res);
     });
     proxyReq.on('error', (e: Error) => sendError(502, `proxyReq error: ${e.message}`));
-    proxyReq.setTimeout(30000, () => { proxyReq.destroy(); sendError(504, 'timeout 30s'); });
+    // 0 = pas de timeout socket (flux longs + requêtes Range ; évite 504 pendant la lecture)
+    proxyReq.setTimeout(0);
     proxyReq.end();
   }
 

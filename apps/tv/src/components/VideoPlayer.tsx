@@ -78,9 +78,15 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   const DEBUG = import.meta.env.VITE_DEBUG === 'true';
+  const VERBOSE = import.meta.env.VITE_PLAYER_VERBOSE === 'true' || DEBUG;
   const dlog = (msg: string) => {
     if (DEBUG) setDebugLogs((l) => [...l.slice(-30), `${new Date().toISOString().slice(11, 23)} ${msg}`]);
     console.log('[VideoPlayer]', msg);
+  };
+  /** Logs toujours visibles dans la console TV (adb / devtools) — utile au diagnostic sans VITE_DEBUG */
+  const tvLog = (msg: string, extra?: Record<string, string | number | boolean | undefined>) => {
+    const tail = extra ? ` ${JSON.stringify(extra)}` : '';
+    console.info(`[NasflixTV] ${msg}${tail}`);
   };
 
   // Resume prompt: shown at start if saved progress exists
@@ -180,6 +186,13 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     setHlsAudioTracks([]);
     setNativeAudioTracks([]);
     setVideoError(null);
+    tvLog('player init', {
+      mediaId,
+      episodeId: episodeId ?? undefined,
+      isHls,
+      streamUrlChars: url.length,
+      streamUrlStart: url.slice(0, 96),
+    });
     dlog(`init — isHls=${isHls} url=${url.slice(0, 80)}…`);
 
     const onError = () => {
@@ -187,10 +200,32 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       if (err) {
         const info = { code: err.code, message: err.message || '' };
         setVideoError(info);
+        tvLog('video element error', {
+          mediaId,
+          episodeId: episodeId ?? undefined,
+          code: err.code,
+          message: err.message || '',
+          networkState: video.networkState,
+          readyState: video.readyState,
+        });
         dlog(`video.error code=${err.code} msg="${err.message}" networkState=${video.networkState} readyState=${video.readyState}`);
       }
     };
+    let loggedFirstBuffer = false;
+    const onWaiting = () => { if (VERBOSE) tvLog('waiting (buffer)', { mediaId }); };
+    const onStalled = () => { if (VERBOSE) tvLog('stalled', { mediaId }); };
+    const onProgress = () => {
+      if (!VERBOSE || loggedFirstBuffer || video.buffered.length === 0) return;
+      const end = video.buffered.end(video.buffered.length - 1);
+      if (end > 0.2) {
+        loggedFirstBuffer = true;
+        tvLog('first buffer ok', { mediaId, bufferedEndSec: Math.round(end * 10) / 10 });
+      }
+    };
     video.addEventListener('error', onError);
+    video.addEventListener('waiting', onWaiting);
+    video.addEventListener('stalled', onStalled);
+    video.addEventListener('progress', onProgress);
 
     if (isHls && Hls.isSupported()) {
       dlog('HLS mode — Hls.isSupported=true');
@@ -207,6 +242,12 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
         }
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
+        tvLog('hls error', {
+          mediaId,
+          fatal: data.fatal,
+          type: data.type,
+          details: String(data.details),
+        });
         dlog(`HLS error fatal=${data.fatal} type=${data.type} details=${data.details}`);
       });
       hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_, data) => {
@@ -230,6 +271,9 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     }
     return () => {
       video.removeEventListener('error', onError);
+      video.removeEventListener('waiting', onWaiting);
+      video.removeEventListener('stalled', onStalled);
+      video.removeEventListener('progress', onProgress);
       hlsRef.current?.destroy();
       hlsRef.current = null;
     };
