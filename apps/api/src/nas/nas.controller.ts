@@ -139,12 +139,16 @@ export class NasController {
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
-    const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
 
+    // passthrough=1 : FileStation direct, sans VideoStation
+    if (passthrough === '1') {
+      const nasUrl = await this.nasService.getEpisodeFileUrl(episodeId, req.user.sub, req.user.cineClubId);
+      return { url: nasUrl, isHls: false, durationSeconds: 0 };
+    }
+
+    const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
     if (mode === 'stream') {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
-      // passthrough=1 : retourner l'URL brute (TV app, pas de transcodage)
-      if (passthrough === '1') return { url: nasUrl, isHls: false, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     return { url: nasUrl, isHls: false, durationSeconds };
@@ -160,12 +164,16 @@ export class NasController {
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
-    const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
 
+    // passthrough=1 : FileStation direct, sans VideoStation
+    if (passthrough === '1') {
+      const nasUrl = await this.nasService.getMediaFileUrl(mediaId, req.user.sub, req.user.cineClubId);
+      return { url: nasUrl, isHls: false, durationSeconds: 0 };
+    }
+
+    const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
     if (mode === 'stream') {
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
-      // passthrough=1 : retourner l'URL brute (TV app, pas de transcodage)
-      if (passthrough === '1') return { url: nasUrl, isHls: false, durationSeconds };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     return { url: nasUrl, isHls: false, durationSeconds };

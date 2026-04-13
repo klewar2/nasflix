@@ -90,11 +90,11 @@ export function wakeNas() {
 }
 
 export function getStreamUrl(mediaId: number, audioTrack = 1) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&audioTrack=${audioTrack}`);
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
 }
 
 export function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
-  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&audioTrack=${audioTrack}`);
+  return request<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}`);
 }
 
 export function getMediaTracks(mediaId: number) {
