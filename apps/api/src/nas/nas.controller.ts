@@ -35,7 +35,30 @@ export class NasController {
     return `${payload}.${sig}`;
   }
 
-  private verifyTranscodeToken(token: string): { url: string; duration: number; exp: number } | null {
+  /** Jeton court pour fileproxy TV : évite ?t=… > limite proxy (URL NAS avec path long). Résolution côté serveur + SID neuf. */
+  private signPassthroughFileToken(
+    durationSeconds: number,
+    ref: { mediaId?: number; episodeId?: number },
+    userId: number,
+    cineClubId: number,
+  ): string {
+    const exp = Math.floor(Date.now() / 1000) + 4 * 3600;
+    const payload = Buffer.from(
+      JSON.stringify({ ...ref, userId, cineClubId, duration: durationSeconds, exp }),
+    ).toString('base64url');
+    const sig = createHmac('sha256', this.tokenSecret).update(payload).digest('base64url');
+    return `${payload}.${sig}`;
+  }
+
+  private verifyTranscodeToken(token: string): {
+    url?: string;
+    duration: number;
+    exp: number;
+    mediaId?: number;
+    episodeId?: number;
+    userId?: number;
+    cineClubId?: number;
+  } | null {
     const dot = token.lastIndexOf('.');
     if (dot < 0) return null;
     const payload = token.slice(0, dot);
@@ -46,9 +69,36 @@ export class NasController {
     } catch {
       return null;
     }
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
+      url?: string;
+      duration: number;
+      exp: number;
+      mediaId?: number;
+      episodeId?: number;
+      userId?: number;
+      cineClubId?: number;
+    };
     if (data.exp < Math.floor(Date.now() / 1000)) return null;
+    if (typeof data.duration !== 'number') return null;
     return data;
+  }
+
+  private async resolveNasUrlFromStreamToken(data: {
+    url?: string;
+    duration: number;
+    mediaId?: number;
+    episodeId?: number;
+    userId?: number;
+    cineClubId?: number;
+  }): Promise<string | null> {
+    if (data.url) return data.url;
+    if (data.mediaId != null && data.userId != null && data.cineClubId != null) {
+      return this.nasService.getMediaFileUrl(data.mediaId, data.userId, data.cineClubId);
+    }
+    if (data.episodeId != null && data.userId != null && data.cineClubId != null) {
+      return this.nasService.getEpisodeFileUrl(data.episodeId, data.userId, data.cineClubId);
+    }
+    return null;
   }
 
   // ── Wake-on-LAN ────────────────────────────────────────────────────────────
@@ -142,10 +192,10 @@ export class NasController {
 
     // passthrough=1 : proxy FileStation direct, sans VideoStation ni transcodage
     if (passthrough === '1') {
-      const nasUrl = await this.nasService.getEpisodeFileUrl(episodeId, req.user.sub, req.user.cineClubId);
       const duration = await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId);
-      this.logger.log(`[stream/episode] passthrough episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
-      return { url: `/nas/fileproxy?t=${this.signTranscodeToken(nasUrl, duration)}`, isHls: false, durationSeconds: duration };
+      const t = this.signPassthroughFileToken(duration, { episodeId }, req.user.sub, req.user.cineClubId);
+      this.logger.log(`[stream/episode] passthrough episodeId=${episodeId} token=compact`);
+      return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: duration };
     }
 
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
@@ -170,10 +220,10 @@ export class NasController {
 
     // passthrough=1 : proxy FileStation direct, sans VideoStation ni transcodage
     if (passthrough === '1') {
-      const nasUrl = await this.nasService.getMediaFileUrl(mediaId, req.user.sub, req.user.cineClubId);
       const media = await this.nasService.getMediaDuration(mediaId, req.user.cineClubId);
-      this.logger.log(`[stream/media] passthrough mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
-      return { url: `/nas/fileproxy?t=${this.signTranscodeToken(nasUrl, media)}`, isHls: false, durationSeconds: media };
+      const t = this.signPassthroughFileToken(media, { mediaId }, req.user.sub, req.user.cineClubId);
+      this.logger.log(`[stream/media] passthrough mediaId=${mediaId} token=compact`);
+      return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: media };
     }
 
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
@@ -199,7 +249,8 @@ export class NasController {
     const data = this.verifyTranscodeToken(token);
     if (!data) { res.status(403).end(); return; }
 
-    const nasUrl = data.url;
+    const nasUrl = await this.resolveNasUrlFromStreamToken(data);
+    if (!nasUrl) { res.status(403).end(); return; }
 
     // For downloads: redirect browser directly to NAS (entry.cgi accessible from browser, not from Railway)
     if (download === '1') {
@@ -292,7 +343,8 @@ export class NasController {
     @Res() res: Response,
   ) {
     const data = this.verifyTranscodeToken(token);
-    if (!data) { res.status(403).end(); return; }
+    if (!data?.url) { res.status(403).end(); return; }
+    const nasSourceUrl = data.url;
 
     const seek = Math.max(0, parseInt(seekStr) || 0);
 
@@ -310,7 +362,7 @@ export class NasController {
       '-reconnect_delay_max', '5',
       '-tls_verify', '0',
       ...(seek > 0 ? ['-ss', String(seek)] : []),
-      '-i', data.url,
+      '-i', nasSourceUrl,
       '-map', '0:v:0',
       '-map', '0:a:0',
       '-c:v', 'libx264',
@@ -338,7 +390,7 @@ export class NasController {
 
       const { Readable } = await import('node:stream');
       const abort = new AbortController();
-      const nasRes = await fetch(data.url, { signal: abort.signal }).catch(() => null);
+      const nasRes = await fetch(nasSourceUrl, { signal: abort.signal }).catch(() => null);
       if (!nasRes?.ok || !nasRes.body) { if (!res.headersSent) res.status(502).end(); return; }
 
       const fallbackArgs = [
