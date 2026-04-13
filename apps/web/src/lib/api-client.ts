@@ -4,8 +4,7 @@ const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export function resolveApiUrl(url: string): string {
   if (url.startsWith('http')) return url;
-  const origin = API_BASE.replace(/\/api$/, '');
-  return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  return `${API_BASE}${url}`;
 }
 
 class ApiClient {

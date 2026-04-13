@@ -138,6 +138,14 @@ export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title
   const [nativeLaunched, setNativeLaunched] = useState(false);
   const [nativeUnavailable, setNativeUnavailable] = useState(false);
 
+  // ── Auto-launch native player on webOS ───────────────────────────────
+  useEffect(() => {
+    const launched = launchNativePlayer(url, title ?? '');
+    if (launched) setNativeLaunched(true);
+    // else: fall through to <video> element
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Resume prompt
   const savedProgress = watchProgress.get(mediaId, episodeId);
   const [showResume, setShowResume] = useState(!!savedProgress && savedProgress.currentTime > 10);
@@ -495,6 +503,45 @@ export default function VideoPlayer({ url: rawUrl, isHls, durationSeconds, title
   }, [onBack, menuOpen, menuIndex, effectiveAudioTracks, activeAudio, hasMenu, seekMode, pendingSeekTime, durationSeconds, showResume, mediaId, episodeId, showControlsFor, doLaunchNative]);
 
   const DEBUG = import.meta.env.VITE_DEBUG === 'true';
+
+  // ── BACK key handler for native-player screen ───────────────────────
+  useRemoteKeys((e) => {
+    if (!nativeLaunched || videoError) return;
+    if (e.keyCode === KEY.BACK || e.keyCode === KEY.STOP) {
+      e.preventDefault();
+      onBack();
+    }
+  }, [nativeLaunched, videoError, onBack]);
+
+  // ── Native player launched: show minimal "now playing" screen ───────
+  if (nativeLaunched && !videoError) {
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, background: '#000',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: '1.2rem',
+      }}>
+        <div style={{ fontSize: '3rem' }}>▶</div>
+        {title && <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#fff' }}>{title}</div>}
+        <div style={{ fontSize: '0.8rem', color: '#4ade80', fontWeight: 600 }}>
+          Lecture dans le lecteur TV
+        </div>
+        <div style={{ fontSize: '0.6rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem' }}>
+          Appuyez sur BACK pour revenir à Nasflix
+        </div>
+        <button
+          onClick={onBack}
+          style={{
+            marginTop: '1.5rem', padding: '0.6rem 2rem',
+            background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: '8px', color: '#fff', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          ← Retour
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
