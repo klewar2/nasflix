@@ -5,6 +5,7 @@ export const KEY = {
   OK: 13, BACK: 461,
   PLAY: 415, PAUSE: 19, PLAY_PAUSE: 10252,
   FF: 417, RW: 412, STOP: 413,
+  GREEN: 404,
 } as const;
 
 type Handler = (e: KeyboardEvent) => void;

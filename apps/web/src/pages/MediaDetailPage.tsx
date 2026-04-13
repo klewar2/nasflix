@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api-client';
+import { api, resolveApiUrl } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -59,7 +59,7 @@ export default function MediaDetailPage() {
     try {
       const { url } = await fetchUrl();
       const a = document.createElement('a');
-      a.href = url;
+      a.href = resolveApiUrl(url);
       a.download = filename;
       a.click();
     } catch {
