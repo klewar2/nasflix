@@ -732,6 +732,19 @@ export class NasService {
     return null;
   }
 
+  async getMediaDuration(mediaId: number, cineClubId: number): Promise<number> {
+    const media = await this.prisma.media.findFirst({ where: { id: mediaId, cineClubId }, select: { runtime: true } });
+    return (media?.runtime ?? 0) * 60;
+  }
+
+  async getEpisodeDuration(episodeId: number, cineClubId: number): Promise<number> {
+    const episode = await this.prisma.episode.findFirst({
+      where: { id: episodeId, season: { media: { cineClubId } } },
+      select: { runtime: true },
+    });
+    return (episode?.runtime ?? 0) * 60;
+  }
+
   // ── Track probing ──────────────────────────────────────────────────────────
 
   async getMediaFileUrl(mediaId: number, userId: number, cineClubId: number): Promise<string> {

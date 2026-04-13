@@ -140,10 +140,11 @@ export class NasController {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
 
-    // passthrough=1 : FileStation direct, sans VideoStation
+    // passthrough=1 : proxy FileStation direct, sans VideoStation ni transcodage
     if (passthrough === '1') {
       const nasUrl = await this.nasService.getEpisodeFileUrl(episodeId, req.user.sub, req.user.cineClubId);
-      return { url: nasUrl, isHls: false, durationSeconds: 0 };
+      const duration = await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId);
+      return { url: `/nas/fileproxy?t=${this.signTranscodeToken(nasUrl, duration)}`, isHls: false, durationSeconds: duration };
     }
 
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
@@ -165,10 +166,11 @@ export class NasController {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
 
-    // passthrough=1 : FileStation direct, sans VideoStation
+    // passthrough=1 : proxy FileStation direct, sans VideoStation ni transcodage
     if (passthrough === '1') {
       const nasUrl = await this.nasService.getMediaFileUrl(mediaId, req.user.sub, req.user.cineClubId);
-      return { url: nasUrl, isHls: false, durationSeconds: 0 };
+      const media = await this.nasService.getMediaDuration(mediaId, req.user.cineClubId);
+      return { url: `/nas/fileproxy?t=${this.signTranscodeToken(nasUrl, media)}`, isHls: false, durationSeconds: media };
     }
 
     const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
@@ -177,6 +179,45 @@ export class NasController {
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     return { url: nasUrl, isHls: false, durationSeconds };
+  }
+
+  // ── FileStation proxy (TV passthrough, bypass NAS SSL cert) ──────────────
+
+  @Get('fileproxy')
+  @Public()
+  async fileProxy(
+    @Query('t') token: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const data = this.verifyTranscodeToken(token);
+    if (!data) { res.status(403).end(); return; }
+
+    const nasUrl = data.url;
+    const parsed = new URL(nasUrl);
+    const isHttps = parsed.protocol === 'https:';
+    const options = {
+      hostname: parsed.hostname,
+      port: parseInt(parsed.port) || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      headers: { Range: (req as Request & { headers: Record<string, string> }).headers['range'] || '' },
+      rejectUnauthorized: false,
+    };
+
+    const lib = isHttps ? require('node:https') : require('node:http');
+    const proxyReq = lib.request(options, (proxyRes: import('http').IncomingMessage) => {
+      res.status(proxyRes.statusCode ?? 200);
+      const forward = ['content-type', 'content-length', 'content-range', 'accept-ranges'];
+      for (const h of forward) {
+        const v = proxyRes.headers[h];
+        if (v) res.setHeader(h, v);
+      }
+      res.setHeader('Cache-Control', 'no-cache');
+      proxyRes.pipe(res);
+    });
+    proxyReq.on('error', () => res.status(502).end());
+    proxyReq.end();
   }
 
   // ── FFmpeg transcode proxy ─────────────────────────────────────────────────
