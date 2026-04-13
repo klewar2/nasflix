@@ -158,85 +158,42 @@ function WolCard() {
 }
 
 // ── Formulaire Freebox ─────────────────────────────────────────────────────────
-type FreeboxStep = 'idle' | 'waiting' | 'granted' | 'error';
-
-async function freeboxFetch(base: string, path: string, init?: RequestInit) {
-  const res = await fetch(`${base}/api/v8${path}`, init);
-  return res.json();
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+      className="ml-2 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0"
+      title="Copier"
+    >
+      <Copy className="w-3.5 h-3.5 inline" />
+      {copied && <span className="ml-1 text-xs text-green-400">Copié</span>}
+    </button>
+  );
 }
 
 function FreeboxCard() {
   const queryClient = useQueryClient();
   const { cineClub } = useAuth();
-  const [freeboxExternalUrl, setFreeboxExternalUrl] = useState(cineClub?.freeboxApiUrl ?? '');
-  const [freeboxLocalUrl, setFreeboxLocalUrl] = useState('http://mafreebox.freebox.fr');
-  const [step, setStep] = useState<FreeboxStep>('idle');
-  const [isPending, setIsPending] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [freeboxUrl, setFreeboxUrl] = useState(cineClub?.freeboxApiUrl ?? '');
+  const [appToken, setAppToken] = useState('');
 
   useEffect(() => {
-    if (cineClub) setFreeboxExternalUrl(cineClub.freeboxApiUrl ?? '');
+    if (cineClub) setFreeboxUrl(cineClub.freeboxApiUrl ?? '');
   }, [cineClub]);
 
-  useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+  const cmd1 = `curl -s -X POST http://mafreebox.freebox.fr/api/v8/login/authorize/ \\\n  -H "Content-Type: application/json" \\\n  -d '{"app_id":"nasflix","app_name":"Nasflix","app_version":"1.0.0","device_name":"Nasflix Web"}'`;
+  const cmd1copy = `curl -s -X POST http://mafreebox.freebox.fr/api/v8/login/authorize/ -H "Content-Type: application/json" -d '{"app_id":"nasflix","app_name":"Nasflix","app_version":"1.0.0","device_name":"Nasflix Web"}'`;
+  const trackIdPlaceholder = '<track_id>';
+  const cmd2 = `curl -s http://mafreebox.freebox.fr/api/v8/login/authorize/${trackIdPlaceholder}`;
 
-  const handleReset = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    setStep('idle');
-    setErrorMsg('');
-    setIsPending(false);
-  };
-
-  const handleStart = async () => {
-    if (!freeboxExternalUrl || !freeboxLocalUrl) return;
-    setIsPending(true);
-    setErrorMsg('');
-    try {
-      const localBase = freeboxLocalUrl.replace(/\/$/, '');
-      // 1. Autorisation depuis le browser via l'URL locale (HTTP, pas de problème de certificat)
-      const data = await freeboxFetch(localBase, '/login/authorize/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: 'nasflix', app_name: 'Nasflix', app_version: '1.0.0', device_name: 'Nasflix Web' }),
-      }) as { success: boolean; result?: { app_token: string; track_id: number }; msg?: string };
-
-      if (!data.success || !data.result) throw new Error(data.msg ?? 'Échec de la demande d\'autorisation');
-
-      const { app_token, track_id } = data.result;
-      setStep('waiting');
-      setIsPending(false);
-
-      // 2. Polling status depuis le browser via URL locale
-      pollRef.current = setInterval(async () => {
-        try {
-          const statusData = await freeboxFetch(localBase, `/login/authorize/${track_id}`) as { success: boolean; result?: { status: string } };
-          const status = statusData.result?.status;
-          if (status === 'granted') {
-            clearInterval(pollRef.current!);
-            // 3. Sauvegarder le token + l'URL externe côté backend
-            await api.saveFreeboxToken(freeboxExternalUrl, app_token);
-            queryClient.invalidateQueries({ queryKey: ['cineclub'] });
-            setStep('granted');
-          } else if (status === 'denied' || status === 'timeout') {
-            clearInterval(pollRef.current!);
-            setStep('error');
-            setErrorMsg(`Autorisation ${status}`);
-          }
-        } catch {
-          clearInterval(pollRef.current!);
-          setStep('error');
-          setErrorMsg('Erreur lors de la vérification du statut');
-        }
-      }, 3000);
-    } catch (e) {
-      setStep('error');
-      setErrorMsg(e instanceof Error ? e.message : 'Erreur');
-      setIsPending(false);
-    }
-  };
+  const mutation = useMutation({
+    mutationFn: () => api.saveFreeboxToken(freeboxUrl, appToken),
+    onSuccess: () => {
+      setAppToken('');
+      queryClient.invalidateQueries({ queryKey: ['cineclub'] });
+    },
+  });
 
   return (
     <Card>
@@ -248,73 +205,71 @@ function FreeboxCard() {
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         <p className="text-xs text-zinc-500">
-          Permet au WoL de passer par la Freebox (méthode fiable depuis internet). Tu dois effectuer la configuration <strong>une seule fois depuis ton réseau local</strong>.
+          Permet au WoL de passer par la Freebox depuis internet. La configuration se fait une seule fois via des commandes curl sur ton réseau local.
         </p>
+
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">URL externe Freebox <span className="text-zinc-600">(utilisée par le serveur pour le WoL)</span></label>
+          <Input
+            placeholder="https://xxxxxxxx.fbxos.fr:16958"
+            value={freeboxUrl}
+            onChange={(e) => setFreeboxUrl(e.target.value)}
+          />
+          <p className="text-xs text-zinc-600 mt-1">
+            Champs <code className="bg-zinc-800 px-1 rounded">api_domain</code> + <code className="bg-zinc-800 px-1 rounded">https_port</code> depuis{' '}
+            <code className="bg-zinc-800 px-1 rounded">curl http://mafreebox.freebox.fr/api_version</code>
+          </p>
+        </div>
+
         <div className="space-y-3">
+          <p className="text-sm font-medium text-zinc-300">Depuis ton réseau local (une seule fois) :</p>
+
           <div>
-            <label className="text-sm text-zinc-400 mb-1 block">URL externe <span className="text-zinc-600">(utilisée par le serveur pour le WoL)</span></label>
-            <Input
-              placeholder="https://xxxxxxxx.fbxos.fr:16958"
-              value={freeboxExternalUrl}
-              onChange={(e) => setFreeboxExternalUrl(e.target.value)}
-              disabled={step === 'waiting'}
-            />
-            <p className="text-xs text-zinc-600 mt-1">
-              <code className="bg-zinc-800 px-1 rounded">api_domain</code> + <code className="bg-zinc-800 px-1 rounded">https_port</code> depuis <code className="bg-zinc-800 px-1 rounded">curl http://mafreebox.freebox.fr/api_version</code>
-            </p>
+            <p className="text-xs text-zinc-400 mb-1">1. Lance cette commande et note le <code className="bg-zinc-800 px-1 rounded">app_token</code> et le <code className="bg-zinc-800 px-1 rounded">track_id</code> :</p>
+            <div className="relative rounded bg-zinc-900 border border-zinc-700 p-3 pr-8">
+              <pre className="text-xs text-zinc-300 whitespace-pre-wrap break-all font-mono">{cmd1}</pre>
+              <span className="absolute top-2 right-2"><CopyButton text={cmd1copy} /></span>
+            </div>
           </div>
+
           <div>
-            <label className="text-sm text-zinc-400 mb-1 block">URL locale <span className="text-zinc-600">(utilisée par ton navigateur pour l'autorisation)</span></label>
+            <p className="text-xs text-zinc-400 mb-1">2. Appuie sur <strong className="text-zinc-200">OK</strong> sur l'écran LCD de ta Freebox.</p>
+          </div>
+
+          <div>
+            <p className="text-xs text-zinc-400 mb-1">3. Vérifie que le statut est <code className="bg-zinc-800 px-1 rounded">granted</code> :</p>
+            <div className="relative rounded bg-zinc-900 border border-zinc-700 p-3 pr-8">
+              <pre className="text-xs text-zinc-300 font-mono">{cmd2}</pre>
+              <span className="absolute top-2 right-2"><CopyButton text={cmd2} /></span>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs text-zinc-400 mb-1">4. Colle l'<code className="bg-zinc-800 px-1 rounded">app_token</code> obtenu à l'étape 1 :</p>
             <Input
-              placeholder="http://mafreebox.freebox.fr"
-              value={freeboxLocalUrl}
-              onChange={(e) => setFreeboxLocalUrl(e.target.value)}
-              disabled={step === 'waiting'}
+              type="password"
+              placeholder={cineClub?.freeboxAppTokenSet ? '••••••••••••••••' : 'app_token'}
+              value={appToken}
+              onChange={(e) => setAppToken(e.target.value)}
             />
           </div>
         </div>
 
-        {step === 'idle' && (
-          <Button size="sm" onClick={handleStart} disabled={!freeboxExternalUrl || !freeboxLocalUrl || isPending}>
-            {isPending ? 'Connexion à la Freebox...' : (cineClub?.freeboxAppTokenSet ? 'Ré-autoriser' : 'Autoriser Nasflix')}
-          </Button>
-        )}
-
-        {step === 'waiting' && (
-          <div className="rounded-md border border-yellow-600 bg-yellow-950/30 p-4 space-y-2">
-            <p className="text-sm font-medium text-yellow-400">En attente de votre confirmation</p>
-            <p className="text-xs text-zinc-300">
-              Regardez l'écran LCD de votre Freebox et appuyez sur <strong>OK</strong> pour autoriser l'application <strong>Nasflix</strong>.
-            </p>
-            <div className="flex items-center gap-2 pt-1">
-              <RefreshCw className="w-3 h-3 animate-spin text-zinc-400" />
-              <span className="text-xs text-zinc-400">Vérification toutes les 3 secondes...</span>
-            </div>
-            <Button size="sm" variant="ghost" onClick={handleReset} className="text-xs">
-              Annuler
-            </Button>
-          </div>
-        )}
-
-        {step === 'granted' && (
-          <div className="rounded-md border border-green-600 bg-green-950/30 p-4">
-            <p className="text-sm font-medium text-green-400">Freebox autorisée avec succès</p>
-            <p className="text-xs text-zinc-400 mt-1">Le token a été sauvegardé. Le WoL passera désormais par la Freebox.</p>
-            <Button size="sm" variant="ghost" onClick={handleReset} className="text-xs mt-2">
-              Reconfigurer
-            </Button>
-          </div>
-        )}
-
-        {step === 'error' && (
-          <div className="rounded-md border border-red-800 bg-red-950/30 p-4 space-y-2">
-            <p className="text-sm text-destructive">{errorMsg}</p>
-            <Button size="sm" variant="ghost" onClick={handleReset} className="text-xs">
-              Réessayer
-            </Button>
-          </div>
+        <Button
+          size="sm"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending || !freeboxUrl || !appToken}
+        >
+          <Save className="w-4 h-4 mr-2" />
+          {mutation.isPending ? 'Enregistrement...' : 'Enregistrer'}
+        </Button>
+        {mutation.isSuccess && <p className="text-sm text-green-400">Token Freebox enregistré.</p>}
+        {mutation.isError && (
+          <p className="text-sm text-destructive">
+            {mutation.error instanceof Error ? mutation.error.message : 'Erreur'}
+          </p>
         )}
       </CardContent>
     </Card>
