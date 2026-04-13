@@ -37,8 +37,7 @@
     "passport-local": "^1",
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
-    "socket.io": "^4.8.3",
-    "undici": "^8.0.3"
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@nestjs/cli": "^11",

@@ -4,14 +4,42 @@ import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { Agent, fetch as undiciFetch } from 'undici';
+import * as https from 'node:https';
+import * as http from 'node:http';
 import { PrismaService } from '../common/prisma.service';
 import { parseMediaFilename } from '../common/media-parser';
 
-const insecureDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+interface FetchInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
 
-function fetchInsecure(url: string, init?: Parameters<typeof undiciFetch>[1]): ReturnType<typeof undiciFetch> {
-  return undiciFetch(url, { ...init, dispatcher: insecureDispatcher });
+function fetchInsecure(url: string, init: FetchInit = {}): Promise<{ json: () => Promise<unknown> }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const isHttps = parsed.protocol === 'https:';
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: init.method ?? 'GET',
+      headers: init.headers ?? {},
+      rejectUnauthorized: false,
+    };
+    const lib = isHttps ? https : http;
+    const req = lib.request(options, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString();
+        resolve({ json: () => Promise.resolve(JSON.parse(text)) });
+      });
+    });
+    req.on('error', reject);
+    if (init.body) req.write(init.body);
+    req.end();
+  });
 }
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ffmpegPath: string = require('ffmpeg-static');
