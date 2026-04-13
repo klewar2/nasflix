@@ -16,7 +16,7 @@ export function BackofficeLayout() {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-primary/[0.04] blur-[120px] rounded-full" />
       </div>
       <Sidebar />
-      <main className="ml-60 p-6 relative">
+      <main className="md:ml-60 pt-14 md:pt-0 p-6 relative">
         <Outlet />
       </main>
     </div>

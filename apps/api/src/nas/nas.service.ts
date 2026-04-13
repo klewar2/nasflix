@@ -702,17 +702,21 @@ export class NasService {
     // Format exact découvert via DevTools VideoStation :
     // file={"id":<mapper_id>}, hls_remux={"hls_header":true,"audio_track":1}, pin="", version=2
     // Essayer d'abord hls_remux (pas de ré-encodage), puis transcode (compatible plus de formats)
-    const variants: Array<{ label: string; extra: Record<string, unknown> }> = [
-      { label: 'hls_remux', extra: { hls_remux: { hls_header: true, audio_track: audioTrack } } },
-      { label: 'transcode', extra: { transcode: { video_codec: 'h264', audio_codec: 'aac' } } },
-      { label: 'bare', extra: {} },
+    const variants: Array<{ label: string; body: Record<string, unknown> }> = [
+      // VS 3.x (DSM 7.2+) — fileId direct + version 3
+      { label: 'v3_hls_remux', body: { api: 'SYNO.VideoStation2.Streaming', version: 3, method: 'open', fileId: fidNum, pin: '', hls_remux: { hls_header: true, audio_track: audioTrack } } },
+      { label: 'v3_transcode', body: { api: 'SYNO.VideoStation2.Streaming', version: 3, method: 'open', fileId: fidNum, pin: '', transcode: { video_codec: 'h264', audio_codec: 'aac' } } },
+      // VS 2.x (DSM 7.0-7.1) — file:{id} + version 2
+      { label: 'v2_hls_remux', body: { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '', hls_remux: { hls_header: true, audio_track: audioTrack } } },
+      { label: 'v2_transcode', body: { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '', transcode: { video_codec: 'h264', audio_codec: 'aac' } } },
+      { label: 'v2_bare',     body: { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '' } },
     ];
 
-    for (const { label, extra } of variants) {
-      const body = { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '', ...extra };
-      this.logger.debug(`[VideoStation] POST Streaming v2 [${label}] file.id=${fidNum}`);
+    for (const { label, body } of variants) {
+      const extra = body;
+      this.logger.debug(`[VideoStation] POST Streaming [${label}] fileId=${fidNum}`);
       try {
-        const result = await this.requestFormPost<{ playlist_url?: string }>(session.baseUrl, session.sid, body);
+        const result = await this.requestFormPost<{ playlist_url?: string }>(session.baseUrl, session.sid, extra);
         if (result.success && result.data?.playlist_url) {
           let url = result.data.playlist_url;
           if (url.startsWith('/')) url = `${session.baseUrl.replace(/\/$/, '')}${url}`;

@@ -54,6 +54,16 @@ function langName(code: string): string {
 
 type TrackSection = 'audio' | 'subtitle';
 
+function mediaErrorMessage(code: number): string {
+  switch (code) {
+    case 1: return 'Lecture abandonnée';
+    case 2: return 'Erreur réseau';
+    case 3: return 'Erreur de décodage (codec non supporté ?)';
+    case 4: return 'Format/source non supporté';
+    default: return 'Erreur inconnue';
+  }
+}
+
 export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks, mediaId, episodeId, onBack }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -75,6 +85,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
 
   const [seekMode, setSeekMode] = useState(false);
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   // Resume prompt: shown at start if saved progress exists
   const savedProgress = watchProgress.get(mediaId, episodeId);
@@ -172,6 +183,15 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     if (!video) return;
     setHlsAudioTracks([]); // reset on new stream
     setNativeAudioTracks([]);
+    setVideoError(null);
+
+    const onError = () => {
+      const err = video.error;
+      const msg = err ? `Code ${err.code}: ${err.message || mediaErrorMessage(err.code)}` : 'Erreur inconnue';
+      setVideoError(msg);
+    };
+    video.addEventListener('error', onError);
+
     if (isHls && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
       hlsRef.current = hls;
@@ -201,7 +221,11 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
         video.play().catch(() => {});
       }
     }
-    return () => { hlsRef.current?.destroy(); hlsRef.current = null; };
+    return () => {
+      video.removeEventListener('error', onError);
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, isHls]);
 
@@ -474,6 +498,18 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
       <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline />
+
+      {videoError && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: '0.75rem',
+          background: 'rgba(0,0,0,0.85)',
+        }}>
+          <span style={{ color: '#e50914', fontSize: '1rem', fontWeight: 700 }}>Erreur de lecture</span>
+          <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.75rem', maxWidth: '70%', textAlign: 'center' }}>{videoError}</span>
+          <button onClick={onBack} style={{ marginTop: '0.5rem', padding: '0.5rem 1.5rem', background: '#e50914', border: 'none', borderRadius: '4px', color: '#fff', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>← Retour</button>
+        </div>
+      )}
 
       {/* ── Debug panel (audio tracks) ──────────────────────────────── */}
       {DEBUG && (

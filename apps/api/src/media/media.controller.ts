@@ -11,7 +11,7 @@ export class MediaController {
 
   @Get()
   findAll(
-    @Query('type') type: MediaType | undefined,
+    @Query('type') type: string | undefined,
     @Query('genreId', new DefaultValuePipe(undefined), new ParseIntPipe({ optional: true })) genreId: number | undefined,
     @Query('year', new DefaultValuePipe(undefined), new ParseIntPipe({ optional: true })) year: number | undefined,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
@@ -19,7 +19,8 @@ export class MediaController {
     @Req() req: { user: JwtPayload },
   ) {
     const cineClubId = this.requireCineClub(req.user);
-    return this.mediaService.findAll({ cineClubId, type, genreId, year, page, limit });
+    const normalizedType = type ? (type.toUpperCase() as MediaType) : undefined;
+    return this.mediaService.findAll({ cineClubId, type: normalizedType, genreId, year, page, limit });
   }
 
   @Get('search')
@@ -71,7 +72,7 @@ export class MediaController {
   @UseGuards(RolesGuard)
   @Get('admin/list')
   findAllAdmin(
-    @Query('type') type: MediaType | undefined,
+    @Query('type') type: string | undefined,
     @Query('status') status: SyncStatus | undefined,
     @Query('title') title: string | undefined,
     @Query('videoQuality') videoQuality: string | undefined,
@@ -85,8 +86,9 @@ export class MediaController {
     @Req() req: { user: JwtPayload },
   ) {
     const cineClubId = this.requireCineClub(req.user);
+    const normalizedType = type ? (type.toUpperCase() as MediaType) : undefined;
     return this.mediaService.findAllAdmin({
-      cineClubId, type, status, title, videoQuality,
+      cineClubId, type: normalizedType, status, title, videoQuality,
       dolbyVision: dolbyVision === 'true',
       hdr: hdr === 'true',
       dolbyAtmos: dolbyAtmos === 'true',
