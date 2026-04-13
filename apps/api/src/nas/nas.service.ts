@@ -274,7 +274,7 @@ export class NasService {
     url.searchParams.set('version', '2');
     url.searchParams.set('method', 'download');
     url.searchParams.set('path', JSON.stringify([path]));
-    url.searchParams.set('mode', mode === 'stream' ? 'open' : 'download');
+    url.searchParams.set('mode', JSON.stringify(mode === 'stream' ? 'open' : 'download'));
     url.searchParams.set('_sid', sid);
     return url.toString();
   }
