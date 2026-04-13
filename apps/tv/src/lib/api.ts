@@ -3,11 +3,11 @@ import type { CineClubResponse, LoginResponse, UserResponse } from '@nasflix/sha
 
 const BASE = import.meta.env.VITE_API_URL || '/api';
 
-/** Résout une URL relative retournée par le backend en URL absolue. */
+/** Résout une URL relative retournée par le backend en URL absolue.
+ *  Utilise BASE directement pour conserver le préfixe /api. */
 export function resolveApiUrl(url: string): string {
   if (url.startsWith('http')) return url;
-  const origin = BASE.replace(/\/api$/, '');
-  return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  return `${BASE}${url}`;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
