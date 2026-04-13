@@ -90,6 +90,14 @@ class ApiClient {
     return this.fetch<{ saved: boolean }>('/nas/freebox/token', { method: 'POST', body: JSON.stringify({ freeboxApiUrl, appToken }) });
   }
 
+  startFreeboxAuthorization(freeboxApiUrl: string) {
+    return this.fetch<{ trackId: number; message: string }>('/nas/freebox/authorize', { method: 'POST', body: JSON.stringify({ freeboxApiUrl }) });
+  }
+
+  checkFreeboxAuthorizationStatus(trackId: number) {
+    return this.fetch<{ status: string; granted: boolean }>(`/nas/freebox/authorize/${trackId}`);
+  }
+
   generateWebhookSecret(cineClubId: number) {
     return this.fetch<{ webhookSecret: string }>(`/cineclubs/${cineClubId}/generate-webhook-secret`, { method: 'POST' });
   }
