@@ -200,6 +200,14 @@ export class NasController {
     if (!data) { res.status(403).end(); return; }
 
     const nasUrl = data.url;
+
+    // For downloads: redirect browser directly to NAS (entry.cgi accessible from browser, not from Railway)
+    if (download === '1') {
+      this.logger.log(`[fileproxy] redirect download → ${nasUrl.slice(0, 100)}`);
+      res.redirect(302, nasUrl);
+      return;
+    }
+
     const parsed = new URL(nasUrl);
     const isHttps = parsed.protocol === 'https:';
 
