@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Unauthorize
 import { ConfigService } from '@nestjs/config';
 import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
-import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import * as https from 'node:https';
 import * as http from 'node:http';
@@ -956,15 +956,19 @@ export class NasService {
     jellyfinItemId: string,
   ): string {
     const base = jellyfinBaseUrl.replace(/\/$/, '');
+    // PlaySessionId: client-generated UUID required by Jellyfin to track the HLS session.
+    // MediaSourceId: equals the item ID for single-file items (Jellyfin returns it via PlaybackInfo too).
     const params = new URLSearchParams({
       api_key: jellyfinApiToken,
+      DeviceId: 'nasflix',
+      MediaSourceId: jellyfinItemId,
+      PlaySessionId: randomUUID(),
       VideoCodec: 'copy',
       AudioCodec: 'copy',
       Container: 'ts',
       TranscodingContainer: 'ts',
       SegmentContainer: 'ts',
       MinSegments: '1',
-      DeviceId: 'nasflix',
       static: 'false',
     });
     return `${base}/Videos/${jellyfinItemId}/master.m3u8?${params.toString()}`;
