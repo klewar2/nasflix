@@ -103,13 +103,13 @@ export default function SearchPage({ navigate, navFocused, onFocusNav }: Props) 
   }, [navFocused, inputFocused, focusedIdx, results, navigate, onFocusNav]);
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '1.5rem 2.5rem' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '1.5rem 3rem' }}>
       {/* Search input */}
       <div style={{ marginBottom: '1.5rem', position: 'relative' }}>
         <div style={{
           display: 'flex', alignItems: 'center', gap: '0.8rem',
           background: 'rgba(255,255,255,0.07)',
-          border: `2px solid ${inputFocused ? 'var(--red)' : 'rgba(255,255,255,0.12)'}`,
+          border: `2px solid ${inputFocused ? '#fff' : 'rgba(255,255,255,0.12)'}`,
           borderRadius: '12px',
           padding: '0.7rem 1.2rem',
           transition: 'border-color 0.15s',
@@ -176,7 +176,7 @@ export default function SearchPage({ navigate, navFocused, onFocusNav }: Props) 
                       borderRadius: '8px',
                       overflow: 'hidden',
                       cursor: 'pointer',
-                      border: `2px solid ${isFocused ? 'var(--red)' : 'transparent'}`,
+                      border: `2px solid ${isFocused ? '#fff' : 'transparent'}`,
                       transform: isFocused ? 'scale(1.04)' : 'scale(1)',
                       transition: 'all 0.12s ease',
                       background: '#18181b',

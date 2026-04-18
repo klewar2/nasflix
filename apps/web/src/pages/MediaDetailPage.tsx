@@ -182,11 +182,11 @@ export default function MediaDetailPage() {
                 </p>
               )}
 
-              {/* Download button — Movies only (series handled per-episode) */}
+              {/* Play / Download buttons — Movies only (series handled per-episode) */}
               {isMember && media.type === 'MOVIE' && media.nasPath && (
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
-                  {/* NAS offline indicator */}
-                  {!nasOnline && (
+                  {/* Offline indicator */}
+                  {!nasOnline && media.sourceType !== 'SEEDBOX' && (
                     <span className="flex items-center gap-1.5 text-xs text-zinc-500">
                       <WifiOff className="w-3.5 h-3.5" />
                       NAS hors ligne
@@ -194,9 +194,18 @@ export default function MediaDetailPage() {
                   )}
 
                   <button
-                    disabled={!nasOnline || loadingId === `dl-${id}`}
+                    disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `play-${id}`}
+                    onClick={() => openPlayer(() => api.getStreamUrl(Number(id)), mediaTitle, `play-${id}`, { mediaId: Number(id) })}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm font-semibold transition-colors"
+                  >
+                    {loadingId === `play-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-white" />}
+                    Lire
+                  </button>
+
+                  <button
+                    disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${id}`}
                     onClick={() => handleDownload(() => api.getStreamUrl(Number(id), 'download'), media.nasFilename || mediaTitle, `dl-${id}`)}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm transition-colors border border-zinc-700"
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm transition-colors border border-zinc-700"
                   >
                     {loadingId === `dl-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                     Télécharger
@@ -310,14 +319,24 @@ export default function MediaDetailPage() {
                                     </span>
                                   )}
                                   {isMember && ep.nasPath && (
-                                    <button
-                                      disabled={!nasOnline || loadingId === `dl-${epKey}`}
-                                      onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
-                                      className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-400 hover:text-white transition-colors border border-zinc-700"
-                                      title={nasOnline ? 'Télécharger' : 'NAS hors ligne'}
-                                    >
-                                      {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                                    </button>
+                                    <>
+                                      <button
+                                        disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `play-${epKey}`}
+                                        onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`, { mediaId: Number(id), episodeId: ep.id })}
+                                        className="p-1.5 rounded bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white transition-colors"
+                                        title="Lire"
+                                      >
+                                        {loadingId === `play-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white" />}
+                                      </button>
+                                      <button
+                                        disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${epKey}`}
+                                        onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
+                                        className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-white transition-colors border border-zinc-700"
+                                        title="Télécharger"
+                                      >
+                                        {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                                      </button>
+                                    </>
                                   )}
                                 </div>
                               </div>

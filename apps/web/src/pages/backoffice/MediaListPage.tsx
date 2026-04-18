@@ -266,7 +266,7 @@ export default function MediaListPage() {
               <th className={`${thClass} hidden md:table-cell`} onClick={() => toggleSort('type')}>Type <SortIcon field="type" sortBy={sortBy} sortOrder={sortOrder} /></th>
               <th className={`${thClass} hidden lg:table-cell`} onClick={() => toggleSort('releaseYear')}>Année <SortIcon field="releaseYear" sortBy={sortBy} sortOrder={sortOrder} /></th>
               <th className={thClass} onClick={() => toggleSort('syncStatus')}>Statut <SortIcon field="syncStatus" sortBy={sortBy} sortOrder={sortOrder} /></th>
-              <th className={`${thClass} hidden xl:table-cell`} onClick={() => toggleSort('nasAddedAt')}>Ajouté NAS <SortIcon field="nasAddedAt" sortBy={sortBy} sortOrder={sortOrder} /></th>
+              <th className={`${thClass} hidden xl:table-cell`} onClick={() => toggleSort('nasAddedAt')}>Ajouté le <SortIcon field="nasAddedAt" sortBy={sortBy} sortOrder={sortOrder} /></th>
               <th className={`${thClass} hidden 2xl:table-cell`} onClick={() => toggleSort('lastSyncedAt')}>Dernière sync <SortIcon field="lastSyncedAt" sortBy={sortBy} sortOrder={sortOrder} /></th>
               <th className="text-right p-3 font-medium text-zinc-400">Actions</th>
             </tr>
@@ -301,7 +301,7 @@ export default function MediaListPage() {
                     </div>
                   </td>
                   <td className="p-3 hidden xl:table-cell text-zinc-500 text-xs">
-                    {m.nasAddedAt ? new Date(m.nasAddedAt).toLocaleDateString('fr-FR') : '-'}
+                    {(m.nasAddedAt || m.createdAt) ? new Date(m.nasAddedAt || m.createdAt).toLocaleDateString('fr-FR') : '-'}
                   </td>
                   <td className="p-3 hidden 2xl:table-cell text-zinc-500 text-xs">
                     {formatDateTime(m.lastSyncedAt)}

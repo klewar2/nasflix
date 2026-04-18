@@ -131,7 +131,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
       <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(9,9,11,0.0) 40%, rgba(9,9,11,0.95) 100%)' }} />
 
       {/* Content */}
-      <div style={{ position: 'relative', height: '100%', display: 'flex', gap: '2rem', padding: '1.5rem 2.5rem 1.5rem', overflow: 'hidden' }}>
+      <div style={{ position: 'relative', height: '100%', display: 'flex', gap: '2rem', padding: '1.5rem 3rem', overflow: 'hidden' }}>
         {/* Left: poster */}
         <div style={{ flexShrink: 0, width: '13rem', alignSelf: 'flex-start', position: 'relative' }}>
           {posterUrl ? (
@@ -263,8 +263,8 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
                             style={{
                               padding: '0.5rem 0.7rem',
                               borderRadius: '8px',
-                              background: isFocused ? 'rgba(229,9,20,0.15)' : 'rgba(255,255,255,0.04)',
-                              border: `1px solid ${isFocused ? 'rgba(229,9,20,0.5)' : 'rgba(255,255,255,0.06)'}`,
+                              background: isFocused ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
+                              border: `1px solid ${isFocused ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.06)'}`,
                               cursor: 'pointer',
                               transition: 'all 0.12s ease',
                               position: 'relative',
@@ -306,18 +306,22 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
 
 function btnStyle(active: boolean, primary: boolean): React.CSSProperties {
   return {
-    padding: '0.55rem 1.4rem',
+    padding: '0.6rem 1.6rem',
     background: active
       ? (primary ? 'var(--red)' : 'rgba(255,255,255,0.15)')
       : (primary ? 'rgba(229,9,20,0.25)' : 'rgba(255,255,255,0.07)'),
-    border: `2px solid ${active ? (primary ? 'var(--red)' : 'rgba(255,255,255,0.35)') : 'transparent'}`,
+    border: 'none',
+    outline: active ? '4px solid #fff' : '4px solid transparent',
+    outlineOffset: '3px',
     borderRadius: '8px',
     color: '#fff',
-    fontSize: '0.6rem',
+    fontSize: '0.65rem',
     fontWeight: 700,
     cursor: 'pointer',
-    transform: active ? 'scale(1.05)' : 'scale(1)',
-    transition: 'all 0.15s ease',
-    boxShadow: active && primary ? '0 4px 24px rgba(229,9,20,0.45)' : 'none',
+    transform: active ? 'scale(1.08)' : 'scale(1)',
+    transition: active
+      ? 'transform 175ms ease-out, outline 175ms ease-out, box-shadow 175ms ease-out'
+      : 'transform 100ms ease-in, outline 100ms ease-in',
+    boxShadow: active ? '0 4px 24px rgba(0,0,0,0.5)' : 'none',
   };
 }

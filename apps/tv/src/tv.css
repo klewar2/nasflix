@@ -6,12 +6,17 @@
   --bg: #09090b;
   --bg-card: #18181b;
   --bg-overlay: rgba(0,0,0,0.7);
-  --text: #ffffff;
+  --text: #f0f0f0;
   --text-muted: #a1a1aa;
   --text-dim: #52525b;
-  --focus-ring: 4px solid #e50914;
+  /* TV focus: always white for maximum visibility on any background */
+  --focus-ring: 4px solid #ffffff;
+  --focus-shadow: 0 0 0 4px rgba(255,255,255,0.25), 0 8px 32px rgba(0,0,0,0.6);
   --radius: 8px;
   --font: 'Helvetica Neue', Arial, sans-serif;
+  /* Safe zones — 5% horizontal, 3.75% vertical (EBU R95 / webOS guidance) */
+  --safe-h: 96px;
+  --safe-v: 60px;
 
   /* TV sizing — base 32px pour TV 72" à 3m */
   font-size: 32px;
@@ -32,8 +37,19 @@ html, body, #root {
 [data-focused="true"] {
   outline: var(--focus-ring);
   outline-offset: 4px;
-  transition: outline 0.1s ease;
+  box-shadow: var(--focus-shadow);
   z-index: 10;
+}
+
+/* ── Loading shimmer ────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -800px 0; }
+  100% { background-position: 800px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #1c1c1e 25%, #27272a 50%, #1c1c1e 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
 }
 
 /* ── Scrollbar cachée ───────────────────────────────────────────────────── */

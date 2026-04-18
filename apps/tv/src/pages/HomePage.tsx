@@ -163,7 +163,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
         {/* Info panel */}
         {previewMedia && (
           <div style={{
-            position: 'absolute', bottom: '1.2rem', left: '2.5rem',
+            position: 'absolute', bottom: '1.5rem', left: '3rem',
             maxWidth: '45%',
           }}>
             <h1 style={{

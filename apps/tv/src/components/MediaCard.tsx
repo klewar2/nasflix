@@ -28,13 +28,17 @@ function MediaCard({ media, focused, onFocus, onSelect }: Props) {
         borderRadius: '8px',
         overflow: 'hidden',
         position: 'relative',
-        outline: focused ? '3px solid var(--red)' : '3px solid transparent',
-        outlineOffset: '3px',
-        transition: 'outline 0.12s ease, box-shadow 0.18s ease',
+        outline: focused ? '4px solid #fff' : '4px solid transparent',
+        outlineOffset: '4px',
+        transform: focused ? 'scale(1.1)' : 'scale(1)',
+        transition: focused
+          ? 'transform 175ms ease-out, outline 175ms ease-out, box-shadow 175ms ease-out'
+          : 'transform 100ms ease-in, outline 100ms ease-in, box-shadow 100ms ease-in',
         zIndex: focused ? 10 : 1,
         willChange: 'transform',
+        backfaceVisibility: 'hidden',
         boxShadow: focused
-          ? '0 12px 40px rgba(229,9,20,0.4), 0 4px 16px rgba(0,0,0,0.6)'
+          ? '0 12px 40px rgba(255,255,255,0.12), 0 4px 16px rgba(0,0,0,0.7)'
           : '0 2px 10px rgba(0,0,0,0.5)',
       }}
     >

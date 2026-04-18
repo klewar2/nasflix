@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router';
 import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users, UserCircle, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api-client';
 
 const navItems = [
   { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard', adminOnly: false },
@@ -12,6 +14,24 @@ const navItems = [
   { to: '/admin/users', icon: Users, label: 'Utilisateurs', adminOnly: true },
   { to: '/admin/profile', icon: UserCircle, label: 'Mon profil', adminOnly: false },
 ];
+
+function JellyfinStatusBadge() {
+  const { cineClub } = useAuth();
+  const { data } = useQuery({
+    queryKey: ['jellyfin-status'],
+    queryFn: () => api.getJellyfinStatus(),
+    enabled: !!cineClub?.jellyfinApiTokenSet,
+    refetchInterval: 60_000,
+    staleTime: 50_000,
+  });
+  if (!cineClub?.jellyfinApiTokenSet) return null;
+  return (
+    <div className="px-3 py-1.5 flex items-center gap-2 text-xs text-zinc-500">
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${data?.online ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+      <span className="truncate">Jellyfin {data?.online ? 'en ligne' : 'hors ligne'}</span>
+    </div>
+  );
+}
 
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
@@ -39,6 +59,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
       <div className="p-3 border-t border-white/[0.06]">
+        <JellyfinStatusBadge />
         <Link
           to="/"
           onClick={onNavigate}

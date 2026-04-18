@@ -67,13 +67,12 @@ export default function MediaRow({ title, items, rowFocused, onSelect, onPreview
   return (
     <div style={{ marginBottom: '1.2rem' }}>
       <h2 style={{
-        fontSize: '0.6rem',
+        fontSize: '0.85rem',
         fontWeight: 700,
-        marginBottom: '0.6rem',
-        paddingLeft: '2.5rem',
-        color: rowFocused ? '#fff' : 'rgba(255,255,255,0.45)',
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
+        marginBottom: '0.5rem',
+        paddingLeft: '3rem',
+        color: rowFocused ? '#fff' : 'rgba(255,255,255,0.5)',
+        letterSpacing: '0.04em',
         transition: 'color 0.2s',
       }}>
         {title}
@@ -82,9 +81,9 @@ export default function MediaRow({ title, items, rowFocused, onSelect, onPreview
         ref={scrollRef}
         style={{
           display: 'flex',
-          gap: '0.6rem',
-          paddingLeft: '2.5rem',
-          paddingRight: '2.5rem',
+          gap: '20px',
+          paddingLeft: '3rem',
+          paddingRight: '3rem',
           overflowX: 'hidden',
           paddingBottom: '0.5rem',
         }}

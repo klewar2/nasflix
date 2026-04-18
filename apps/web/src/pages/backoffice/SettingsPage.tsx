@@ -403,7 +403,7 @@ function JellyfinCard() {
           <Button
             size="sm"
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending || !jellyfinUrl || !jellyfinToken}
+            disabled={saveMutation.isPending || !jellyfinUrl || (!jellyfinToken && !cineClub?.jellyfinApiTokenSet)}
           >
             <Save className="w-4 h-4 mr-2" />
             {saveMutation.isPending ? 'Enregistrement...' : 'Enregistrer'}

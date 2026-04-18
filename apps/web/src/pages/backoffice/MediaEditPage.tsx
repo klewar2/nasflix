@@ -304,7 +304,7 @@ export default function MediaEditPage() {
 
           {/* NAS file */}
           <Card>
-            <CardHeader><CardTitle>Fichier NAS</CardTitle></CardHeader>
+            <CardHeader><CardTitle>{media.sourceType === 'SEEDBOX' ? 'Fichier Jellyfin' : 'Fichier NAS'}</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               <div><span className="text-zinc-500">Chemin :</span> <code className="ml-2 text-xs bg-zinc-900 px-2 py-1 rounded break-all">{media.nasPath}</code></div>
               <div><span className="text-zinc-500">Nom du fichier :</span> <span className="ml-2">{media.nasFilename}</span></div>

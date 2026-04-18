@@ -107,8 +107,8 @@ export default function TVNavbar({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingLeft: '2.5rem',
-      paddingRight: '2.5rem',
+      paddingLeft: '3rem',
+      paddingRight: '3rem',
       background: 'rgba(9,9,11,0.97)',
       borderBottom: '1px solid rgba(255,255,255,0.06)',
       position: 'relative',
@@ -122,7 +122,7 @@ export default function TVNavbar({
           style={{
             background: 'none', border: 'none', cursor: 'pointer', padding: '0.3rem 0.5rem',
             borderRadius: '6px',
-            outline: focused && focusedItem === 'logo' ? '2px solid var(--red)' : 'none',
+            outline: focused && focusedItem === 'logo' ? '3px solid #fff' : 'none',
           }}
         >
           <span style={{
@@ -178,7 +178,7 @@ export default function TVNavbar({
           border: `1px solid ${focused && focusedItem === 'search' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.1)'}`,
           borderRadius: '2rem', color: '#fff',
           fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer',
-          outline: focused && focusedItem === 'search' ? '2px solid rgba(255,255,255,0.45)' : 'none',
+          outline: focused && focusedItem === 'search' ? '3px solid #fff' : 'none',
         }}
       >
         🔍 <span style={{ color: 'rgba(255,255,255,0.6)' }}>Rechercher…</span>
@@ -215,7 +215,7 @@ export default function TVNavbar({
               border: `1px solid ${focused && focusedItem === 'cineclubs' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.08)'}`,
               borderRadius: '2rem', color: '#fff',
               fontSize: '0.5rem', fontWeight: 600, cursor: 'pointer',
-              outline: focused && focusedItem === 'cineclubs' ? '2px solid rgba(255,255,255,0.4)' : 'none',
+              outline: focused && focusedItem === 'cineclubs' ? '3px solid #fff' : 'none',
             }}
           >
             <span style={{ color: 'rgba(255,255,255,0.5)' }}>↕</span>
