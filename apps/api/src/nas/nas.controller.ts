@@ -156,6 +156,25 @@ export class NasController {
     return { online, lastCheckedAt: new Date().toISOString() };
   }
 
+  // ── Jellyfin status ───────────────────────────────────────────────────────────
+
+  @Get('jellyfin/status')
+  async getJellyfinStatus(@Req() req: { user: JwtPayload }) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.checkJellyfinStatus(req.user.cineClubId);
+  }
+
+  @Post('jellyfin/config')
+  @Roles(MemberRole.ADMIN)
+  async saveJellyfinConfig(
+    @Req() req: { user: JwtPayload },
+    @Body() body: { jellyfinBaseUrl: string; jellyfinApiToken: string },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    await this.nasService.saveJellyfinConfig(req.user.cineClubId, body.jellyfinBaseUrl, body.jellyfinApiToken);
+    return { saved: true };
+  }
+
   // ── Track probing ──────────────────────────────────────────────────────────
 
   @Get('tracks/episode/:episodeId')
@@ -164,6 +183,9 @@ export class NasController {
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    // Si SEEDBOX → Jellyfin PlaybackInfo au lieu de FFmpeg
+    const jellyfinTracks = await this.nasService.getEpisodeTracksForJellyfin(episodeId, req.user.cineClubId);
+    if (jellyfinTracks) return jellyfinTracks;
     const nasUrl = await this.nasService.getEpisodeFileUrl(episodeId, req.user.sub, req.user.cineClubId);
     return this.nasService.probeMediaTracks(nasUrl);
   }
@@ -174,6 +196,9 @@ export class NasController {
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    // Si SEEDBOX → Jellyfin PlaybackInfo au lieu de FFmpeg
+    const jellyfinTracks = await this.nasService.getMediaTracksForJellyfin(mediaId, req.user.cineClubId);
+    if (jellyfinTracks) return jellyfinTracks;
     const nasUrl = await this.nasService.getMediaFileUrl(mediaId, req.user.sub, req.user.cineClubId);
     return this.nasService.probeMediaTracks(nasUrl);
   }
@@ -191,20 +216,21 @@ export class NasController {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
 
-    // passthrough=1 : proxy FileStation direct, sans VideoStation ni transcodage
-    if (passthrough === '1') {
+    // passthrough=1 : proxy FileStation direct pour NAS (SSL auto-signé), mais Jellyfin n'en a pas besoin
+    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
+    if (passthrough === '1' && sourceType !== 'SEEDBOX') {
       const duration = await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId);
       const t = this.signPassthroughFileToken(duration, { episodeId }, req.user.sub, req.user.cineClubId);
       this.logger.log(`[stream/episode] passthrough episodeId=${episodeId} token=compact`);
       return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: duration };
     }
-
-    const { nasUrl, durationSeconds, isHls } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
-    this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
+    this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
-      if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
+      if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
+    // download : Jellyfin direct (certificat valide), NAS via proxy Railway
+    if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds };
     return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
   }
 
@@ -219,21 +245,21 @@ export class NasController {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
 
-    // passthrough=1 : proxy FileStation direct, sans VideoStation ni transcodage
-    if (passthrough === '1') {
+    // passthrough=1 : proxy FileStation direct pour NAS (SSL auto-signé), mais Jellyfin n'en a pas besoin
+    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
+    if (passthrough === '1' && sourceType !== 'SEEDBOX') {
       const media = await this.nasService.getMediaDuration(mediaId, req.user.cineClubId);
       const t = this.signPassthroughFileToken(media, { mediaId }, req.user.sub, req.user.cineClubId);
       this.logger.log(`[stream/media] passthrough mediaId=${mediaId} token=compact`);
       return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: media };
     }
-
-    const { nasUrl, durationSeconds, isHls } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
-    this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
+    this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
-      if (isHls) return { url: nasUrl, isHls: true, durationSeconds };
+      if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
-    // download : proxy via Railway pour éviter le certificat NAS
+    // download : Jellyfin direct (certificat valide), NAS via proxy Railway
+    if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds };
     return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
   }
 

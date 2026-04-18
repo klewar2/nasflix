@@ -107,6 +107,26 @@ class ApiClient {
     return this.fetch<{ webhookSecret: string }>(`/cineclubs/${cineClubId}/generate-webhook-secret`, { method: 'POST' });
   }
 
+  saveJellyfinConfig(jellyfinBaseUrl: string, jellyfinApiToken: string) {
+    return this.fetch<{ saved: boolean }>('/nas/jellyfin/config', { method: 'POST', body: JSON.stringify({ jellyfinBaseUrl, jellyfinApiToken }) });
+  }
+
+  getJellyfinStatus() {
+    return this.fetch<{ online: boolean; version?: string; serverName?: string }>('/nas/jellyfin/status');
+  }
+
+  syncFromJellyfin() {
+    return this.fetch<{ message: string; movies: number; episodes: number; processed: number; errors: number; metadataQueued: number }>('/sync/jellyfin', { method: 'POST' });
+  }
+
+  getMediaTracks(mediaId: number) {
+    return this.fetch<{ audio: Array<{ index: number; language: string; title: string; codec: string; channels: number }>; subtitles: Array<{ index: number; language: string; title: string; codec: string }> }>(`/nas/tracks/${mediaId}`);
+  }
+
+  getEpisodeTracks(episodeId: number) {
+    return this.fetch<{ audio: Array<{ index: number; language: string; title: string; codec: string; channels: number }>; subtitles: Array<{ index: number; language: string; title: string; codec: string }> }>(`/nas/tracks/episode/${episodeId}`);
+  }
+
   createCineClub(data: { name: string; slug: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {
     return this.fetch<CineClubResponse>('/cineclubs', { method: 'POST', body: JSON.stringify(data) });
   }
@@ -232,11 +252,11 @@ class ApiClient {
   }
 
   getStreamUrl(mediaId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/${mediaId}?mode=${mode}`);
+    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=${mode}`);
   }
 
   getEpisodeStreamUrl(episodeId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number }>(`/nas/stream/episode/${episodeId}?mode=${mode}`);
+    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}`);
   }
 
   // Health

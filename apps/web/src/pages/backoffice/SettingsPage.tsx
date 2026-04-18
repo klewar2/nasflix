@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Copy, RefreshCw, Save } from 'lucide-react';
+import { Copy, RefreshCw, Save, Wifi } from 'lucide-react';
 
 // ── Formulaire paramètres généraux ────────────────────────────────────────────
 function GeneralSettingsCard() {
@@ -339,6 +339,117 @@ function WebhookSecretCard() {
   );
 }
 
+// ── Section Seedbox / Jellyfin ─────────────────────────────────────────────────
+function JellyfinCard() {
+  const { cineClub } = useAuth();
+  const [jellyfinUrl, setJellyfinUrl] = useState(cineClub?.jellyfinBaseUrl ?? '');
+  const [jellyfinToken, setJellyfinToken] = useState('');
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (cineClub) setJellyfinUrl(cineClub.jellyfinBaseUrl ?? '');
+  }, [cineClub]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => api.saveJellyfinConfig(jellyfinUrl, jellyfinToken),
+    onSuccess: () => { setJellyfinToken(''); },
+  });
+
+  const { data: status, refetch: refetchStatus, isFetching: isCheckingStatus } = useQuery({
+    queryKey: ['jellyfin-status'],
+    queryFn: () => api.getJellyfinStatus(),
+    enabled: false,
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: () => api.syncFromJellyfin(),
+    onSuccess: (data) => {
+      setSyncResult(`${data.message} — ${data.processed} traités, ${data.metadataQueued} métadonnées en queue`);
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Seedbox / Jellyfin</CardTitle>
+          <Badge variant={cineClub?.jellyfinApiTokenSet ? 'success' : 'secondary'}>
+            {cineClub?.jellyfinApiTokenSet ? 'Configuré' : 'Non configuré'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-zinc-500">Connecte Nasflix à une instance Jellyfin sur ta seedbox pour streamer et télécharger depuis la seedbox au lieu du NAS.</p>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">URL Jellyfin</label>
+          <Input
+            placeholder="https://host.pulsedmedia.com/public-user/jellyfin"
+            value={jellyfinUrl}
+            onChange={(e) => setJellyfinUrl(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">Token API Jellyfin</label>
+          <p className="text-xs text-zinc-500 mb-1">{cineClub?.jellyfinApiTokenSet ? 'Token configuré (masqué)' : 'Aucun token'}</p>
+          <Input
+            type="password"
+            placeholder={cineClub?.jellyfinApiTokenSet ? '••••••••••••••••' : 'Token API Jellyfin'}
+            value={jellyfinToken}
+            onChange={(e) => setJellyfinToken(e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending || !jellyfinUrl || !jellyfinToken}
+          >
+            <Save className="w-4 h-4 mr-2" />
+            {saveMutation.isPending ? 'Enregistrement...' : 'Enregistrer'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => refetchStatus()}
+            disabled={isCheckingStatus}
+          >
+            <Wifi className="w-4 h-4 mr-2" />
+            {isCheckingStatus ? 'Test...' : 'Tester la connexion'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            {syncMutation.isPending ? 'Synchronisation...' : 'Synchroniser depuis Jellyfin'}
+          </Button>
+        </div>
+
+        {status && (
+          <p className={`text-sm ${status.online ? 'text-green-400' : 'text-destructive'}`}>
+            {status.online ? `✓ Connecté — Jellyfin ${status.version ?? ''} (${status.serverName ?? ''})` : '✗ Jellyfin inaccessible'}
+          </p>
+        )}
+        {saveMutation.isSuccess && <p className="text-sm text-green-400">Configuration Jellyfin enregistrée.</p>}
+        {saveMutation.isError && (
+          <p className="text-sm text-destructive">
+            {saveMutation.error instanceof Error ? saveMutation.error.message : 'Erreur'}
+          </p>
+        )}
+        {syncResult && <p className="text-sm text-green-400">{syncResult}</p>}
+        {syncMutation.isError && (
+          <p className="text-sm text-destructive">
+            {syncMutation.error instanceof Error ? syncMutation.error.message : 'Erreur de sync'}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Page principale ────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const { cineClub } = useAuth();
@@ -353,6 +464,7 @@ export default function SettingsPage() {
           <GeneralSettingsCard />
           {isAdmin && <WolCard />}
           {isAdmin && <FreeboxCard />}
+          {isAdmin && <JellyfinCard />}
           {isAdmin && <WebhookSecretCard />}
         </div>
       )}

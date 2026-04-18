@@ -58,6 +58,8 @@ export interface CineClubResponse {
   nasWolPort: number | null;
   freeboxApiUrl: string | null;
   freeboxAppTokenSet: boolean;
+  jellyfinBaseUrl: string | null;
+  jellyfinApiTokenSet: boolean;
   lastOnlineAt: string | null;
   lastSyncAt: string | null;
   role?: 'ADMIN' | 'VIEWER';

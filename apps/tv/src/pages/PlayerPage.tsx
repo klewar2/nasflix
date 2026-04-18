@@ -101,6 +101,10 @@ export default function PlayerPage({ mediaId, episodeId, title, onBack }: Props)
       tracks={tracks}
       mediaId={mediaId}
       episodeId={episodeId}
+      sourceType={data.sourceType as 'NAS' | 'SEEDBOX' | undefined}
+      jellyfinItemId={data.jellyfinItemId}
+      jellyfinBaseUrl={data.jellyfinBaseUrl}
+      jellyfinApiToken={data.jellyfinApiToken}
       onBack={onBack}
     />
   );

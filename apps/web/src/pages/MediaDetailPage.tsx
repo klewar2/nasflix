@@ -15,7 +15,7 @@ export default function MediaDetailPage() {
   const isMember = !!cineClub;
 
   const [copied, setCopied] = useState(false);
-  const [player, setPlayer] = useState<{ url: string; title: string; isHls: boolean; durationSeconds: number } | null>(null);
+  const [player, setPlayer] = useState<{ url: string; title: string; isHls: boolean; durationSeconds: number; mediaId?: number; episodeId?: number; sourceType?: 'NAS' | 'SEEDBOX'; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const { data: media, isLoading } = useQuery({
@@ -42,11 +42,11 @@ export default function MediaDetailPage() {
     }
   };
 
-  const openPlayer = async (fetchUrl: () => Promise<{ url: string; isHls: boolean; durationSeconds: number }>, title: string, key: string) => {
+  const openPlayer = async (fetchUrl: () => Promise<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>, title: string, key: string, ids?: { mediaId?: number; episodeId?: number }) => {
     setLoadingId(key);
     try {
-      const { url, isHls, durationSeconds } = await fetchUrl();
-      setPlayer({ url, title, isHls, durationSeconds });
+      const { url, isHls, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await fetchUrl();
+      setPlayer({ url, title, isHls, durationSeconds, sourceType: sourceType as 'NAS' | 'SEEDBOX' | undefined, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken, ...ids });
     } catch {
       // silently fail — NAS may have gone offline between status check and request
     } finally {
@@ -100,6 +100,12 @@ export default function MediaDetailPage() {
           title={player.title}
           isHls={player.isHls}
           durationSeconds={player.durationSeconds}
+          mediaId={player.mediaId}
+          episodeId={player.episodeId}
+          sourceType={player.sourceType}
+          jellyfinItemId={player.jellyfinItemId}
+          jellyfinBaseUrl={player.jellyfinBaseUrl}
+          jellyfinApiToken={player.jellyfinApiToken}
           onClose={() => setPlayer(null)}
         />
       )}

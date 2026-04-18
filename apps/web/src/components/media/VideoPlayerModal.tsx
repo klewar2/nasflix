@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Hls from 'hls.js';
-import { Loader2, Maximize, Minimize, Pause, Play, Volume2, VolumeX, X } from 'lucide-react';
+import { Headphones, Loader2, Maximize, Minimize, Pause, Play, Subtitles, Volume2, VolumeX, X } from 'lucide-react';
+import { api } from '@/lib/api-client';
 
 interface VideoPlayerModalProps {
   url: string;
@@ -8,6 +10,12 @@ interface VideoPlayerModalProps {
   onClose: () => void;
   isHls?: boolean;
   durationSeconds?: number;
+  mediaId?: number;
+  episodeId?: number;
+  sourceType?: 'NAS' | 'SEEDBOX';
+  jellyfinItemId?: string;
+  jellyfinBaseUrl?: string;
+  jellyfinApiToken?: string;
 }
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -18,7 +26,29 @@ function resolveUrl(url: string, seek = 0): string {
   return base;
 }
 
-export function VideoPlayerModal({ url, title, onClose, isHls = false, durationSeconds = 0 }: VideoPlayerModalProps) {
+function buildJellyfinUrlWithAudio(masterUrl: string, audioStreamIndex: number): string {
+  try {
+    const u = new URL(masterUrl);
+    u.searchParams.set('AudioStreamIndex', String(audioStreamIndex));
+    return u.toString();
+  } catch {
+    return masterUrl;
+  }
+}
+
+export function VideoPlayerModal({
+  url,
+  title,
+  onClose,
+  isHls = false,
+  durationSeconds = 0,
+  mediaId,
+  episodeId,
+  sourceType,
+  jellyfinItemId,
+  jellyfinBaseUrl,
+  jellyfinApiToken,
+}: VideoPlayerModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -27,18 +57,30 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false, durationS
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
-  const [seekOffset, setSeekOffset] = useState(0);   // absolute position of the current stream start
+  const [seekOffset, setSeekOffset] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [buffering, setBuffering] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeAudio, setActiveAudio] = useState(0);
+  const [activeSubtitle, setActiveSubtitle] = useState(-1);
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
+  const [showSubMenu, setShowSubMenu] = useState(false);
 
-  // Total duration: prefer TMDB value, fall back to what the video element reports
   const totalDuration = durationSeconds > 0 ? durationSeconds : (videoDuration > 0 && isFinite(videoDuration) ? videoDuration : 0);
   const absoluteTime = seekOffset + currentTime;
   const progress = totalDuration > 0 ? Math.min((absoluteTime / totalDuration) * 100, 100) : 0;
+
+  // Load tracks
+  const tracksEnabled = !!(mediaId || episodeId);
+  const { data: tracks } = useQuery({
+    queryKey: ['tracks', mediaId ?? episodeId, !!episodeId],
+    queryFn: () => episodeId ? api.getEpisodeTracks(episodeId!) : api.getMediaTracks(mediaId!),
+    enabled: tracksEnabled,
+    staleTime: Infinity,
+  });
 
   const formatTime = (s: number) => {
     if (!isFinite(s) || s < 0) return '0:00';
@@ -70,6 +112,17 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false, durationS
     return () => { document.body.style.overflow = ''; };
   }, []);
 
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest('[data-audio-menu]')) setShowAudioMenu(false);
+      if (!t.closest('[data-sub-menu]')) setShowSubMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   // HLS initialisation
   useEffect(() => {
     const v = videoRef.current;
@@ -88,7 +141,7 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false, durationS
       hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED, () => { v.volume = 1; v.muted = false; });
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) setError('Impossible de lire la vidéo. Vérifiez que le NAS est accessible.');
+        if (data.fatal) setError('Impossible de lire la vidéo. Vérifiez que la source est accessible.');
       });
       return () => { hls.destroy(); hlsRef.current = null; };
     } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
@@ -146,7 +199,6 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false, durationS
     if (!v) return;
 
     if (url.includes('/nas/transcode')) {
-      // Restart stream from seek position
       setSeekOffset(seekTo);
       setCurrentTime(0);
       setBuffering(true);
@@ -154,10 +206,51 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false, durationS
       v.src = resolveUrl(url, seekTo);
       v.play().catch(() => {});
     } else {
-      // Native seek (HLS or direct file)
       v.currentTime = ratio * (videoDuration || totalDuration);
     }
   };
+
+  const handleAudioTrackChange = (trackIndex: number) => {
+    setActiveAudio(trackIndex);
+    setShowAudioMenu(false);
+    const hls = hlsRef.current;
+    const v = videoRef.current;
+    if (!hls || !v) return;
+
+    if (sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken && jellyfinItemId) {
+      // Jellyfin: rebuild URL with AudioStreamIndex and reload hls
+      const newUrl = buildJellyfinUrlWithAudio(resolveUrl(url), trackIndex);
+      const token = localStorage.getItem('accessToken');
+      hls.destroy();
+      const newHls = new Hls({
+        enableWorker: true,
+        xhrSetup: (xhr) => { if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`); },
+      });
+      hlsRef.current = newHls;
+      newHls.loadSource(newUrl);
+      newHls.attachMedia(v);
+      newHls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => {}); });
+    } else {
+      // Native HLS multi-track
+      if (hls.audioTracks && hls.audioTracks.length > trackIndex) {
+        hls.audioTrack = trackIndex;
+      }
+    }
+  };
+
+  const handleSubtitleChange = (trackIndex: number) => {
+    setActiveSubtitle(trackIndex);
+    setShowSubMenu(false);
+    const v = videoRef.current;
+    if (!v) return;
+    for (let i = 0; i < v.textTracks.length; i++) {
+      v.textTracks[i].mode = i === trackIndex ? 'showing' : 'disabled';
+    }
+  };
+
+  const audioTracks = tracks?.audio ?? [];
+  const subtitleTracks = tracks?.subtitles ?? [];
+  const activeAudioLabel = audioTracks[activeAudio]?.language?.slice(0, 2).toUpperCase() ?? null;
 
   const videoSrc = isHls ? undefined : resolveUrl(url, 0);
 
@@ -182,7 +275,7 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false, durationS
           onWaiting={() => setBuffering(true)}
           onCanPlay={() => setBuffering(false)}
           onLoadedData={() => setBuffering(false)}
-          onError={() => setError('Impossible de lire la vidéo. Vérifiez que le NAS est accessible et que le format est supporté par votre navigateur.')}
+          onError={() => setError('Impossible de lire la vidéo. Vérifiez que la source est accessible et que le format est supporté.')}
         />
 
         {/* Click to play/pause */}
@@ -297,6 +390,65 @@ export function VideoPlayerModal({ url, title, onClose, isHls = false, durationS
               </span>
 
               <div className="flex-1" />
+
+              {/* Audio track selector */}
+              {audioTracks.length > 1 && (
+                <div className="relative" data-audio-menu>
+                  <button
+                    onClick={() => { setShowAudioMenu(v => !v); setShowSubMenu(false); }}
+                    className="flex items-center gap-1 text-white hover:scale-110 transition-transform"
+                    aria-label="Pistes audio"
+                  >
+                    <Headphones className="w-5 h-5" />
+                    {activeAudioLabel && <span className="text-xs font-medium">{activeAudioLabel}</span>}
+                  </button>
+                  {showAudioMenu && (
+                    <div className="absolute bottom-8 right-0 bg-zinc-900/95 border border-zinc-700 rounded-lg py-1 min-w-[160px] shadow-xl">
+                      {audioTracks.map((track, i) => (
+                        <button
+                          key={i}
+                          onClick={() => handleAudioTrackChange(i)}
+                          className={`w-full text-left px-3 py-2 text-sm hover:bg-zinc-700 transition-colors ${activeAudio === i ? 'text-[#e50914] font-medium' : 'text-zinc-200'}`}
+                        >
+                          {track.title} {track.codec ? `(${track.codec})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Subtitle selector */}
+              {subtitleTracks.length > 0 && (
+                <div className="relative" data-sub-menu>
+                  <button
+                    onClick={() => { setShowSubMenu(v => !v); setShowAudioMenu(false); }}
+                    className={`flex items-center gap-1 hover:scale-110 transition-transform ${activeSubtitle >= 0 ? 'text-[#e50914]' : 'text-white'}`}
+                    aria-label="Sous-titres"
+                  >
+                    <Subtitles className="w-5 h-5" />
+                  </button>
+                  {showSubMenu && (
+                    <div className="absolute bottom-8 right-0 bg-zinc-900/95 border border-zinc-700 rounded-lg py-1 min-w-[160px] shadow-xl">
+                      <button
+                        onClick={() => handleSubtitleChange(-1)}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-zinc-700 transition-colors ${activeSubtitle === -1 ? 'text-[#e50914] font-medium' : 'text-zinc-200'}`}
+                      >
+                        Désactivés
+                      </button>
+                      {subtitleTracks.map((track, i) => (
+                        <button
+                          key={i}
+                          onClick={() => handleSubtitleChange(i)}
+                          className={`w-full text-left px-3 py-2 text-sm hover:bg-zinc-700 transition-colors ${activeSubtitle === i ? 'text-[#e50914] font-medium' : 'text-zinc-200'}`}
+                        >
+                          {track.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Fullscreen */}
               <button

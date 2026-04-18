@@ -27,9 +27,9 @@ export class CineClubsService {
   }
 
   /** Masque les secrets sensibles — jamais exposés côté API */
-  private sanitize(club: Parameters<typeof Object.assign>[0] & { webhookSecret?: string | null; freeboxAppToken?: string | null }) {
-    const { webhookSecret, freeboxAppToken, ...rest } = club;
-    return { ...rest, webhookSecretSet: !!webhookSecret, freeboxAppTokenSet: !!freeboxAppToken };
+  private sanitize(club: Parameters<typeof Object.assign>[0] & { webhookSecret?: string | null; freeboxAppToken?: string | null; jellyfinApiToken?: string | null }) {
+    const { webhookSecret, freeboxAppToken, jellyfinApiToken, ...rest } = club;
+    return { ...rest, webhookSecretSet: !!webhookSecret, freeboxAppTokenSet: !!freeboxAppToken, jellyfinApiTokenSet: !!jellyfinApiToken };
   }
 
   async create(data: { name: string; slug: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {

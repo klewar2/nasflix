@@ -1,10 +1,11 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef, BadRequestException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { basename } from 'node:path';
 import { PrismaService } from '../common/prisma.service';
 import { NasService } from '../nas/nas.service';
 import { MetadataService, TmdbSearchResult } from '../metadata/metadata.service';
-import { MediaType, SyncStatus } from '@prisma/client';
+import { MediaType, SourceType, SyncStatus } from '@prisma/client';
 import { parseMediaFilename, ParsedMediaInfo } from '../common/media-parser';
 import { METADATA_SYNC_QUEUE } from './sync.constants';
 import { SyncGateway } from './sync.gateway';
@@ -693,6 +694,101 @@ export class SyncService {
           airDate: s.air_date ? new Date(s.air_date) : null,
         },
       });
+    }
+  }
+
+  async syncFromJellyfin(cineClubId: number): Promise<object> {
+    const club = await this.prisma.cineClub.findUniqueOrThrow({ where: { id: cineClubId } });
+    if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) {
+      throw new BadRequestException('Jellyfin non configuré pour ce CineClub');
+    }
+
+    const syncLog = await this.prisma.syncLog.create({
+      data: { cineClubId, type: 'jellyfin_sync', status: 'running', triggeredBy: 'manual' },
+    });
+
+    let processedItems = 0;
+    let errorCount = 0;
+    const errors: string[] = [];
+
+    try {
+      const [movies, episodes] = await Promise.all([
+        this.nasService.getJellyfinItems(club.jellyfinBaseUrl, club.jellyfinApiToken, 'Movie'),
+        this.nasService.getJellyfinItems(club.jellyfinBaseUrl, club.jellyfinApiToken, 'Episode'),
+      ]);
+
+      this.logger.log(`[Jellyfin sync] ${movies.length} films, ${episodes.length} épisodes`);
+
+      for (const item of movies) {
+        try {
+          const filePath = item.Path;
+          const filename = basename(filePath);
+          const runtime = item.RunTimeTicks ? Math.round(item.RunTimeTicks / 600_000_000) : null;
+
+          const existing = await this.prisma.media.findUnique({
+            where: { cineClubId_nasPath: { cineClubId, nasPath: filePath } },
+          });
+
+          if (existing) {
+            await this.prisma.media.update({
+              where: { id: existing.id },
+              data: { jellyfinItemId: item.Id, sourceType: SourceType.SEEDBOX, ...(runtime ? { runtime } : {}) },
+            });
+          } else {
+            const parsed = parseMediaFilename(filename);
+            await this.prisma.media.create({
+              data: {
+                cineClubId,
+                type: MediaType.MOVIE,
+                titleOriginal: item.Name || parsed.title || filename,
+                nasPath: filePath,
+                nasFilename: filename,
+                sourceType: SourceType.SEEDBOX,
+                jellyfinItemId: item.Id,
+                runtime,
+                syncStatus: SyncStatus.PENDING,
+              },
+            });
+          }
+          processedItems++;
+        } catch (err) {
+          errorCount++;
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${item.Name}: ${msg}`);
+          this.logger.error(`[Jellyfin sync] Error processing movie "${item.Name}": ${msg}`);
+        }
+      }
+
+      // Enqueue metadata sync for new PENDING items
+      const queued = await this.enqueuePendingMetadata(cineClubId);
+
+      await this.prisma.syncLog.update({
+        where: { id: syncLog.id },
+        data: {
+          status: 'completed',
+          totalItems: movies.length + episodes.length,
+          processedItems,
+          errorCount,
+          errorDetails: errors.length > 0 ? JSON.stringify(errors) : null,
+          completedAt: new Date(),
+        },
+      });
+
+      return {
+        message: 'Sync Jellyfin terminée',
+        movies: movies.length,
+        episodes: episodes.length,
+        processed: processedItems,
+        errors: errorCount,
+        metadataQueued: queued,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.prisma.syncLog.update({
+        where: { id: syncLog.id },
+        data: { status: 'failed', errorDetails: msg, completedAt: new Date() },
+      });
+      throw err;
     }
   }
 

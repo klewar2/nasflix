@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
@@ -340,24 +340,45 @@ export class NasService {
     cineClubId: number,
     mode: 'stream' | 'download',
     audioTrack = 1,
-  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean }> {
+  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
     const [member, media, club] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } }),
       this.prisma.cineClub.findUnique({ where: { id: cineClubId } }),
     ]);
 
-    if (!member?.nasUsername || !member?.nasPassword) {
-      throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
-    }
     if (!media?.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
-    if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
+    if (!club) throw new BadRequestException('CineClub introuvable');
 
     const durationSeconds = (media.runtime ?? 0) * 60;
 
+    // ── Source SEEDBOX → Jellyfin ─────────────────────────────────────────────
+    if (media.sourceType === 'SEEDBOX') {
+      if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) {
+        throw new BadRequestException('Jellyfin non configuré pour ce CineClub');
+      }
+      if (!media.jellyfinItemId) {
+        throw new NotFoundException('jellyfinItemId manquant sur ce média');
+      }
+      if (mode === 'download') {
+        const base = club.jellyfinBaseUrl.replace(/\/$/, '');
+        const downloadUrl = `${base}/Items/${media.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
+        return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
+      }
+      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId);
+      this.logger.log(`[Stream #${mediaId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
+      return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: media.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
+    }
+    // ── FIN branchement SEEDBOX ───────────────────────────────────────────────
+
+    if (!member?.nasUsername || !member?.nasPassword) {
+      throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
+    }
+    if (!club.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
+
     if (mode === 'stream') {
       try {
-        const vsSession = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword, 'VideoStation');
+        const vsSession = await this.login(club.nasBaseUrl!, member.nasUsername, member.nasPassword, 'VideoStation');
         this.logger.debug(`[Stream #${mediaId}] VideoStation login OK (sid=${vsSession.sid.slice(0, 8)}…)`);
 
         const { title: pttTitle } = parseMediaFilename(media.nasFilename);
@@ -381,11 +402,11 @@ export class NasService {
       }
     }
 
-    const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    const session = await this.getFileStationSession(club.nasBaseUrl!, member.nasUsername, member.nasPassword);
     const fsMode = mode === 'download' ? 'download' : 'stream';
     return {
       // stream → mode=open (lecture / transcode) ; download → mode=download (fichier brut, cf. getMediaFileUrl)
-      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, fsMode),
+      nasUrl: this.buildFileStationUrl(club.nasBaseUrl!, media.nasPath, session.sid, fsMode),
       durationSeconds,
       isHls: false,
     };
@@ -397,24 +418,46 @@ export class NasService {
     cineClubId: number,
     mode: 'stream' | 'download',
     audioTrack = 1,
-  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean }> {
+  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
     const [member, episode] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.episode.findFirst({
         where: { id: episodeId, season: { media: { cineClubId } } },
-        select: { nasPath: true, nasFilename: true, runtime: true, season: { select: { media: { select: { titleVf: true, titleOriginal: true } } } } },
+        select: { nasPath: true, nasFilename: true, runtime: true, sourceType: true, jellyfinItemId: true, season: { select: { media: { select: { titleVf: true, titleOriginal: true } } } } },
       }),
     ]);
+
+    if (!episode) throw new NotFoundException('Épisode introuvable');
+
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club) throw new BadRequestException('CineClub introuvable');
+
+    const durationSeconds = (episode.runtime ?? 0) * 60;
+
+    // ── Source SEEDBOX → Jellyfin ─────────────────────────────────────────────
+    if (episode.sourceType === 'SEEDBOX') {
+      if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) {
+        throw new BadRequestException('Jellyfin non configuré pour ce CineClub');
+      }
+      if (!episode.jellyfinItemId) {
+        throw new NotFoundException('jellyfinItemId manquant sur cet épisode');
+      }
+      if (mode === 'download') {
+        const base = club.jellyfinBaseUrl.replace(/\/$/, '');
+        const downloadUrl = `${base}/Items/${episode.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
+        return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
+      }
+      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId);
+      this.logger.log(`[Stream ep#${episodeId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
+      return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: episode.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
+    }
+    // ── FIN branchement SEEDBOX ───────────────────────────────────────────────
 
     if (!member?.nasUsername || !member?.nasPassword) {
       throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
     }
-    if (!episode?.nasPath) throw new NotFoundException('Fichier épisode introuvable sur le NAS');
-
-    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
-    if (!club?.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
-
-    const durationSeconds = (episode.runtime ?? 0) * 60;
+    if (!episode.nasPath) throw new NotFoundException('Fichier épisode introuvable sur le NAS');
+    if (!club.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
 
     if (mode === 'stream') {
       try {
@@ -903,6 +946,147 @@ export class NasService {
       und: 'Indéfini',
     };
     return map[code.toLowerCase()] || code.toUpperCase();
+  }
+
+  // ── Jellyfin / Seedbox ────────────────────────────────────────────────────────
+
+  private buildJellyfinStreamUrl(
+    jellyfinBaseUrl: string,
+    jellyfinApiToken: string,
+    jellyfinItemId: string,
+  ): string {
+    const base = jellyfinBaseUrl.replace(/\/$/, '');
+    const params = new URLSearchParams({
+      api_key: jellyfinApiToken,
+      VideoCodec: 'copy',
+      AudioCodec: 'copy',
+      Container: 'ts',
+      TranscodingContainer: 'ts',
+      SegmentContainer: 'ts',
+      MinSegments: '1',
+      DeviceId: 'nasflix',
+      static: 'false',
+    });
+    return `${base}/Videos/${jellyfinItemId}/master.m3u8?${params.toString()}`;
+  }
+
+  async getJellyfinPlaybackInfo(
+    jellyfinBaseUrl: string,
+    jellyfinApiToken: string,
+    jellyfinItemId: string,
+  ): Promise<MediaTracks> {
+    const base = jellyfinBaseUrl.replace(/\/$/, '');
+    const url = `${base}/Items/${jellyfinItemId}/PlaybackInfo?api_key=${jellyfinApiToken}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return { audio: [], subtitles: [] };
+
+    const data = await res.json() as {
+      MediaSources?: Array<{
+        MediaStreams?: Array<{
+          Type: string;
+          Index: number;
+          Language?: string;
+          DisplayTitle?: string;
+          Codec?: string;
+          Channels?: number;
+          IsDefault?: boolean;
+        }>;
+      }>;
+    };
+
+    const streams = data.MediaSources?.[0]?.MediaStreams ?? [];
+
+    const audio: AudioTrackInfo[] = streams
+      .filter(s => s.Type === 'Audio')
+      .map((s, i) => ({
+        index: i,
+        language: s.Language || 'und',
+        title: s.DisplayTitle || s.Language || `Piste ${i + 1}`,
+        codec: s.Codec?.toUpperCase() || '',
+        channels: s.Channels || 2,
+      }));
+
+    const subtitles: SubtitleTrackInfo[] = streams
+      .filter(s => s.Type === 'Subtitle')
+      .map((s, i) => ({
+        index: i,
+        language: s.Language || 'und',
+        title: s.DisplayTitle || s.Language || `Sous-titre ${i + 1}`,
+        codec: s.Codec?.toUpperCase() || '',
+      }));
+
+    return { audio, subtitles };
+  }
+
+  async getJellyfinItems(
+    jellyfinBaseUrl: string,
+    jellyfinApiToken: string,
+    mediaType: 'Movie' | 'Episode',
+  ): Promise<Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeasonName?: string; IndexNumber?: number; ParentIndexNumber?: number }>> {
+    const base = jellyfinBaseUrl.replace(/\/$/, '');
+    const url = `${base}/Items?IncludeItemTypes=${mediaType}&Recursive=true&Fields=Path,RunTimeTicks,SeriesName,SeasonName,IndexNumber,ParentIndexNumber&api_key=${jellyfinApiToken}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`Jellyfin Items API erreur ${res.status}`);
+    const data = await res.json() as { Items: Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeasonName?: string; IndexNumber?: number; ParentIndexNumber?: number }> };
+    return data.Items ?? [];
+  }
+
+  async checkJellyfinStatus(cineClubId: number): Promise<{ online: boolean; version?: string; serverName?: string }> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.jellyfinBaseUrl || !club?.jellyfinApiToken) return { online: false };
+    try {
+      const base = club.jellyfinBaseUrl.replace(/\/$/, '');
+      const res = await fetch(`${base}/System/Info?api_key=${club.jellyfinApiToken}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return { online: false };
+      const data = await res.json() as { Version?: string; ServerName?: string };
+      return { online: true, version: data.Version, serverName: data.ServerName };
+    } catch {
+      return { online: false };
+    }
+  }
+
+  async saveJellyfinConfig(cineClubId: number, jellyfinBaseUrl: string, jellyfinApiToken: string): Promise<void> {
+    await this.prisma.cineClub.update({
+      where: { id: cineClubId },
+      data: { jellyfinBaseUrl, jellyfinApiToken },
+    });
+  }
+
+  async getJellyfinConfigForClub(cineClubId: number): Promise<{ jellyfinBaseUrl: string | null; jellyfinApiToken: string | null }> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId }, select: { jellyfinBaseUrl: true, jellyfinApiToken: true } });
+    if (!club) throw new ForbiddenException('CineClub introuvable');
+    return { jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
+  }
+
+  async getMediaTracksForJellyfin(
+    mediaId: number,
+    cineClubId: number,
+  ): Promise<MediaTracks | null> {
+    const [media, club] = await Promise.all([
+      this.prisma.media.findFirst({ where: { id: mediaId, cineClubId }, select: { sourceType: true, jellyfinItemId: true } }),
+      this.prisma.cineClub.findUnique({ where: { id: cineClubId }, select: { jellyfinBaseUrl: true, jellyfinApiToken: true } }),
+    ]);
+    if (!media || media.sourceType !== 'SEEDBOX' || !media.jellyfinItemId || !club?.jellyfinBaseUrl || !club?.jellyfinApiToken) {
+      return null;
+    }
+    return this.getJellyfinPlaybackInfo(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId);
+  }
+
+  async getEpisodeTracksForJellyfin(
+    episodeId: number,
+    cineClubId: number,
+  ): Promise<MediaTracks | null> {
+    const episode = await this.prisma.episode.findFirst({
+      where: { id: episodeId, season: { media: { cineClubId } } },
+      select: { sourceType: true, jellyfinItemId: true, season: { select: { media: { select: { cineClubId: true } } } } },
+    });
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId }, select: { jellyfinBaseUrl: true, jellyfinApiToken: true } });
+    if (!episode || episode.sourceType !== 'SEEDBOX' || !episode.jellyfinItemId || !club?.jellyfinBaseUrl || !club?.jellyfinApiToken) {
+      return null;
+    }
+    return this.getJellyfinPlaybackInfo(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId);
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {

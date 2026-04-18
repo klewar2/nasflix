@@ -25,6 +25,11 @@ enum MemberRole {
   VIEWER
 }
 
+enum SourceType {
+  NAS
+  SEEDBOX
+}
+
 model User {
   id           Int              @id @default(autoincrement())
   username     String           @unique
@@ -51,6 +56,8 @@ model CineClub {
   nasWolPort       Int?
   freeboxApiUrl    String?
   freeboxAppToken  String?
+  jellyfinBaseUrl  String?
+  jellyfinApiToken String?
   lastOnlineAt     DateTime?
   lastSyncAt       DateTime?
   createdAt        DateTime         @default(now())
@@ -97,6 +104,8 @@ model Media {
   releaseYear   Int?
   runtime       Int?
   voteAverage   Float?
+  sourceType    SourceType    @default(NAS)
+  jellyfinItemId String?
   syncStatus    SyncStatus    @default(PENDING)
   lastSyncedAt  DateTime?
   syncError     String?
@@ -179,6 +188,8 @@ model Episode {
   nasPath       String?   @unique
   nasFilename   String?
   nasSize       BigInt?
+  sourceType    SourceType @default(NAS)
+  jellyfinItemId String?
   seasonId      Int
   season        Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
 

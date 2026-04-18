@@ -13,6 +13,10 @@ interface Props {
   tracks?: MediaTracks;
   mediaId: number;
   episodeId?: number;
+  sourceType?: 'NAS' | 'SEEDBOX';
+  jellyfinItemId?: string;
+  jellyfinBaseUrl?: string;
+  jellyfinApiToken?: string;
   onBack: () => void;
 }
 
@@ -53,7 +57,7 @@ function langName(code: string): string {
 
 type TrackSection = 'audio' | 'subtitle';
 
-export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks, mediaId, episodeId, onBack }: Props) {
+export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks, mediaId, episodeId, sourceType, onBack }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const saveTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -376,6 +380,28 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       if (hlsAudioTracks.length > 1) {
         // Manifest has multiple tracks → switch via hls.js (no stream reload)
         hlsRef.current.audioTrack = index;
+      } else if (sourceType === 'SEEDBOX') {
+        // Jellyfin: rebuild URL with AudioStreamIndex=N
+        const savedTime = video.currentTime;
+        try {
+          const newUrl = (() => {
+            try {
+              const u = new URL(url);
+              u.searchParams.set('AudioStreamIndex', String(index));
+              return u.toString();
+            } catch { return url; }
+          })();
+          hlsRef.current.destroy();
+          const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+          hlsRef.current = hls;
+          hls.loadSource(newUrl);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.currentTime = savedTime;
+            video.play().catch(() => {});
+          });
+          setActiveAudio(index);
+        } catch { /* ignore */ }
       } else {
         // Single track in manifest → re-request stream with different audio track
         // VideoStation audio tracks are 1-indexed
