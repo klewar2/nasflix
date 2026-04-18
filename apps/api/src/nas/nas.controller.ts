@@ -70,7 +70,7 @@ export class NasController {
       } else {
         try { absUrl = new URL(trimmed, manifestUrl).toString(); } catch { return line; }
       }
-      return `/nas/jellyfin-seg?t=${token}&src=${Buffer.from(absUrl).toString('base64url')}`;
+      return `/api/nas/jellyfin-seg?t=${token}&src=${Buffer.from(absUrl).toString('base64url')}`;
     }).join('\n');
   }
 
@@ -273,7 +273,7 @@ export class NasController {
     if (mode === 'stream') {
       if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken) {
         const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
-        return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+        return { url: `/api/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
@@ -306,7 +306,7 @@ export class NasController {
     if (mode === 'stream') {
       if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken) {
         const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
-        return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+        return { url: `/api/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
