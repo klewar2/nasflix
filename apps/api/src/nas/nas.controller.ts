@@ -29,6 +29,51 @@ export class NasController {
     return this.configService.get<string>('JWT_SECRET', 'fallback-secret');
   }
 
+  // ── Jellyfin proxy tokens ──────────────────────────────────────────────────
+
+  /** Signs a short-lived token embedding Jellyfin connection details for the public HLS proxy. */
+  private signJellyfinProxyToken(jellyfinBaseUrl: string, jellyfinApiToken: string, jellyfinItemId: string, durationSeconds: number): string {
+    const exp = Math.floor(Date.now() / 1000) + 4 * 3600;
+    const payload = Buffer.from(
+      JSON.stringify({ base: jellyfinBaseUrl, key: jellyfinApiToken, item: jellyfinItemId, duration: durationSeconds, exp }),
+    ).toString('base64url');
+    const sig = createHmac('sha256', this.tokenSecret).update(payload).digest('base64url');
+    return `${payload}.${sig}`;
+  }
+
+  private verifyJellyfinProxyToken(token: string): { base: string; key: string; item: string; duration: number } | null {
+    const dot = token.lastIndexOf('.');
+    if (dot < 0) return null;
+    const payload = token.slice(0, dot);
+    const sig = token.slice(dot + 1);
+    const expected = createHmac('sha256', this.tokenSecret).update(payload).digest('base64url');
+    try {
+      if (!timingSafeEqual(Buffer.from(sig, 'base64url'), Buffer.from(expected, 'base64url'))) return null;
+    } catch { return null; }
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
+      base: string; key: string; item: string; duration: number; exp: number;
+    };
+    if (data.exp < Math.floor(Date.now() / 1000)) return null;
+    return data;
+  }
+
+  /** Rewrites all non-comment HLS lines to go through /nas/jellyfin-seg, resolving relative URLs using manifestUrl as base. */
+  private rewriteJellyfinManifest(manifest: string, manifestUrl: string, jellyfinOrigin: string, token: string): string {
+    return manifest.split('\n').map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return line;
+      let absUrl: string;
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        absUrl = trimmed;
+      } else if (trimmed.startsWith('/')) {
+        absUrl = `${jellyfinOrigin}${trimmed}`;
+      } else {
+        try { absUrl = new URL(trimmed, manifestUrl).toString(); } catch { return line; }
+      }
+      return `/nas/jellyfin-seg?t=${token}&src=${Buffer.from(absUrl).toString('base64url')}`;
+    }).join('\n');
+  }
+
   private signTranscodeToken(nasUrl: string, durationSeconds: number): string {
     const exp = Math.floor(Date.now() / 1000) + 4 * 3600; // 4 hours
     const payload = Buffer.from(JSON.stringify({ url: nasUrl, duration: durationSeconds, exp })).toString('base64url');
@@ -226,6 +271,10 @@ export class NasController {
     }
     this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
+      if (isHls && sourceType === 'SEEDBOX' && jellyfinItemId && jellyfinBaseUrl && jellyfinApiToken) {
+        const t = this.signJellyfinProxyToken(jellyfinBaseUrl, jellyfinApiToken, jellyfinItemId, durationSeconds);
+        return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+      }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
@@ -255,12 +304,124 @@ export class NasController {
     }
     this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
+      if (isHls && sourceType === 'SEEDBOX' && jellyfinItemId && jellyfinBaseUrl && jellyfinApiToken) {
+        const t = this.signJellyfinProxyToken(jellyfinBaseUrl, jellyfinApiToken, jellyfinItemId, durationSeconds);
+        return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+      }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     // download : Jellyfin direct (certificat valide), NAS via proxy Railway
     if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds };
     return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
+  }
+
+  // ── Jellyfin HLS proxy (CORS bypass) ─────────────────────────────────────
+
+  @Get('jellyfin-stream')
+  @Public()
+  async jellyfinStream(
+    @Query('t') token: string,
+    @Query('AudioStreamIndex') audioStreamIndex: string = '1',
+    @Res() res: Response,
+  ) {
+    const data = this.verifyJellyfinProxyToken(token);
+    if (!data) { res.status(403).end(); return; }
+
+    const base = data.base.replace(/\/$/, '');
+    const params = new URLSearchParams({
+      api_key: data.key,
+      VideoCodec: 'copy',
+      AudioCodec: 'copy',
+      Container: 'ts',
+      TranscodingContainer: 'ts',
+      SegmentContainer: 'ts',
+      MinSegments: '1',
+      DeviceId: 'nasflix',
+      static: 'false',
+      AudioStreamIndex: audioStreamIndex,
+    });
+    const manifestUrl = `${base}/Videos/${data.item}/master.m3u8?${params.toString()}`;
+
+    try {
+      const manifestRes = await fetch(manifestUrl, { signal: AbortSignal.timeout(15000) });
+      if (!manifestRes.ok) {
+        this.logger.warn(`[jellyfin-stream] Jellyfin returned ${manifestRes.status} for ${manifestUrl.slice(0, 80)}`);
+        res.status(502).end(); return;
+      }
+      const jellyfinOrigin = new URL(base).origin;
+      const manifest = await manifestRes.text();
+      const rewritten = this.rewriteJellyfinManifest(manifest, manifestUrl, jellyfinOrigin, token);
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.send(rewritten);
+    } catch (err) {
+      this.logger.error(`[jellyfin-stream] ${err}`);
+      if (!res.headersSent) res.status(502).end();
+    }
+  }
+
+  @Get('jellyfin-seg')
+  @Public()
+  async jellyfinSegment(
+    @Query('t') token: string,
+    @Query('src') src: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const data = this.verifyJellyfinProxyToken(token);
+    if (!data) { res.status(403).end(); return; }
+
+    let segUrl: string;
+    try { segUrl = Buffer.from(src, 'base64url').toString('utf-8'); } catch { res.status(400).end(); return; }
+
+    // Security: only proxy URLs from the authorised Jellyfin server
+    const jellyfinOrigin = new URL(data.base).origin;
+    if (!segUrl.startsWith(jellyfinOrigin)) { res.status(403).end(); return; }
+
+    // Ensure api_key is present
+    const segWithAuth = segUrl.includes('api_key=')
+      ? segUrl
+      : `${segUrl}${segUrl.includes('?') ? '&' : '?'}api_key=${data.key}`;
+
+    const reqHeaders: Record<string, string> = {};
+    const rangeHeader = (req.headers as Record<string, string>)['range'];
+    if (rangeHeader) reqHeaders['Range'] = rangeHeader;
+
+    try {
+      const segRes = await fetch(segWithAuth, { headers: reqHeaders, signal: AbortSignal.timeout(30000) });
+      if (!segRes.ok) { res.status(502).end(); return; }
+
+      const contentType = segRes.headers.get('content-type') || '';
+      const isManifest = contentType.includes('mpegurl') || segUrl.includes('.m3u8');
+
+      if (isManifest) {
+        // Recursively rewrite sub-manifest URLs too
+        const manifest = await segRes.text();
+        const rewritten = this.rewriteJellyfinManifest(manifest, segWithAuth, jellyfinOrigin, token);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(rewritten);
+        return;
+      }
+
+      // Binary segment — pipe through
+      res.status(segRes.status);
+      if (contentType) res.setHeader('Content-Type', contentType);
+      const cl = segRes.headers.get('content-length');
+      if (cl) res.setHeader('Content-Length', cl);
+      const cr = segRes.headers.get('content-range');
+      if (cr) res.setHeader('Content-Range', cr);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      const { Readable } = await import('node:stream');
+      Readable.fromWeb(segRes.body as Parameters<typeof Readable.fromWeb>[0]).pipe(res);
+    } catch (err) {
+      this.logger.error(`[jellyfin-seg] ${err}`);
+      if (!res.headersSent) res.status(502).end();
+    }
   }
 
   // ── FileStation proxy (TV passthrough + download, bypass NAS SSL cert) ────
