@@ -759,6 +759,98 @@ export class SyncService {
         }
       }
 
+      // ── Series / Episodes ─────────────────────────────────────────────
+      // Group episodes by SeriesId to upsert one Media(SERIES) per show
+      const seriesMap = new Map<string, Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeriesId?: string; IndexNumber?: number; ParentIndexNumber?: number }>>();
+      for (const ep of episodes) {
+        if (!ep.SeriesId) continue;
+        if (!seriesMap.has(ep.SeriesId)) seriesMap.set(ep.SeriesId, []);
+        seriesMap.get(ep.SeriesId)!.push(ep);
+      }
+
+      for (const [seriesId, seriesEpisodes] of seriesMap) {
+        const seriesName = seriesEpisodes[0].SeriesName ?? 'Unknown';
+        // Stable synthetic path so we can find/update across syncs
+        const syntheticPath = `jellyfin://${seriesId}`;
+
+        try {
+          let seriesMedia = await this.prisma.media.findUnique({
+            where: { cineClubId_nasPath: { cineClubId, nasPath: syntheticPath } },
+          });
+
+          if (!seriesMedia) {
+            seriesMedia = await this.prisma.media.create({
+              data: {
+                cineClubId,
+                type: MediaType.SERIES,
+                titleOriginal: seriesName,
+                nasPath: syntheticPath,
+                nasFilename: seriesName,
+                sourceType: SourceType.SEEDBOX,
+                jellyfinItemId: seriesId,
+                syncStatus: SyncStatus.PENDING,
+              },
+            });
+          } else {
+            await this.prisma.media.update({
+              where: { id: seriesMedia.id },
+              data: { sourceType: SourceType.SEEDBOX, jellyfinItemId: seriesId },
+            });
+          }
+
+          for (const ep of seriesEpisodes) {
+            try {
+              const seasonNumber = ep.ParentIndexNumber ?? 1;
+              const episodeNumber = ep.IndexNumber ?? 1;
+              const runtime = ep.RunTimeTicks ? Math.round(ep.RunTimeTicks / 600_000_000) : null;
+              const epFilename = ep.Path ? basename(ep.Path) : ep.Name;
+
+              // Find or create season
+              let season = await this.prisma.season.findUnique({
+                where: { mediaId_seasonNumber: { mediaId: seriesMedia.id, seasonNumber } },
+              });
+              if (!season) {
+                season = await this.prisma.season.create({
+                  data: { mediaId: seriesMedia.id, seasonNumber, name: `Saison ${seasonNumber}` },
+                });
+              }
+
+              // Upsert episode by (seasonId, episodeNumber)
+              await this.prisma.episode.upsert({
+                where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber } },
+                create: {
+                  seasonId: season.id,
+                  episodeNumber,
+                  name: ep.Name,
+                  nasPath: ep.Path || null,
+                  nasFilename: epFilename,
+                  sourceType: SourceType.SEEDBOX,
+                  jellyfinItemId: ep.Id,
+                  runtime,
+                },
+                update: {
+                  nasPath: ep.Path || undefined,
+                  nasFilename: epFilename,
+                  sourceType: SourceType.SEEDBOX,
+                  jellyfinItemId: ep.Id,
+                  ...(runtime ? { runtime } : {}),
+                },
+              });
+              processedItems++;
+            } catch (epErr) {
+              errorCount++;
+              const msg = epErr instanceof Error ? epErr.message : String(epErr);
+              errors.push(`${seriesName} S${ep.ParentIndexNumber ?? 1}E${ep.IndexNumber ?? 1}: ${msg}`);
+            }
+          }
+        } catch (seriesErr) {
+          errorCount++;
+          const msg = seriesErr instanceof Error ? seriesErr.message : String(seriesErr);
+          errors.push(`Series "${seriesName}": ${msg}`);
+          this.logger.error(`[Jellyfin sync] Error processing series "${seriesName}": ${msg}`);
+        }
+      }
+
       // Enqueue metadata sync for new PENDING items
       const queued = await this.enqueuePendingMetadata(cineClubId);
 

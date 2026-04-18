@@ -17,18 +17,39 @@ const navItems = [
 
 function JellyfinStatusBadge() {
   const { cineClub } = useAuth();
-  const { data } = useQuery({
+  const { data: statusData } = useQuery({
     queryKey: ['jellyfin-status'],
     queryFn: () => api.getJellyfinStatus(),
     enabled: !!cineClub?.jellyfinApiTokenSet,
     refetchInterval: 60_000,
     staleTime: 50_000,
   });
+  const { data: logsData } = useQuery({
+    queryKey: ['sync-logs-sidebar'],
+    queryFn: () => api.getSyncLogs(1),
+    enabled: !!cineClub?.jellyfinApiTokenSet,
+    refetchInterval: 60_000,
+    staleTime: 50_000,
+  });
+
   if (!cineClub?.jellyfinApiTokenSet) return null;
+
+  // Find the most recent completed jellyfin_sync entry
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lastSync = logsData?.data?.find((l: any) => l.type === 'jellyfin_sync' && l.status === 'completed');
+  const lastSyncTime = lastSync?.completedAt
+    ? new Date(lastSync.completedAt).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : null;
+
   return (
-    <div className="px-3 py-1.5 flex items-center gap-2 text-xs text-zinc-500">
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${data?.online ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
-      <span className="truncate">Jellyfin {data?.online ? 'en ligne' : 'hors ligne'}</span>
+    <div className="px-3 py-1.5 flex flex-col gap-0.5 text-xs text-zinc-500">
+      <div className="flex items-center gap-2">
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusData?.online ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+        <span className="truncate">Jellyfin {statusData?.online ? 'en ligne' : 'hors ligne'}</span>
+      </div>
+      {lastSyncTime && (
+        <span className="pl-3.5 text-zinc-600 truncate">Sync {lastSyncTime}</span>
+      )}
     </div>
   );
 }

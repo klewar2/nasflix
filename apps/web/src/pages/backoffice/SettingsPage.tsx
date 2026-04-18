@@ -341,18 +341,36 @@ function WebhookSecretCard() {
 
 // ── Section Seedbox / Jellyfin ─────────────────────────────────────────────────
 function JellyfinCard() {
-  const { cineClub } = useAuth();
+  const { cineClub, setCineClub } = useAuth();
+  const queryClient = useQueryClient();
   const [jellyfinUrl, setJellyfinUrl] = useState(cineClub?.jellyfinBaseUrl ?? '');
   const [jellyfinToken, setJellyfinToken] = useState('');
   const [syncResult, setSyncResult] = useState<string | null>(null);
 
+  // Fetch fresh cineclub data so the form is pre-filled even after stale localStorage
+  const { data: freshClub } = useQuery({
+    queryKey: ['cineclub-fresh', cineClub?.id],
+    queryFn: () => api.getCineClub(cineClub!.id),
+    enabled: !!cineClub?.id,
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
-    if (cineClub) setJellyfinUrl(cineClub.jellyfinBaseUrl ?? '');
-  }, [cineClub]);
+    const source = freshClub ?? cineClub;
+    if (source) setJellyfinUrl(source.jellyfinBaseUrl ?? '');
+  }, [freshClub, cineClub]);
+
+  const liveClub = freshClub ?? cineClub;
 
   const saveMutation = useMutation({
     mutationFn: () => api.saveJellyfinConfig(jellyfinUrl, jellyfinToken),
-    onSuccess: () => { setJellyfinToken(''); },
+    onSuccess: async () => {
+      setJellyfinToken('');
+      // Refresh both the query cache and auth context so badge/form update immediately
+      const updated = await api.getCineClub(cineClub!.id);
+      setCineClub(updated);
+      queryClient.setQueryData(['cineclub-fresh', cineClub?.id], updated);
+    },
   });
 
   const { data: status, refetch: refetchStatus, isFetching: isCheckingStatus } = useQuery({
@@ -373,8 +391,8 @@ function JellyfinCard() {
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>Seedbox / Jellyfin</CardTitle>
-          <Badge variant={cineClub?.jellyfinApiTokenSet ? 'success' : 'secondary'}>
-            {cineClub?.jellyfinApiTokenSet ? 'Configuré' : 'Non configuré'}
+          <Badge variant={liveClub?.jellyfinApiTokenSet ? 'success' : 'secondary'}>
+            {liveClub?.jellyfinApiTokenSet ? 'Configuré' : 'Non configuré'}
           </Badge>
         </div>
       </CardHeader>
@@ -390,10 +408,10 @@ function JellyfinCard() {
         </div>
         <div>
           <label className="text-sm text-zinc-400 mb-1 block">Token API Jellyfin</label>
-          <p className="text-xs text-zinc-500 mb-1">{cineClub?.jellyfinApiTokenSet ? 'Token configuré (masqué)' : 'Aucun token'}</p>
+          <p className="text-xs text-zinc-500 mb-1">{liveClub?.jellyfinApiTokenSet ? 'Token configuré (masqué)' : 'Aucun token'}</p>
           <Input
             type="password"
-            placeholder={cineClub?.jellyfinApiTokenSet ? '••••••••••••••••' : 'Token API Jellyfin'}
+            placeholder={liveClub?.jellyfinApiTokenSet ? '••••••••••••••••' : 'Token API Jellyfin'}
             value={jellyfinToken}
             onChange={(e) => setJellyfinToken(e.target.value)}
           />
@@ -403,7 +421,7 @@ function JellyfinCard() {
           <Button
             size="sm"
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending || !jellyfinUrl || (!jellyfinToken && !cineClub?.jellyfinApiTokenSet)}
+            disabled={saveMutation.isPending || !jellyfinUrl || (!jellyfinToken && !liveClub?.jellyfinApiTokenSet)}
           >
             <Save className="w-4 h-4 mr-2" />
             {saveMutation.isPending ? 'Enregistrement...' : 'Enregistrer'}

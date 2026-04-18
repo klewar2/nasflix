@@ -963,8 +963,12 @@ export class NasService {
       DeviceId: 'nasflix',
       MediaSourceId: jellyfinItemId,
       PlaySessionId: randomUUID(),
-      VideoCodec: 'copy',
-      AudioCodec: 'copy',
+      // Force H.264 + AAC — browsers can't decode HEVC (hvc1) or Dolby audio (ec-3)
+      VideoCodec: 'h264',
+      AudioCodec: 'aac',
+      // Disable copy-passthrough so Jellyfin actually transcodes to h264/aac
+      AllowVideoStreamCopy: 'false',
+      AllowAudioStreamCopy: 'false',
       Container: 'ts',
       TranscodingContainer: 'ts',
       SegmentContainer: 'ts',
@@ -1026,12 +1030,12 @@ export class NasService {
     jellyfinBaseUrl: string,
     jellyfinApiToken: string,
     mediaType: 'Movie' | 'Episode',
-  ): Promise<Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeasonName?: string; IndexNumber?: number; ParentIndexNumber?: number }>> {
+  ): Promise<Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeriesId?: string; SeasonName?: string; IndexNumber?: number; ParentIndexNumber?: number }>> {
     const base = jellyfinBaseUrl.replace(/\/$/, '');
-    const url = `${base}/Items?IncludeItemTypes=${mediaType}&Recursive=true&Fields=Path,RunTimeTicks,SeriesName,SeasonName,IndexNumber,ParentIndexNumber&api_key=${jellyfinApiToken}`;
+    const url = `${base}/Items?IncludeItemTypes=${mediaType}&Recursive=true&Fields=Path,RunTimeTicks,SeriesName,SeriesId,SeasonName,IndexNumber,ParentIndexNumber&api_key=${jellyfinApiToken}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
     if (!res.ok) throw new Error(`Jellyfin Items API erreur ${res.status}`);
-    const data = await res.json() as { Items: Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeasonName?: string; IndexNumber?: number; ParentIndexNumber?: number }> };
+    const data = await res.json() as { Items: Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeriesId?: string; SeasonName?: string; IndexNumber?: number; ParentIndexNumber?: number }> };
     return data.Items ?? [];
   }
 
