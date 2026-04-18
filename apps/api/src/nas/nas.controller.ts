@@ -31,17 +31,17 @@ export class NasController {
 
   // ── Jellyfin proxy tokens ──────────────────────────────────────────────────
 
-  /** Signs a short-lived token embedding Jellyfin connection details for the public HLS proxy. */
-  private signJellyfinProxyToken(jellyfinBaseUrl: string, jellyfinApiToken: string, jellyfinItemId: string, durationSeconds: number): string {
+  /** Signs a short-lived token embedding the exact Jellyfin master.m3u8 URL (pre-built by NasService) + the Jellyfin origin for segment validation. */
+  private signJellyfinProxyToken(nasUrl: string, jellyfinBaseUrl: string, jellyfinApiToken: string, durationSeconds: number): string {
     const exp = Math.floor(Date.now() / 1000) + 4 * 3600;
     const payload = Buffer.from(
-      JSON.stringify({ base: jellyfinBaseUrl, key: jellyfinApiToken, item: jellyfinItemId, duration: durationSeconds, exp }),
+      JSON.stringify({ url: nasUrl, base: jellyfinBaseUrl, key: jellyfinApiToken, duration: durationSeconds, exp }),
     ).toString('base64url');
     const sig = createHmac('sha256', this.tokenSecret).update(payload).digest('base64url');
     return `${payload}.${sig}`;
   }
 
-  private verifyJellyfinProxyToken(token: string): { base: string; key: string; item: string; duration: number } | null {
+  private verifyJellyfinProxyToken(token: string): { url: string; base: string; key: string; duration: number } | null {
     const dot = token.lastIndexOf('.');
     if (dot < 0) return null;
     const payload = token.slice(0, dot);
@@ -51,7 +51,7 @@ export class NasController {
       if (!timingSafeEqual(Buffer.from(sig, 'base64url'), Buffer.from(expected, 'base64url'))) return null;
     } catch { return null; }
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
-      base: string; key: string; item: string; duration: number; exp: number;
+      url: string; base: string; key: string; duration: number; exp: number;
     };
     if (data.exp < Math.floor(Date.now() / 1000)) return null;
     return data;
@@ -271,8 +271,8 @@ export class NasController {
     }
     this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
-      if (isHls && sourceType === 'SEEDBOX' && jellyfinItemId && jellyfinBaseUrl && jellyfinApiToken) {
-        const t = this.signJellyfinProxyToken(jellyfinBaseUrl, jellyfinApiToken, jellyfinItemId, durationSeconds);
+      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken) {
+        const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
         return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
@@ -304,8 +304,8 @@ export class NasController {
     }
     this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
-      if (isHls && sourceType === 'SEEDBOX' && jellyfinItemId && jellyfinBaseUrl && jellyfinApiToken) {
-        const t = this.signJellyfinProxyToken(jellyfinBaseUrl, jellyfinApiToken, jellyfinItemId, durationSeconds);
+      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken) {
+        const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
         return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
@@ -322,26 +322,21 @@ export class NasController {
   @Public()
   async jellyfinStream(
     @Query('t') token: string,
-    @Query('AudioStreamIndex') audioStreamIndex: string = '1',
+    @Query('AudioStreamIndex') audioStreamIndex: string = '',
     @Res() res: Response,
   ) {
     const data = this.verifyJellyfinProxyToken(token);
     if (!data) { res.status(403).end(); return; }
 
-    const base = data.base.replace(/\/$/, '');
-    const params = new URLSearchParams({
-      api_key: data.key,
-      VideoCodec: 'copy',
-      AudioCodec: 'copy',
-      Container: 'ts',
-      TranscodingContainer: 'ts',
-      SegmentContainer: 'ts',
-      MinSegments: '1',
-      DeviceId: 'nasflix',
-      static: 'false',
-      AudioStreamIndex: audioStreamIndex,
-    });
-    const manifestUrl = `${base}/Videos/${data.item}/master.m3u8?${params.toString()}`;
+    // Use the exact URL pre-built by NasService; only override AudioStreamIndex when explicitly requested
+    let manifestUrl = data.url;
+    if (audioStreamIndex) {
+      try {
+        const u = new URL(manifestUrl);
+        u.searchParams.set('AudioStreamIndex', audioStreamIndex);
+        manifestUrl = u.toString();
+      } catch { /* keep original */ }
+    }
 
     try {
       const manifestRes = await fetch(manifestUrl, { signal: AbortSignal.timeout(15000) });
@@ -349,8 +344,9 @@ export class NasController {
         this.logger.warn(`[jellyfin-stream] Jellyfin returned ${manifestRes.status} for ${manifestUrl.slice(0, 80)}`);
         res.status(502).end(); return;
       }
-      const jellyfinOrigin = new URL(base).origin;
+      const jellyfinOrigin = new URL(data.base).origin;
       const manifest = await manifestRes.text();
+      this.logger.log(`[jellyfin-stream] manifest fetched (${manifest.length} chars) from ${manifestUrl.slice(0, 80)}`);
       const rewritten = this.rewriteJellyfinManifest(manifest, manifestUrl, jellyfinOrigin, token);
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.setHeader('Cache-Control', 'no-cache');
