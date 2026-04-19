@@ -343,7 +343,7 @@ export class NasController {
     }
 
     try {
-      const manifestRes = await fetch(manifestUrl, { signal: AbortSignal.timeout(15000) });
+      const manifestRes = await fetch(manifestUrl, { signal: AbortSignal.timeout(30_000) });
       if (!manifestRes.ok) {
         this.logger.warn(`[jellyfin-stream] Jellyfin returned ${manifestRes.status} for ${manifestUrl.slice(0, 80)}`);
         res.status(502).end(); return;
@@ -390,7 +390,8 @@ export class NasController {
     if (rangeHeader) reqHeaders['Range'] = rangeHeader;
 
     try {
-      const segRes = await fetch(segWithAuth, { headers: reqHeaders, signal: AbortSignal.timeout(30000) });
+      // 120s: first segment can take a long time while Jellyfin starts transcoding cold
+      const segRes = await fetch(segWithAuth, { headers: reqHeaders, signal: AbortSignal.timeout(120_000) });
       if (!segRes.ok) { res.status(502).end(); return; }
 
       const contentType = segRes.headers.get('content-type') || '';

@@ -134,6 +134,15 @@ export function VideoPlayerModal({
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
+        // Jellyfin transcodes on-demand — first segment can take 60s+ for 4K sources
+        fragLoadingTimeOut: 120_000,
+        manifestLoadingTimeOut: 30_000,
+        levelLoadingTimeOut: 30_000,
+        fragLoadingMaxRetry: 6,
+        fragLoadingRetryDelay: 2000,
+        // Start at lowest quality to avoid ABR-cancelling the first slow segment,
+        // then let ABR ramp up naturally
+        startLevel: 0,
         xhrSetup: (xhr) => { if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`); },
       });
       hlsRef.current = hls;
