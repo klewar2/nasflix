@@ -193,14 +193,16 @@ export default function MediaDetailPage() {
                     </span>
                   )}
 
-                  <button
-                    disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `play-${id}`}
-                    onClick={() => openPlayer(() => api.getStreamUrl(Number(id)), mediaTitle, `play-${id}`, { mediaId: Number(id) })}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm font-semibold transition-colors"
-                  >
-                    {loadingId === `play-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-white" />}
-                    Lire
-                  </button>
+                  {media.sourceType !== 'SEEDBOX' && (
+                    <button
+                      disabled={!nasOnline || loadingId === `play-${id}`}
+                      onClick={() => openPlayer(() => api.getStreamUrl(Number(id)), mediaTitle, `play-${id}`, { mediaId: Number(id) })}
+                      className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm font-semibold transition-colors"
+                    >
+                      {loadingId === `play-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-white" />}
+                      Lire
+                    </button>
+                  )}
 
                   <button
                     disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${id}`}
@@ -320,14 +322,16 @@ export default function MediaDetailPage() {
                                   )}
                                   {isMember && ep.nasPath && (
                                     <>
-                                      <button
-                                        disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `play-${epKey}`}
-                                        onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`, { mediaId: Number(id), episodeId: ep.id })}
-                                        className="p-1.5 rounded bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white transition-colors"
-                                        title="Lire"
-                                      >
-                                        {loadingId === `play-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white" />}
-                                      </button>
+                                      {media.sourceType !== 'SEEDBOX' && (
+                                        <button
+                                          disabled={!nasOnline || loadingId === `play-${epKey}`}
+                                          onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`, { mediaId: Number(id), episodeId: ep.id })}
+                                          className="p-1.5 rounded bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white transition-colors"
+                                          title="Lire"
+                                        >
+                                          {loadingId === `play-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white" />}
+                                        </button>
+                                      )}
                                       <button
                                         disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${epKey}`}
                                         onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
