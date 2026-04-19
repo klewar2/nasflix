@@ -252,11 +252,11 @@ class ApiClient {
   }
 
   getStreamUrl(mediaId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=${mode}`);
+    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=${mode}&client=web`);
   }
 
   getEpisodeStreamUrl(episodeId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}`);
+    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}&client=web`);
   }
 
   // Health

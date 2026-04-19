@@ -256,13 +256,15 @@ export class NasController {
     @Query('mode') mode: 'stream' | 'download' = 'stream',
     @Query('passthrough') passthrough: string = '0',
     @Query('audioTrack') audioTrackQuery: string = '1',
+    @Query('client') clientQuery: string = 'web',
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
+    const clientType = clientQuery === 'tv' ? 'tv' : 'web';
 
     // passthrough=1 : proxy FileStation direct pour NAS (SSL auto-signé), mais Jellyfin n'en a pas besoin
-    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack);
+    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
     if (passthrough === '1' && sourceType !== 'SEEDBOX') {
       const duration = await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId);
       const t = this.signPassthroughFileToken(duration, { episodeId }, req.user.sub, req.user.cineClubId);
@@ -289,13 +291,15 @@ export class NasController {
     @Query('mode') mode: 'stream' | 'download' = 'stream',
     @Query('passthrough') passthrough: string = '0',
     @Query('audioTrack') audioTrackQuery: string = '1',
+    @Query('client') clientQuery: string = 'web',
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
+    const clientType = clientQuery === 'tv' ? 'tv' : 'web';
 
     // passthrough=1 : proxy FileStation direct pour NAS (SSL auto-signé), mais Jellyfin n'en a pas besoin
-    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack);
+    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
     if (passthrough === '1' && sourceType !== 'SEEDBOX') {
       const media = await this.nasService.getMediaDuration(mediaId, req.user.cineClubId);
       const t = this.signPassthroughFileToken(media, { mediaId }, req.user.sub, req.user.cineClubId);

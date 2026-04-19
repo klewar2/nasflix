@@ -340,6 +340,7 @@ export class NasService {
     cineClubId: number,
     mode: 'stream' | 'download',
     audioTrack = 1,
+    clientType: 'web' | 'tv' = 'web',
   ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
     const [member, media, club] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
@@ -365,7 +366,7 @@ export class NasService {
         const downloadUrl = `${base}/Items/${media.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
         return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
       }
-      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId);
+      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId, clientType);
       this.logger.log(`[Stream #${mediaId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
       return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: media.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
     }
@@ -418,6 +419,7 @@ export class NasService {
     cineClubId: number,
     mode: 'stream' | 'download',
     audioTrack = 1,
+    clientType: 'web' | 'tv' = 'web',
   ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
     const [member, episode] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
@@ -447,7 +449,7 @@ export class NasService {
         const downloadUrl = `${base}/Items/${episode.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
         return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
       }
-      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId);
+      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId, clientType);
       this.logger.log(`[Stream ep#${episodeId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
       return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: episode.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
     }
@@ -954,26 +956,34 @@ export class NasService {
     jellyfinBaseUrl: string,
     jellyfinApiToken: string,
     jellyfinItemId: string,
+    clientType: 'web' | 'tv' = 'web',
   ): string {
     const base = jellyfinBaseUrl.replace(/\/$/, '');
+    const isWeb = clientType === 'web';
     // PlaySessionId: client-generated UUID required by Jellyfin to track the HLS session.
     // MediaSourceId: equals the item ID for single-file items (Jellyfin returns it via PlaybackInfo too).
     const params = new URLSearchParams({
       api_key: jellyfinApiToken,
-      DeviceId: 'nasflix',
+      DeviceId: `nasflix-${clientType}`,
       MediaSourceId: jellyfinItemId,
       PlaySessionId: randomUUID(),
-      // Force H.264 + AAC — browsers can't decode HEVC (hvc1) or Dolby audio (ec-3)
-      VideoCodec: 'h264',
-      AudioCodec: 'aac',
-      // Disable copy-passthrough so Jellyfin actually transcodes to h264/aac
-      AllowVideoStreamCopy: 'false',
-      AllowAudioStreamCopy: 'false',
       Container: 'ts',
       TranscodingContainer: 'ts',
       SegmentContainer: 'ts',
       MinSegments: '1',
       static: 'false',
+      ...(isWeb ? {
+        // Web: transcode HEVC → H.264 (browsers can't decode HEVC/Dolby), high bitrate for 4K quality
+        VideoCodec: 'h264,hevc,vp9',
+        AudioCodec: 'aac',
+        AllowVideoStreamCopy: 'true',
+        AllowAudioStreamCopy: 'false',
+        MaxStreamingBitrate: '120000000',
+      } : {
+        // TV: let Jellyfin decide based on device capabilities, no forced transcode
+        AllowVideoStreamCopy: 'true',
+        AllowAudioStreamCopy: 'true',
+      }),
     });
     return `${base}/Videos/${jellyfinItemId}/master.m3u8?${params.toString()}`;
   }
