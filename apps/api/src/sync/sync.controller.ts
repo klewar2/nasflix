@@ -64,7 +64,7 @@ export class SyncController {
   @Post('media/:id')
   async syncSingleMedia(@Param('id', ParseIntPipe) id: number, @Req() req: { user: JwtPayload }) {
     const cineClubId = this.requireCineClub(req.user);
-    const result = await this.syncService.syncSingleMedia(id, cineClubId, { ignoreTmdbId: true });
+    const result = await this.syncService.syncSingleMedia(id, cineClubId);
     return { message: 'Sync terminée', ...result };
   }
 

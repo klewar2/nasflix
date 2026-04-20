@@ -213,13 +213,19 @@ export class MediaService {
   }
 
   async update(id: number, cineClubId: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null; type: MediaType }>) {
-    await this.findById(id, cineClubId);
-    // When re-queuing for sync without an explicit tmdbId, clear stale TMDB data so the
-    // next sync searches from scratch instead of reusing a potentially wrong tmdbId.
+    const existing = await this.findById(id, cineClubId);
     const patch: typeof data = { ...data };
-    if (data.syncStatus === SyncStatus.PENDING && data.tmdbId === undefined) {
-      patch.tmdbId = null;
-      patch.titleVf = undefined; // keep existing until new sync fills it
+
+    // Resync strategy: the sync engine tries tmdbId first and falls back to title+year on failure.
+    // When the admin pins a *new* tmdbId via the form, keep it so sync attempts that one; when
+    // they submit the same tmdbId (or none), clear it to force a fresh title+year search.
+    if (data.syncStatus === SyncStatus.PENDING) {
+      if (data.tmdbId !== undefined && data.tmdbId !== null && data.tmdbId !== existing.tmdbId) {
+        patch.tmdbId = data.tmdbId;
+      } else {
+        patch.tmdbId = null;
+        patch.titleVf = undefined;
+      }
     }
     return this.prisma.media.update({ where: { id }, data: patch });
   }

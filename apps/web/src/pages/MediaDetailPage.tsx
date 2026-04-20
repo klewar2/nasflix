@@ -8,6 +8,142 @@ import { VideoPlayerModal } from '@/components/media/VideoPlayerModal';
 import { ArrowLeft, Copy, Download, ExternalLink, HardDrive, Loader2, Pencil, Play, WifiOff } from 'lucide-react';
 import { useState } from 'react';
 
+type SeasonsSectionProps = {
+  media: any;
+  mediaId: number;
+  mediaTitle: string;
+  isMember: boolean;
+  nasOnline: boolean;
+  loadingId: string | null;
+  openPlayer: (
+    fetchUrl: () => Promise<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>,
+    title: string,
+    key: string,
+    ids?: { mediaId?: number; episodeId?: number },
+  ) => void;
+  handleDownload: (fetchUrl: () => Promise<{ url: string }>, filename: string, key: string) => void;
+};
+
+function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadingId, openPlayer, handleDownload }: SeasonsSectionProps) {
+  // Sort seasons descending (most recent season first) — tabs default to the latest season.
+  const sortedSeasons = [...media.seasons].sort((a: any, b: any) => b.seasonNumber - a.seasonNumber);
+  const [activeSeasonId, setActiveSeasonId] = useState<number>(sortedSeasons[0].id);
+  const activeSeason = sortedSeasons.find((s: any) => s.id === activeSeasonId) ?? sortedSeasons[0];
+
+  return (
+    <section className="mt-10">
+      <h2 className="text-xl font-bold mb-4">Saisons</h2>
+
+      <div className="flex gap-2 overflow-x-auto pb-2 mb-4 border-b border-zinc-800 scrollbar-thin">
+        {sortedSeasons.map((s: any) => {
+          const nasCount = s.episodes?.filter((e: any) => e.nasPath).length ?? 0;
+          const total = s.episodes?.length ?? s.episodeCount ?? 0;
+          const isActive = s.id === activeSeason.id;
+          return (
+            <button
+              key={s.id}
+              onClick={() => setActiveSeasonId(s.id)}
+              className={`flex-shrink-0 px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+                isActive
+                  ? 'border-primary text-white'
+                  : 'border-transparent text-zinc-400 hover:text-white'
+              }`}
+            >
+              <span>Saison {s.seasonNumber}</span>
+              {total > 0 && (
+                <span className={`ml-2 text-xs ${isActive ? 'text-zinc-300' : 'text-zinc-500'}`}>
+                  {nasCount}/{total}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="p-4 bg-zinc-900 rounded-lg border border-zinc-800">
+        <div className="flex items-center gap-4 mb-4">
+          {activeSeason.posterUrl && (
+            <img src={activeSeason.posterUrl} alt={activeSeason.name} className="w-16 rounded flex-shrink-0" />
+          )}
+          <div className="flex-1">
+            <h3 className="font-semibold">Saison {activeSeason.seasonNumber}</h3>
+            {activeSeason.name && activeSeason.name !== `Saison ${activeSeason.seasonNumber}` && (
+              <p className="text-sm text-zinc-400">{activeSeason.name}</p>
+            )}
+            {activeSeason.airDate && (
+              <p className="text-xs text-zinc-500">{new Date(activeSeason.airDate).getFullYear()}</p>
+            )}
+            {activeSeason.overview && (
+              <p className="text-xs text-zinc-400 mt-2 max-w-2xl leading-relaxed">{activeSeason.overview}</p>
+            )}
+          </div>
+        </div>
+
+        {activeSeason.episodes?.length > 0 ? (
+          <div className="space-y-1">
+            {[...activeSeason.episodes]
+              .sort((a: any, b: any) => a.episodeNumber - b.episodeNumber)
+              .map((ep: any) => {
+                const epKey = `ep-${ep.id}`;
+                const epTitle = `${mediaTitle} — S${String(activeSeason.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')} ${ep.name ? `— ${ep.name}` : ''}`;
+                return (
+                  <div
+                    key={ep.id}
+                    className={`flex justify-between items-center text-sm py-2 px-2 rounded border-t border-zinc-800 ${ep.nasPath ? 'hover:bg-zinc-800/50' : ''}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {ep.nasPath ? (
+                        <HardDrive className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" aria-label="Disponible sur le NAS" />
+                      ) : (
+                        <span className="w-3.5 h-3.5 flex-shrink-0" />
+                      )}
+                      <span className="text-zinc-500 flex-shrink-0">E{String(ep.episodeNumber).padStart(2, '0')}</span>
+                      <span className={`truncate ${ep.nasPath ? 'text-white' : 'text-zinc-400'}`}>
+                        {ep.name || `Épisode ${ep.episodeNumber}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                      {ep.runtime && <span className="text-zinc-500 text-xs">{ep.runtime} min</span>}
+                      {ep.nasFilename && (
+                        <span className="text-[10px] text-zinc-600 truncate max-w-32 hidden lg:block" title={ep.nasFilename}>
+                          {ep.nasFilename}
+                        </span>
+                      )}
+                      {isMember && ep.nasPath && (
+                        <>
+                          {ep.sourceType !== 'SEEDBOX' && (
+                            <button
+                              disabled={!nasOnline || loadingId === `play-${epKey}`}
+                              onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`, { mediaId, episodeId: ep.id })}
+                              className="p-1.5 rounded bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white transition-colors"
+                              title="Lire"
+                            >
+                              {loadingId === `play-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white" />}
+                            </button>
+                          )}
+                          <button
+                            disabled={(ep.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${epKey}`}
+                            onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
+                            className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-white transition-colors border border-zinc-700"
+                            title="Télécharger"
+                          >
+                            {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500">Aucun épisode pour cette saison.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function MediaDetailPage() {
   const { id } = useParams();
   const { cineClub } = useAuth();
@@ -269,90 +405,16 @@ export default function MediaDetailPage() {
           )}
 
           {media.seasons && media.seasons.length > 0 && (
-            <section className="mt-10">
-              <h2 className="text-xl font-bold mb-4">Saisons</h2>
-              <div className="space-y-4">
-                {media.seasons.map((season: any) => {
-                  const nasEpisodes = season.episodes?.filter((ep: any) => ep.nasPath) || [];
-                  return (
-                    <div key={season.id} className="p-4 bg-zinc-900 rounded-lg border border-zinc-800">
-                      <div className="flex items-center gap-4">
-                        {season.posterUrl && <img src={season.posterUrl} alt={season.name} className="w-16 rounded flex-shrink-0" />}
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3">
-                            <h3 className="font-semibold">Saison {season.seasonNumber}</h3>
-                            {nasEpisodes.length > 0 && (
-                              <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded">
-                                <HardDrive className="w-3 h-3" />
-                                {nasEpisodes.length} / {season.episodeCount || season.episodes?.length || '?'} sur NAS
-                              </span>
-                            )}
-                          </div>
-                          {season.name && <p className="text-sm text-zinc-400">{season.name}</p>}
-                          {season.episodeCount && <p className="text-xs text-zinc-500">{season.episodeCount} épisodes</p>}
-                        </div>
-                      </div>
-                      {season.episodes?.length > 0 && (
-                        <div className="mt-3 space-y-1">
-                          {season.episodes.map((ep: any) => {
-                            const epKey = `ep-${ep.id}`;
-                            const epTitle = `${mediaTitle} — S${String(season.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')} ${ep.name ? `— ${ep.name}` : ''}`;
-                            return (
-                              <div
-                                key={ep.id}
-                                className={`flex justify-between items-center text-sm py-2 px-2 rounded border-t border-zinc-800 ${ep.nasPath ? 'hover:bg-zinc-800/50' : ''}`}
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  {ep.nasPath ? (
-                                    <HardDrive className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" aria-label="Disponible sur le NAS" />
-                                  ) : (
-                                    <span className="w-3.5 h-3.5 flex-shrink-0" />
-                                  )}
-                                  <span className="text-zinc-500 flex-shrink-0">E{String(ep.episodeNumber).padStart(2, '0')}</span>
-                                  <span className={`truncate ${ep.nasPath ? 'text-white' : 'text-zinc-400'}`}>
-                                    {ep.name || `Épisode ${ep.episodeNumber}`}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                                  {ep.runtime && <span className="text-zinc-500 text-xs">{ep.runtime} min</span>}
-                                  {ep.nasFilename && (
-                                    <span className="text-[10px] text-zinc-600 truncate max-w-32 hidden lg:block" title={ep.nasFilename}>
-                                      {ep.nasFilename}
-                                    </span>
-                                  )}
-                                  {isMember && ep.nasPath && (
-                                    <>
-                                      {media.sourceType !== 'SEEDBOX' && (
-                                        <button
-                                          disabled={!nasOnline || loadingId === `play-${epKey}`}
-                                          onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`, { mediaId: Number(id), episodeId: ep.id })}
-                                          className="p-1.5 rounded bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white transition-colors"
-                                          title="Lire"
-                                        >
-                                          {loadingId === `play-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white" />}
-                                        </button>
-                                      )}
-                                      <button
-                                        disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${epKey}`}
-                                        onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
-                                        className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-white transition-colors border border-zinc-700"
-                                        title="Télécharger"
-                                      >
-                                        {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+            <SeasonsSection
+              media={media}
+              mediaId={Number(id)}
+              mediaTitle={mediaTitle}
+              isMember={isMember}
+              nasOnline={nasOnline}
+              loadingId={loadingId}
+              openPlayer={openPlayer}
+              handleDownload={handleDownload}
+            />
           )}
         </div>
       </div>

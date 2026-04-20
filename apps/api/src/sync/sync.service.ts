@@ -375,7 +375,7 @@ export class SyncService {
     return pending.length;
   }
 
-  async syncSingleMedia(mediaId: number, cineClubId: number, { ignoreTmdbId = false } = {}) {
+  async syncSingleMedia(mediaId: number, cineClubId: number) {
     const media = await this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } });
     if (!media) throw new Error('Media not found');
 
@@ -393,20 +393,27 @@ export class SyncService {
 
       this.logger.log(`[Sync #${mediaId}] File: "${filename}"`);
 
-      // --- If tmdbId is set (manually by admin via edit form) and we're not forced to re-search ---
-      if (media.tmdbId && !ignoreTmdbId) {
-        this.logger.log(`[Sync #${mediaId}] tmdbId manually set to ${media.tmdbId}, skipping search`);
-        // Trust media.type set by admin — never infer from filename here
-        if (media.type === MediaType.SERIES) {
-          await this.syncTvDetails(mediaId, media.tmdbId, cineClubId);
-          if (parsed.season !== undefined && parsed.episode !== undefined) {
-            await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId ?? undefined, cineClubId);
+      // --- If tmdbId is set (manually by admin via edit form), try it first ---
+      // On failure (unknown id / TMDB 404), fall through to title+year search.
+      if (media.tmdbId) {
+        this.logger.log(`[Sync #${mediaId}] Trying pinned tmdbId=${media.tmdbId}`);
+        try {
+          if (media.type === MediaType.SERIES) {
+            await this.syncTvDetails(mediaId, media.tmdbId, cineClubId);
+            if (parsed.season !== undefined && parsed.episode !== undefined) {
+              await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId ?? undefined, cineClubId);
+            }
+            await this.mergeSeriesByTmdbId(mediaId, media.tmdbId, cineClubId);
+          } else {
+            await this.syncMovieDetails(mediaId, media.tmdbId, cineClubId);
           }
-        } else {
-          await this.syncMovieDetails(mediaId, media.tmdbId, cineClubId);
+          this.logger.log(`[Sync #${mediaId}] ✓ Sync complete via pinned tmdbId → SYNCED`);
+          return;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`[Sync #${mediaId}] Pinned tmdbId ${media.tmdbId} failed (${msg}), falling back to title+year search`);
+          await this.prisma.media.update({ where: { id: mediaId }, data: { tmdbId: null } });
         }
-        this.logger.log(`[Sync #${mediaId}] ✓ Sync complete via manual tmdbId → SYNCED`);
-        return;
       }
 
       // Title for TMDB search: prefer admin-edited titleOriginal, then DB releaseYear as year hint
@@ -464,22 +471,25 @@ export class SyncService {
         return;
       }
 
-      // --- Series episode deduplication ---
-      // For series: if another Media record already represents this show, link the file as an episode
+      // --- Series deduplication / cross-source merging ---
+      // If another Media record already represents this show (same tmdbId), collapse into it.
+      // Covers: NAS single-episode file joining an existing series, Jellyfin series arriving
+      // after NAS (or vice-versa) — in the Jellyfin case seasons/episodes are already attached
+      // and must be moved before deleting the source.
       if (mediaType! === MediaType.SERIES) {
         const existingSeries = await this.prisma.media.findFirst({
           where: { cineClubId, tmdbId: tmdbResult.id, type: MediaType.SERIES, id: { not: mediaId } },
         });
         if (existingSeries) {
-          this.logger.log(`[Sync #${mediaId}] Series episode → linking to existing series #${existingSeries.id} "${existingSeries.titleVf || existingSeries.titleOriginal}"`);
-          await this.linkEpisodeFile(existingSeries.id, media, parsed, tmdbResult.id, cineClubId);
-          await this.prisma.media.delete({ where: { id: mediaId } });
+          this.logger.log(`[Sync #${mediaId}] Existing series #${existingSeries.id} found for tmdbId=${tmdbResult.id} — merging`);
+          if (parsed.season !== undefined && parsed.episode !== undefined) {
+            await this.linkEpisodeFile(existingSeries.id, media, parsed, tmdbResult.id, cineClubId);
+          }
+          await this.mergeSeriesInto(mediaId, existingSeries.id);
           return {
-            redirectTo: {
-              seriesId: existingSeries.id,
-              season: parsed.season!,
-              episode: parsed.episode!,
-            },
+            redirectTo: parsed.season !== undefined && parsed.episode !== undefined
+              ? { seriesId: existingSeries.id, season: parsed.season, episode: parsed.episode }
+              : { seriesId: existingSeries.id },
           };
         }
       }
@@ -495,6 +505,8 @@ export class SyncService {
         if (parsed.season !== undefined && parsed.episode !== undefined) {
           await this.linkEpisodeFile(mediaId, media, parsed, tmdbResult.id, cineClubId);
         }
+        // Safety net for race conditions where a duplicate appeared after the earlier check.
+        await this.mergeSeriesByTmdbId(mediaId, tmdbResult.id, cineClubId);
       }
       this.logger.log(`[Sync #${mediaId}] ✓ Sync complete → SYNCED`);
     } catch (error: unknown) {
@@ -505,6 +517,95 @@ export class SyncService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Ensures a single series Media per tmdbId per cineClub by merging any duplicates into `keepId`.
+   */
+  private async mergeSeriesByTmdbId(keepId: number, tmdbId: number, cineClubId: number) {
+    const duplicates = await this.prisma.media.findMany({
+      where: { cineClubId, tmdbId, type: MediaType.SERIES, id: { not: keepId } },
+      select: { id: true },
+    });
+    for (const dup of duplicates) {
+      await this.mergeSeriesInto(dup.id, keepId);
+    }
+  }
+
+  /**
+   * Moves seasons/episodes from `sourceId` into `destId` (conflict = prefer NAS, then merge fields),
+   * transfers the Jellyfin id if missing, and deletes the source Media.
+   */
+  private async mergeSeriesInto(sourceId: number, destId: number) {
+    if (sourceId === destId) return;
+    const source = await this.prisma.media.findUnique({
+      where: { id: sourceId },
+      include: { seasons: { include: { episodes: true } } },
+    });
+    if (!source) return;
+
+    for (const season of source.seasons) {
+      const destSeason = await this.prisma.season.upsert({
+        where: { mediaId_seasonNumber: { mediaId: destId, seasonNumber: season.seasonNumber } },
+        update: {
+          name: season.name ?? undefined,
+          overview: season.overview ?? undefined,
+          posterUrl: season.posterUrl ?? undefined,
+          episodeCount: season.episodeCount ?? undefined,
+          airDate: season.airDate ?? undefined,
+        },
+        create: {
+          mediaId: destId,
+          seasonNumber: season.seasonNumber,
+          name: season.name,
+          overview: season.overview,
+          posterUrl: season.posterUrl,
+          episodeCount: season.episodeCount,
+          airDate: season.airDate,
+        },
+      });
+
+      for (const ep of season.episodes) {
+        const destEp = await this.prisma.episode.findUnique({
+          where: { seasonId_episodeNumber: { seasonId: destSeason.id, episodeNumber: ep.episodeNumber } },
+        });
+        if (!destEp) {
+          await this.prisma.episode.update({ where: { id: ep.id }, data: { seasonId: destSeason.id } });
+          continue;
+        }
+        const update: Record<string, unknown> = {};
+        if (!destEp.nasPath && ep.nasPath) {
+          update.nasPath = ep.nasPath;
+          update.nasFilename = ep.nasFilename;
+          update.nasSize = ep.nasSize;
+          update.sourceType = SourceType.NAS;
+        }
+        if (!destEp.jellyfinItemId && ep.jellyfinItemId) {
+          update.jellyfinItemId = ep.jellyfinItemId;
+          if (!destEp.nasPath && !update.nasPath) update.sourceType = SourceType.SEEDBOX;
+        }
+        if (!destEp.name && ep.name) update.name = ep.name;
+        if (!destEp.overview && ep.overview) update.overview = ep.overview;
+        if (!destEp.runtime && ep.runtime) update.runtime = ep.runtime;
+        if (!destEp.airDate && ep.airDate) update.airDate = ep.airDate;
+        if (!destEp.stillUrl && ep.stillUrl) update.stillUrl = ep.stillUrl;
+        if (Object.keys(update).length > 0) {
+          await this.prisma.episode.update({ where: { id: destEp.id }, data: update });
+        }
+        await this.prisma.episode.delete({ where: { id: ep.id } });
+      }
+      await this.prisma.season.delete({ where: { id: season.id } });
+    }
+
+    if (source.jellyfinItemId) {
+      const dest = await this.prisma.media.findUnique({ where: { id: destId }, select: { jellyfinItemId: true } });
+      if (!dest?.jellyfinItemId) {
+        await this.prisma.media.update({ where: { id: destId }, data: { jellyfinItemId: source.jellyfinItemId } });
+      }
+    }
+
+    await this.prisma.media.delete({ where: { id: sourceId } });
+    this.logger.log(`Merged series #${sourceId} → #${destId}`);
   }
 
   /**
@@ -777,9 +878,16 @@ export class SyncService {
         const syntheticPath = `jellyfin://${seriesId}`;
 
         try {
-          let seriesMedia = await this.prisma.media.findUnique({
-            where: { cineClubId_nasPath: { cineClubId, nasPath: syntheticPath } },
+          // Prefer an existing Media linked to this Jellyfin series (it may have been merged
+          // into a NAS-sourced series Media with a different nasPath).
+          let seriesMedia = await this.prisma.media.findFirst({
+            where: { cineClubId, jellyfinItemId: seriesId, type: MediaType.SERIES },
           });
+          if (!seriesMedia) {
+            seriesMedia = await this.prisma.media.findUnique({
+              where: { cineClubId_nasPath: { cineClubId, nasPath: syntheticPath } },
+            });
+          }
 
           if (!seriesMedia) {
             seriesMedia = await this.prisma.media.create({
@@ -798,7 +906,7 @@ export class SyncService {
           } else {
             await this.prisma.media.update({
               where: { id: seriesMedia.id },
-              data: { sourceType: SourceType.SEEDBOX, jellyfinItemId: seriesId },
+              data: { jellyfinItemId: seriesId },
             });
           }
 
@@ -819,27 +927,39 @@ export class SyncService {
                 });
               }
 
-              // Upsert episode by (seasonId, episodeNumber)
-              await this.prisma.episode.upsert({
+              // Preserve an existing NAS source on the episode — Jellyfin should layer on top,
+              // not overwrite. We still record the Jellyfin id so the file can be streamed.
+              const existingEp = await this.prisma.episode.findUnique({
                 where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber } },
-                create: {
-                  seasonId: season.id,
-                  episodeNumber,
-                  name: ep.Name,
-                  nasPath: ep.Path || null,
-                  nasFilename: epFilename,
-                  sourceType: SourceType.SEEDBOX,
-                  jellyfinItemId: ep.Id,
-                  runtime,
-                },
-                update: {
-                  nasPath: ep.Path || undefined,
-                  nasFilename: epFilename,
-                  sourceType: SourceType.SEEDBOX,
-                  jellyfinItemId: ep.Id,
-                  ...(runtime ? { runtime } : {}),
-                },
               });
+              if (!existingEp) {
+                await this.prisma.episode.create({
+                  data: {
+                    seasonId: season.id,
+                    episodeNumber,
+                    name: ep.Name,
+                    nasPath: ep.Path || null,
+                    nasFilename: epFilename,
+                    sourceType: SourceType.SEEDBOX,
+                    jellyfinItemId: ep.Id,
+                    runtime,
+                  },
+                });
+              } else {
+                const hasNas = existingEp.sourceType === SourceType.NAS && !!existingEp.nasPath;
+                await this.prisma.episode.update({
+                  where: { id: existingEp.id },
+                  data: hasNas
+                    ? { jellyfinItemId: ep.Id, ...(runtime && !existingEp.runtime ? { runtime } : {}) }
+                    : {
+                        nasPath: ep.Path || undefined,
+                        nasFilename: epFilename,
+                        sourceType: SourceType.SEEDBOX,
+                        jellyfinItemId: ep.Id,
+                        ...(runtime ? { runtime } : {}),
+                      },
+                });
+              }
               processedItems++;
             } catch (epErr) {
               errorCount++;

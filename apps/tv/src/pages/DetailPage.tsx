@@ -13,12 +13,15 @@ interface Props {
   onFocusNav: () => void;
 }
 
-type FocusZone = 'play' | 'back' | { episodeIdx: number };
+type FocusZone = 'play' | 'back' | { zone: 'tab'; idx: number } | { zone: 'episode'; idx: number };
 
 export default function DetailPage({ mediaId, mediaType, navigate, navFocused, onFocusNav }: Props) {
   const [focused, setFocused] = useState<FocusZone>('play');
+  const [activeSeasonIdx, setActiveSeasonIdx] = useState(0);
   const episodeListRef = useRef<HTMLDivElement>(null);
   const focusedEpisodeRef = useRef<HTMLDivElement>(null);
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const focusedTabRef = useRef<HTMLDivElement>(null);
 
   const { data: media, isLoading } = useQuery({
     queryKey: ['media', mediaId],
@@ -37,8 +40,9 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
     }))
     .filter((g) => g.episodes.length > 0);
 
+  // Only the active season's episodes are displayed — tabs switch seasons.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const episodes: any[] = seasonGroups.flatMap((g) => g.episodes);
+  const episodes: any[] = seasonGroups[activeSeasonIdx]?.episodes ?? [];
 
   const title = media ? (media.titleVf || media.title || media.titleOriginal || '') : '';
   const backdropUrl = media?.backdropUrl || (media?.backdropPath ? `https://image.tmdb.org/t/p/w1280${media.backdropPath}` : null);
@@ -56,16 +60,22 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
   else if (media?.hdr) badges.push({ label: 'HDR', color: '#000', bg: 'rgba(250,204,21,0.9)' });
   if (media?.dolbyAtmos) badges.push({ label: 'Dolby Atmos', color: '#fff', bg: 'rgba(0,90,170,0.85)' });
 
+  const isSeries = mediaType === 'series';
+  const hasTabs = isSeries && seasonGroups.length > 0;
+
   useRemoteKeys((e) => {
     if (navFocused) return;
     if (e.keyCode === KEY.BACK) {
       navigate({ name: 'home' });
     } else if (e.keyCode === KEY.UP) {
       e.preventDefault();
-      if (typeof focused === 'object') {
-        const newIdx = focused.episodeIdx - 1;
-        if (newIdx < 0) setFocused('play');
-        else setFocused({ episodeIdx: newIdx });
+      if (typeof focused === 'object' && focused.zone === 'episode') {
+        if (focused.idx === 0) {
+          if (hasTabs) setFocused({ zone: 'tab', idx: activeSeasonIdx });
+          else setFocused('play');
+        } else setFocused({ zone: 'episode', idx: focused.idx - 1 });
+      } else if (typeof focused === 'object' && focused.zone === 'tab') {
+        setFocused('play');
       } else if (focused === 'back') {
         setFocused('play');
       } else if (focused === 'play') {
@@ -74,35 +84,52 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
     } else if (e.keyCode === KEY.DOWN) {
       e.preventDefault();
       if (focused === 'play') {
-        if (mediaType === 'series' && episodes.length > 0) setFocused({ episodeIdx: 0 });
+        if (hasTabs) setFocused({ zone: 'tab', idx: activeSeasonIdx });
         else setFocused('back');
-      } else if (typeof focused === 'object') {
-        const newIdx = focused.episodeIdx + 1;
-        if (newIdx < episodes.length) setFocused({ episodeIdx: newIdx });
+      } else if (typeof focused === 'object' && focused.zone === 'tab') {
+        if (episodes.length > 0) setFocused({ zone: 'episode', idx: 0 });
+        else setFocused('back');
+      } else if (typeof focused === 'object' && focused.zone === 'episode') {
+        if (focused.idx + 1 < episodes.length) setFocused({ zone: 'episode', idx: focused.idx + 1 });
         else setFocused('back');
       }
     } else if (e.keyCode === KEY.OK) {
       e.preventDefault();
       if (focused === 'back') navigate({ name: 'home' });
       else if (focused === 'play' && mediaType === 'movie') navigate({ name: 'player', mediaId, title });
-      else if (focused === 'play' && mediaType === 'series' && episodes.length > 0) setFocused({ episodeIdx: 0 });
-      else if (typeof focused === 'object') {
-        const ep = episodes[focused.episodeIdx];
+      else if (focused === 'play' && hasTabs) setFocused({ zone: 'tab', idx: activeSeasonIdx });
+      else if (typeof focused === 'object' && focused.zone === 'tab') {
+        if (episodes.length > 0) setFocused({ zone: 'episode', idx: 0 });
+      } else if (typeof focused === 'object' && focused.zone === 'episode') {
+        const ep = episodes[focused.idx];
         if (ep) navigate({ name: 'player', mediaId, episodeId: ep.id, title: `${title} · S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}` });
       }
     } else if (e.keyCode === KEY.LEFT) {
       e.preventDefault();
       if (focused === 'back') setFocused('play');
+      else if (typeof focused === 'object' && focused.zone === 'tab' && focused.idx > 0) {
+        const newIdx = focused.idx - 1;
+        setActiveSeasonIdx(newIdx);
+        setFocused({ zone: 'tab', idx: newIdx });
+      }
     } else if (e.keyCode === KEY.RIGHT) {
       e.preventDefault();
       if (focused === 'play') setFocused('back');
+      else if (typeof focused === 'object' && focused.zone === 'tab' && focused.idx + 1 < seasonGroups.length) {
+        const newIdx = focused.idx + 1;
+        setActiveSeasonIdx(newIdx);
+        setFocused({ zone: 'tab', idx: newIdx });
+      }
     }
-  }, [focused, mediaType, episodes, mediaId, navigate, navFocused, onFocusNav, title]);
+  }, [focused, mediaType, episodes, mediaId, navigate, navFocused, onFocusNav, title, hasTabs, activeSeasonIdx, seasonGroups.length]);
 
-  // Auto-scroll focused episode into view
+  // Auto-scroll focused episode / tab into view
   useEffect(() => {
-    if (typeof focused === 'object' && focusedEpisodeRef.current && episodeListRef.current) {
+    if (typeof focused === 'object' && focused.zone === 'episode' && focusedEpisodeRef.current && episodeListRef.current) {
       focusedEpisodeRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    if (typeof focused === 'object' && focused.zone === 'tab' && focusedTabRef.current && tabBarRef.current) {
+      focusedTabRef.current.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
     }
   }, [focused]);
 
@@ -200,7 +227,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
               onFocus={() => setFocused('play')}
               onClick={() => {
                 if (mediaType === 'movie') navigate({ name: 'player', mediaId, title });
-                else if (episodes.length > 0) setFocused({ episodeIdx: 0 });
+                else if (hasTabs) setFocused({ zone: 'tab', idx: activeSeasonIdx });
               }}
               style={btnStyle(focused === 'play', true)}
             >
@@ -228,73 +255,100 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
             </div>
           )}
 
-          {/* Episodes list — grouped by season, latest first */}
-          {mediaType === 'series' && episodes.length > 0 && (
-            <div ref={episodeListRef} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-              <h2 style={{
-                fontSize: '0.55rem', fontWeight: 700, marginBottom: '0.6rem',
-                color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em',
-              }}>
-                Épisodes ({episodes.length})
-              </h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-                {seasonGroups.map((group) => (
-                  <div key={group.seasonNumber}>
-                    {/* Season header */}
-                    <div style={{
-                      fontSize: '0.5rem', fontWeight: 700, color: 'rgba(255,255,255,0.3)',
-                      textTransform: 'uppercase', letterSpacing: '0.1em',
-                      marginBottom: '0.3rem', paddingLeft: '0.2rem',
-                    }}>
+          {/* Season tabs + active season's episodes */}
+          {hasTabs && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              {/* Season tab bar */}
+              <div
+                ref={tabBarRef}
+                style={{
+                  display: 'flex', gap: '0.4rem', marginBottom: '0.7rem',
+                  overflowX: 'auto', paddingBottom: '0.2rem',
+                  borderBottom: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                {seasonGroups.map((group, idx) => {
+                  const isFocused = typeof focused === 'object' && focused.zone === 'tab' && focused.idx === idx;
+                  const isActive = activeSeasonIdx === idx;
+                  const nasCount = group.episodes.filter((ep: { nasPath?: string }) => !!ep.nasPath).length;
+                  return (
+                    <div
+                      key={group.seasonNumber}
+                      ref={isFocused ? focusedTabRef : undefined}
+                      data-focused={isFocused}
+                      onFocus={() => setFocused({ zone: 'tab', idx })}
+                      onClick={() => { setActiveSeasonIdx(idx); setFocused({ zone: 'tab', idx }); }}
+                      style={{
+                        padding: '0.35rem 0.8rem',
+                        borderRadius: '6px',
+                        background: isFocused
+                          ? 'rgba(255,255,255,0.14)'
+                          : isActive ? 'rgba(229,9,20,0.2)' : 'transparent',
+                        border: `1px solid ${isFocused ? 'rgba(255,255,255,0.5)' : isActive ? 'rgba(229,9,20,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                        color: isActive || isFocused ? '#fff' : 'rgba(255,255,255,0.55)',
+                        fontSize: '0.58rem',
+                        fontWeight: isActive || isFocused ? 700 : 500,
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        transition: 'all 0.12s ease',
+                        letterSpacing: '0.03em',
+                      }}
+                    >
                       Saison {group.seasonNumber}
+                      <span style={{ marginLeft: '0.45rem', fontSize: '0.5rem', opacity: 0.7 }}>
+                        {nasCount}/{group.episodes.length}
+                      </span>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                      {group.episodes.map((ep) => {
-                        const idx = episodes.indexOf(ep);
-                        const isFocused = typeof focused === 'object' && focused.episodeIdx === idx;
-                        const epPct = watchProgress.pct(mediaId, ep.id);
-                        return (
-                          <div
-                            key={ep.id}
-                            ref={isFocused ? focusedEpisodeRef : undefined}
-                            data-focused={isFocused}
-                            onFocus={() => setFocused({ episodeIdx: idx })}
-                            onClick={() => navigate({ name: 'player', mediaId, episodeId: ep.id, title: `${title} · S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}` })}
-                            style={{
-                              padding: '0.5rem 0.7rem',
-                              borderRadius: '8px',
-                              background: isFocused ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
-                              border: `1px solid ${isFocused ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.06)'}`,
-                              cursor: 'pointer',
-                              transition: 'all 0.12s ease',
-                              position: 'relative',
-                              overflow: 'hidden',
-                            }}
-                          >
-                            {epPct > 1 && (
-                              <div style={{
-                                position: 'absolute', bottom: 0, left: 0,
-                                height: '2px', width: `${epPct}%`,
-                                background: 'var(--red)',
-                              }} />
-                            )}
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <span style={{ fontSize: '0.6rem', fontWeight: isFocused ? 700 : 500, color: isFocused ? '#fff' : 'rgba(255,255,255,0.55)' }}>
-                                E{String(ep.episodeNumber).padStart(2, '0')}
-                                {ep.name || ep.title ? ` — ${ep.name || ep.title}` : ''}
-                              </span>
-                              {epPct > 1 && (
-                                <span style={{ fontSize: '0.55rem', color: 'rgba(229,9,20,0.8)', fontWeight: 600, flexShrink: 0, marginLeft: '0.5rem' }}>
-                                  {Math.round(epPct)}%
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
+              </div>
+
+              {/* Active season panel */}
+              <div ref={episodeListRef} style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {episodes.map((ep, idx) => {
+                    const isFocused = typeof focused === 'object' && focused.zone === 'episode' && focused.idx === idx;
+                    const epPct = watchProgress.pct(mediaId, ep.id);
+                    return (
+                      <div
+                        key={ep.id}
+                        ref={isFocused ? focusedEpisodeRef : undefined}
+                        data-focused={isFocused}
+                        onFocus={() => setFocused({ zone: 'episode', idx })}
+                        onClick={() => navigate({ name: 'player', mediaId, episodeId: ep.id, title: `${title} · S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}` })}
+                        style={{
+                          padding: '0.5rem 0.7rem',
+                          borderRadius: '8px',
+                          background: isFocused ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${isFocused ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.06)'}`,
+                          cursor: 'pointer',
+                          transition: 'all 0.12s ease',
+                          position: 'relative',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {epPct > 1 && (
+                          <div style={{
+                            position: 'absolute', bottom: 0, left: 0,
+                            height: '2px', width: `${epPct}%`,
+                            background: 'var(--red)',
+                          }} />
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: '0.6rem', fontWeight: isFocused ? 700 : 500, color: isFocused ? '#fff' : 'rgba(255,255,255,0.55)' }}>
+                            E{String(ep.episodeNumber).padStart(2, '0')}
+                            {ep.name || ep.title ? ` — ${ep.name || ep.title}` : ''}
+                          </span>
+                          {epPct > 1 && (
+                            <span style={{ fontSize: '0.55rem', color: 'rgba(229,9,20,0.8)', fontWeight: 600, flexShrink: 0, marginLeft: '0.5rem' }}>
+                              {Math.round(epPct)}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
