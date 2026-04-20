@@ -212,7 +212,7 @@ export class MediaService {
     return this.prisma.media.delete({ where: { id } });
   }
 
-  async update(id: number, cineClubId: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null }>) {
+  async update(id: number, cineClubId: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null; type: MediaType }>) {
     await this.findById(id, cineClubId);
     // When re-queuing for sync without an explicit tmdbId, clear stale TMDB data so the
     // next sync searches from scratch instead of reusing a potentially wrong tmdbId.

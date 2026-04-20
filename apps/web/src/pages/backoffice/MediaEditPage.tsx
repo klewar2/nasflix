@@ -160,12 +160,14 @@ export default function MediaEditPage() {
   const [searchTitle, setSearchTitle] = useState('');
   const [tmdbIdInput, setTmdbIdInput] = useState('');
   const [releaseYearInput, setReleaseYearInput] = useState('');
+  const [typeInput, setTypeInput] = useState<'MOVIE' | 'SERIES'>('MOVIE');
 
   useEffect(() => {
     if (media) {
       setSearchTitle(media.titleOriginal || '');
       setTmdbIdInput(media.tmdbId ? String(media.tmdbId) : '');
       setReleaseYearInput(media.releaseYear ? String(media.releaseYear) : '');
+      setTypeInput(media.type === 'SERIES' ? 'SERIES' : 'MOVIE');
     }
   }, [media]);
 
@@ -200,8 +202,9 @@ export default function MediaEditPage() {
   });
 
   const handleSaveAndSync = async () => {
-    const updateData: any = { titleOriginal: searchTitle, syncStatus: 'PENDING', syncError: null };
+    const updateData: any = { titleOriginal: searchTitle, type: typeInput, syncStatus: 'PENDING', syncError: null };
     if (tmdbIdInput.trim()) updateData.tmdbId = parseInt(tmdbIdInput.trim());
+    else updateData.tmdbId = null; // clear stale tmdbId so sync searches fresh
     if (releaseYearInput.trim()) updateData.releaseYear = parseInt(releaseYearInput.trim());
     await updateMutation.mutateAsync(updateData);
     await syncMutation.mutateAsync();
@@ -249,6 +252,26 @@ export default function MediaEditPage() {
                 Si vous renseignez un TMDB ID, la recherche par titre sera ignorée.
               </p>
               <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1 block">Type</label>
+                  <div className="flex gap-2">
+                    {(['MOVIE', 'SERIES'] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => setTypeInput(t)}
+                        className={`flex-1 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                          typeInput === t
+                            ? 'bg-primary text-white border-primary'
+                            : 'bg-white/5 text-zinc-400 border-white/10 hover:bg-white/10'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        {t === 'MOVIE' ? 'Film' : 'Série'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div>
                   <label className="text-xs text-zinc-400 mb-1 block">Titre de recherche</label>
                   <Input value={searchTitle} onChange={(e) => setSearchTitle(e.target.value)} placeholder="Titre de recherche TMDB..." disabled={!isAdmin} />

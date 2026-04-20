@@ -115,7 +115,7 @@ export class MediaController {
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() data: { titleVf?: string; titleOriginal?: string; overview?: string; tmdbId?: number; releaseYear?: number; syncStatus?: SyncStatus; syncError?: string | null },
+    @Body() data: { titleVf?: string; titleOriginal?: string; overview?: string; tmdbId?: number; releaseYear?: number; syncStatus?: SyncStatus; syncError?: string | null; type?: MediaType },
     @Req() req: { user: JwtPayload },
   ) {
     const cineClubId = this.requireCineClub(req.user);

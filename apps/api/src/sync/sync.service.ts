@@ -396,8 +396,8 @@ export class SyncService {
       // --- If tmdbId is set (manually by admin via edit form) and we're not forced to re-search ---
       if (media.tmdbId && !ignoreTmdbId) {
         this.logger.log(`[Sync #${mediaId}] tmdbId manually set to ${media.tmdbId}, skipping search`);
-        const detectedType = isSeries ? MediaType.SERIES : (media.type ?? MediaType.MOVIE);
-        if (detectedType === MediaType.SERIES) {
+        // Trust media.type set by admin — never infer from filename here
+        if (media.type === MediaType.SERIES) {
           await this.syncTvDetails(mediaId, media.tmdbId, cineClubId);
           if (parsed.season !== undefined && parsed.episode !== undefined) {
             await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId ?? undefined, cineClubId);
@@ -409,46 +409,47 @@ export class SyncService {
         return;
       }
 
-      this.logger.log(`[Sync #${mediaId}] Title resolved: "${title}"${year ? ` (${year})` : ''}`);
+      // Title for TMDB search: prefer admin-edited titleOriginal, then DB releaseYear as year hint
+      const searchYear = year ?? (media.releaseYear ?? undefined);
+      this.logger.log(`[Sync #${mediaId}] Title resolved: "${title}"${searchYear ? ` (${searchYear})` : ''}`);
       this.logger.log(`[Sync #${mediaId}] Detected type: ${isSeries ? 'SERIES' : 'MOVIE'}`);
 
       let tmdbResult: TmdbSearchResult | null = null;
       let mediaType: MediaType;
 
       if (isSeries) {
-        this.logger.log(`[Sync #${mediaId}] Searching TMDB TV: "${title}"${year ? ` year=${year}` : ''}`);
-        const tvResults = await this.metadataService.searchTv(title, year, cineClubId);
-        tmdbResult = this.pickBestResult(tvResults, title, year);
-        if (!tmdbResult && year) {
+        this.logger.log(`[Sync #${mediaId}] Searching TMDB TV: "${title}"${searchYear ? ` year=${searchYear}` : ''}`);
+        const tvResults = await this.metadataService.searchTv(title, searchYear, cineClubId);
+        tmdbResult = this.pickBestResult(tvResults, title, searchYear);
+        if (!tmdbResult && searchYear) {
           const tvNoYear = await this.metadataService.searchTv(title, undefined, cineClubId);
-          tmdbResult = this.pickBestResult(tvNoYear, title, year);
+          tmdbResult = this.pickBestResult(tvNoYear, title, searchYear);
         }
         if (tmdbResult) {
           mediaType = MediaType.SERIES;
           this.logger.log(`[Sync #${mediaId}] TV match: "${tmdbResult.name || tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         } else {
           this.logger.log(`[Sync #${mediaId}] No TV match, trying movie search`);
-          const movieResults = await this.metadataService.searchMovie(title, year, cineClubId);
-          tmdbResult = this.pickBestResult(movieResults, title, year);
+          const movieResults = await this.metadataService.searchMovie(title, searchYear, cineClubId);
+          tmdbResult = this.pickBestResult(movieResults, title, searchYear);
           mediaType = MediaType.MOVIE;
           if (tmdbResult) this.logger.log(`[Sync #${mediaId}] Movie match: "${tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         }
       } else {
-        this.logger.log(`[Sync #${mediaId}] Searching TMDB movie: "${title}"${year ? ` year=${year}` : ''}`);
-        const movieResults = await this.metadataService.searchMovie(title, year, cineClubId);
-        tmdbResult = this.pickBestResult(movieResults, title, year);
-        if (!tmdbResult && year) {
-          // Fallback: search without year in case TMDB has a slightly different release date
+        this.logger.log(`[Sync #${mediaId}] Searching TMDB movie: "${title}"${searchYear ? ` year=${searchYear}` : ''}`);
+        const movieResults = await this.metadataService.searchMovie(title, searchYear, cineClubId);
+        tmdbResult = this.pickBestResult(movieResults, title, searchYear);
+        if (!tmdbResult && searchYear) {
           const movieNoYear = await this.metadataService.searchMovie(title, undefined, cineClubId);
-          tmdbResult = this.pickBestResult(movieNoYear, title, year);
+          tmdbResult = this.pickBestResult(movieNoYear, title, searchYear);
         }
         if (tmdbResult) {
           mediaType = MediaType.MOVIE;
           this.logger.log(`[Sync #${mediaId}] Movie match: "${tmdbResult.title}" (TMDB #${tmdbResult.id})`);
         } else {
           this.logger.log(`[Sync #${mediaId}] No movie match, trying TV search`);
-          const tvResults = await this.metadataService.searchTv(title, year, cineClubId);
-          tmdbResult = this.pickBestResult(tvResults, title, year);
+          const tvResults = await this.metadataService.searchTv(title, searchYear, cineClubId);
+          tmdbResult = this.pickBestResult(tvResults, title, searchYear);
           mediaType = MediaType.SERIES;
           if (tmdbResult) this.logger.log(`[Sync #${mediaId}] TV match: "${tmdbResult.name}" (TMDB #${tmdbResult.id})`);
         }
