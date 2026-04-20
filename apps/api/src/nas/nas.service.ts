@@ -980,9 +980,20 @@ export class NasService {
         AllowAudioStreamCopy: 'false',
         MaxStreamingBitrate: '120000000',
       } : {
-        // TV: let Jellyfin decide based on device capabilities, no forced transcode
+        // TV: hls.js ne décode pas HEVC/AV1 → on force AVC mais on autorise le stream copy
+        // si la source est déjà H.264 (zéro perte). Audio AAC 5.1 pour préserver le surround.
+        VideoCodec: 'h264',
+        AudioCodec: 'aac',
+        RequireAvc: 'true',
         AllowVideoStreamCopy: 'true',
         AllowAudioStreamCopy: 'true',
+        MaxAudioChannels: '6',
+        TranscodingMaxAudioChannels: '6',
+        MaxStreamingBitrate: '160000000',
+        VideoBitrate: '40000000',
+        AudioBitrate: '384000',
+        Level: '52',
+        Profile: 'high',
       }),
     });
     return `${base}/Videos/${jellyfinItemId}/master.m3u8?${params.toString()}`;
