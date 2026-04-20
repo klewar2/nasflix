@@ -277,6 +277,8 @@ export class NasController {
         return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+      // SEEDBOX direct-play: URL Jellyfin brute (Range supporté, pas besoin de proxy/transcode).
+      if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     // download
@@ -311,6 +313,7 @@ export class NasController {
         return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+      if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
     // download

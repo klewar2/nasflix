@@ -366,6 +366,13 @@ export class NasService {
         const downloadUrl = `${base}/Items/${media.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
         return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
       }
+      // TV: direct play (fichier brut, zéro transcode, préserve Atmos/HEVC/Dolby Vision).
+      if (clientType === 'tv') {
+        const url = this.buildJellyfinDirectStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId, clientType);
+        this.logger.log(`[Stream #${mediaId}] Jellyfin direct-play → ${url.slice(0, 80)}…`);
+        return { nasUrl: url, durationSeconds, isHls: false, sourceType: 'SEEDBOX', jellyfinItemId: media.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
+      }
+      // Web: HLS transcode via Jellyfin (navigateurs = codecs limités).
       const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId, clientType);
       this.logger.log(`[Stream #${mediaId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
       return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: media.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
@@ -376,6 +383,18 @@ export class NasService {
       throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
     }
     if (!club.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
+
+    // TV: direct play via FileStation (skip VideoStation HLS qui transcode côté Synology).
+    // Le controller (passthrough=1) convertira l'URL en /nas/fileproxy pour bypasser le cert auto-signé.
+    if (mode === 'stream' && clientType === 'tv') {
+      const session = await this.getFileStationSession(club.nasBaseUrl!, member.nasUsername, member.nasPassword);
+      this.logger.log(`[Stream #${mediaId}] NAS direct-play (FileStation open)`);
+      return {
+        nasUrl: this.buildFileStationUrl(club.nasBaseUrl!, media.nasPath, session.sid, 'stream'),
+        durationSeconds,
+        isHls: false,
+      };
+    }
 
     if (mode === 'stream') {
       try {
@@ -449,6 +468,12 @@ export class NasService {
         const downloadUrl = `${base}/Items/${episode.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
         return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
       }
+      // TV: direct play (fichier brut, zéro transcode, préserve Atmos/HEVC/Dolby Vision).
+      if (clientType === 'tv') {
+        const url = this.buildJellyfinDirectStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId, clientType);
+        this.logger.log(`[Stream ep#${episodeId}] Jellyfin direct-play → ${url.slice(0, 80)}…`);
+        return { nasUrl: url, durationSeconds, isHls: false, sourceType: 'SEEDBOX', jellyfinItemId: episode.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
+      }
       const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId, clientType);
       this.logger.log(`[Stream ep#${episodeId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
       return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: episode.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
@@ -460,6 +485,17 @@ export class NasService {
     }
     if (!episode.nasPath) throw new NotFoundException('Fichier épisode introuvable sur le NAS');
     if (!club.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
+
+    // TV: direct play via FileStation (skip VideoStation HLS qui transcode côté Synology).
+    if (mode === 'stream' && clientType === 'tv') {
+      const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+      this.logger.log(`[Stream ep#${episodeId}] NAS direct-play (FileStation open)`);
+      return {
+        nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream'),
+        durationSeconds,
+        isHls: false,
+      };
+    }
 
     if (mode === 'stream') {
       try {
@@ -959,9 +995,9 @@ export class NasService {
     clientType: 'web' | 'tv' = 'web',
   ): string {
     const base = jellyfinBaseUrl.replace(/\/$/, '');
-    const isWeb = clientType === 'web';
     // PlaySessionId: client-generated UUID required by Jellyfin to track the HLS session.
     // MediaSourceId: equals the item ID for single-file items (Jellyfin returns it via PlaybackInfo too).
+    // Web-only: TV utilise buildJellyfinDirectStreamUrl (direct play sans transcode).
     const params = new URLSearchParams({
       api_key: jellyfinApiToken,
       DeviceId: `nasflix-${clientType}`,
@@ -972,31 +1008,36 @@ export class NasService {
       SegmentContainer: 'ts',
       MinSegments: '1',
       static: 'false',
-      ...(isWeb ? {
-        // Web: transcode HEVC → H.264 (browsers can't decode HEVC/Dolby), high bitrate for 4K quality
-        VideoCodec: 'h264,hevc,vp9',
-        AudioCodec: 'aac',
-        AllowVideoStreamCopy: 'true',
-        AllowAudioStreamCopy: 'false',
-        MaxStreamingBitrate: '120000000',
-      } : {
-        // TV: hls.js ne décode pas HEVC/AV1 → on force AVC mais on autorise le stream copy
-        // si la source est déjà H.264 (zéro perte). Audio AAC 5.1 pour préserver le surround.
-        VideoCodec: 'h264',
-        AudioCodec: 'aac',
-        RequireAvc: 'true',
-        AllowVideoStreamCopy: 'true',
-        AllowAudioStreamCopy: 'true',
-        MaxAudioChannels: '6',
-        TranscodingMaxAudioChannels: '6',
-        MaxStreamingBitrate: '160000000',
-        VideoBitrate: '40000000',
-        AudioBitrate: '384000',
-        Level: '52',
-        Profile: 'high',
-      }),
+      // Web: transcode HEVC → H.264 (browsers can't decode HEVC/Dolby), high bitrate for 4K quality
+      VideoCodec: 'h264,hevc,vp9',
+      AudioCodec: 'aac',
+      AllowVideoStreamCopy: 'true',
+      AllowAudioStreamCopy: 'false',
+      MaxStreamingBitrate: '120000000',
     });
     return `${base}/Videos/${jellyfinItemId}/master.m3u8?${params.toString()}`;
+  }
+
+  /**
+   * Direct play URL pour la TV : Static=true → Jellyfin sert le fichier brut via HTTP Range,
+   * zéro transcodage. Préserve HEVC, Dolby Vision, Atmos, TrueHD, DTS-HD MA tels quels.
+   * Le décodage est délégué au navigateur TV (codecs hardware).
+   */
+  private buildJellyfinDirectStreamUrl(
+    jellyfinBaseUrl: string,
+    jellyfinApiToken: string,
+    jellyfinItemId: string,
+    clientType: 'web' | 'tv' = 'tv',
+  ): string {
+    const base = jellyfinBaseUrl.replace(/\/$/, '');
+    const params = new URLSearchParams({
+      api_key: jellyfinApiToken,
+      Static: 'true',
+      DeviceId: `nasflix-${clientType}`,
+      MediaSourceId: jellyfinItemId,
+      PlaySessionId: randomUUID(),
+    });
+    return `${base}/Videos/${jellyfinItemId}/stream?${params.toString()}`;
   }
 
   async getJellyfinPlaybackInfo(

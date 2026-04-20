@@ -93,6 +93,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [videoError, setVideoError] = useState<{ code: number; message: string } | null>(null);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [isBuffering, setIsBuffering] = useState(true);
 
   const DEBUG = import.meta.env.VITE_DEBUG === 'true';
   const VERBOSE = import.meta.env.VITE_PLAYER_VERBOSE === 'true' || DEBUG;
@@ -111,7 +112,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   const [showResume, setShowResume] = useState(!!savedProgress && savedProgress.currentTime > 10);
   const [resumeCountdown, setResumeCountdown] = useState(8);
 
-  const showControlsFor = useCallback((ms = 4000) => {
+  const showControlsFor = useCallback((ms = 6000) => {
     setShowControls(true);
     clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
@@ -203,6 +204,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     setHlsAudioTracks([]);
     setNativeAudioTracks([]);
     setVideoError(null);
+    setIsBuffering(true);
     tvLog('player init', {
       mediaId,
       episodeId: episodeId ?? undefined,
@@ -217,6 +219,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       if (err) {
         const info = { code: err.code, message: err.message || '' };
         setVideoError(info);
+        setIsBuffering(false);
         tvLog('video element error', {
           mediaId,
           episodeId: episodeId ?? undefined,
@@ -229,8 +232,12 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       }
     };
     let loggedFirstBuffer = false;
-    const onWaiting = () => { if (VERBOSE) tvLog('waiting (buffer)', { mediaId }); };
-    const onStalled = () => { if (VERBOSE) tvLog('stalled', { mediaId }); };
+    const onWaiting = () => { setIsBuffering(true); if (VERBOSE) tvLog('waiting (buffer)', { mediaId }); };
+    const onStalled = () => { setIsBuffering(true); if (VERBOSE) tvLog('stalled', { mediaId }); };
+    const onCanPlay = () => setIsBuffering(false);
+    const onPlayingEv = () => setIsBuffering(false);
+    const onSeeking = () => setIsBuffering(true);
+    const onSeeked = () => setIsBuffering(false);
     const onProgress = () => {
       if (!VERBOSE || loggedFirstBuffer || video.buffered.length === 0) return;
       const end = video.buffered.end(video.buffered.length - 1);
@@ -242,6 +249,10 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     video.addEventListener('error', onError);
     video.addEventListener('waiting', onWaiting);
     video.addEventListener('stalled', onStalled);
+    video.addEventListener('canplay', onCanPlay);
+    video.addEventListener('playing', onPlayingEv);
+    video.addEventListener('seeking', onSeeking);
+    video.addEventListener('seeked', onSeeked);
     video.addEventListener('progress', onProgress);
 
     if (isHls && Hls.isSupported()) {
@@ -290,6 +301,10 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       video.removeEventListener('error', onError);
       video.removeEventListener('waiting', onWaiting);
       video.removeEventListener('stalled', onStalled);
+      video.removeEventListener('canplay', onCanPlay);
+      video.removeEventListener('playing', onPlayingEv);
+      video.removeEventListener('seeking', onSeeking);
+      video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('progress', onProgress);
       hlsRef.current?.destroy();
       hlsRef.current = null;
@@ -320,6 +335,12 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       video.removeEventListener('timeupdate', onTime);
     };
   }, []);
+
+  // ── Auto-hide controls après 6s quand la lecture est active ──────────
+  useEffect(() => {
+    if (!playing || showResume || menuOpen || seekMode) return;
+    showControlsFor(6000);
+  }, [playing, showResume, menuOpen, seekMode, showControlsFor]);
 
   // ── Auto-save progress every 15s ─────────────────────────────────────
   useEffect(() => {
@@ -586,6 +607,29 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
       <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline />
+
+      {/* ── Buffering loader ─────────────────────────────────────────── */}
+      {isBuffering && !videoError && !showResume && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          gap: '1rem', pointerEvents: 'none',
+          background: 'rgba(0,0,0,0.35)',
+        }}>
+          <div style={{
+            width: '3.2rem', height: '3.2rem',
+            border: '0.2rem solid rgba(255,255,255,0.18)',
+            borderTop: '0.2rem solid var(--red)',
+            borderRadius: '50%',
+            animation: 'nasflix-spin 1s linear infinite',
+          }} />
+          <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.65rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            Chargement…
+          </span>
+          <style>{`@keyframes nasflix-spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
 
       {/* ── Debug panel (audio tracks) ──────────────────────────────── */}
       {DEBUG && (
