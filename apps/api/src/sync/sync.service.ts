@@ -2,6 +2,7 @@ import { Injectable, Logger, Inject, forwardRef, BadRequestException } from '@ne
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { basename } from 'node:path';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../common/prisma.service';
 import { NasService } from '../nas/nas.service';
 import { MetadataService, TmdbSearchResult } from '../metadata/metadata.service';
@@ -747,6 +748,7 @@ export class SyncService {
                 jellyfinItemId: item.Id,
                 runtime,
                 syncStatus: SyncStatus.PENDING,
+                nasAddedAt: new Date(),
               },
             });
           }
@@ -789,6 +791,7 @@ export class SyncService {
                 sourceType: SourceType.SEEDBOX,
                 jellyfinItemId: seriesId,
                 syncStatus: SyncStatus.PENDING,
+                nasAddedAt: new Date(),
               },
             });
           } else {
@@ -881,6 +884,24 @@ export class SyncService {
         data: { status: 'failed', errorDetails: msg, completedAt: new Date() },
       });
       throw err;
+    }
+  }
+
+  @Cron(CronExpression.EVERY_30_MINUTES)
+  async autoSyncJellyfin() {
+    const clubs = await this.prisma.cineClub.findMany({
+      where: { jellyfinBaseUrl: { not: null }, jellyfinApiToken: { not: null } },
+      select: { id: true, name: true },
+    });
+
+    for (const club of clubs) {
+      try {
+        this.logger.log(`[Auto-sync Jellyfin] Démarrage pour "${club.name}" (id=${club.id})`);
+        await this.syncFromJellyfin(club.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`[Auto-sync Jellyfin] Erreur pour "${club.name}": ${msg}`);
+      }
     }
   }
 

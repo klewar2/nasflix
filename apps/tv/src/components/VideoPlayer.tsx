@@ -55,6 +55,19 @@ function langName(code: string): string {
   return LANG_LABELS[key] || code.toUpperCase();
 }
 
+// Jellyfin transcodes the first segment on-demand; startLevel=0 avoids ABR
+// killing that slow segment, and the long timeouts keep hls.js from giving up.
+const HLS_CONFIG = {
+  enableWorker: true,
+  maxBufferLength: 30,
+  fragLoadingTimeOut: 120_000,
+  manifestLoadingTimeOut: 30_000,
+  levelLoadingTimeOut: 30_000,
+  fragLoadingMaxRetry: 6,
+  fragLoadingRetryDelay: 2000,
+  startLevel: 0,
+} as const;
+
 type TrackSection = 'audio' | 'subtitle';
 
 export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks, mediaId, episodeId, sourceType, onBack }: Props) {
@@ -233,7 +246,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
 
     if (isHls && Hls.isSupported()) {
       dlog('HLS mode — Hls.isSupported=true');
-      const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+      const hls = new Hls(HLS_CONFIG);
       hlsRef.current = hls;
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -392,7 +405,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
             } catch { return url; }
           })();
           hlsRef.current.destroy();
-          const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+          const hls = new Hls(HLS_CONFIG);
           hlsRef.current = hls;
           hls.loadSource(newUrl);
           hls.attachMedia(video);
@@ -411,7 +424,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
             ? await getEpisodeStreamUrl(episodeId, index + 1)
             : await getStreamUrl(mediaId, index + 1);
           hlsRef.current.destroy();
-          const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+          const hls = new Hls(HLS_CONFIG);
           hlsRef.current = hls;
           hls.loadSource(newStream.url);
           hls.attachMedia(video);

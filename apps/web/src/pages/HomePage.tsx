@@ -51,7 +51,7 @@ export default function HomePage() {
       {loadingRecent && <Skeleton className="h-[60vh] w-full mb-8" />}
       {heroItems.length > 0 && <HeroCarousel items={heroItems} />}
 
-      {recentMedia && recentMedia.length > 0 && <MediaCarousel title="Dernièrement ajouté sur le NAS" media={recentMedia} />}
+      {recentMedia && recentMedia.length > 0 && <MediaCarousel title="Ajouté récemment" media={recentMedia} />}
       {movies?.data && movies.data.length > 0 && <MediaCarousel title="Films" media={movies.data} />}
       {series?.data && series.data.length > 0 && <MediaCarousel title="Séries" media={series.data} />}
       {uhdMedia && uhdMedia.length > 0 && <MediaCarousel title="4K Ultra HD" media={uhdMedia} />}
