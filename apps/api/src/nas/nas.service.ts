@@ -1047,7 +1047,14 @@ export class NasService {
   ): Promise<MediaTracks> {
     const base = jellyfinBaseUrl.replace(/\/$/, '');
     const url = `${base}/Items/${jellyfinItemId}/PlaybackInfo?api_key=${jellyfinApiToken}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    let res: Response;
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    } catch (err) {
+      // Timeout undici / seedbox injoignable → tracks vides, ne casse pas la lecture.
+      this.logger.warn(`[jellyfin-playbackinfo] fetch ${jellyfinItemId} failed: ${(err as Error).message}`);
+      return { audio: [], subtitles: [] };
+    }
     if (!res.ok) return { audio: [], subtitles: [] };
 
     const data = await res.json() as {
