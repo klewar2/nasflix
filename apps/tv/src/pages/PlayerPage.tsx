@@ -6,10 +6,15 @@ interface Props {
   mediaId: number;
   episodeId?: number;
   title?: string;
+  nextEpisodeId?: number;
+  nextEpisodeTitle?: string;
+  videoQuality?: string;
+  hdr?: boolean;
   onBack: () => void;
+  onNextEpisode?: () => void;
 }
 
-export default function PlayerPage({ mediaId, episodeId, title, onBack }: Props) {
+export default function PlayerPage({ mediaId, episodeId, title, nextEpisodeId: _nextEpisodeId, nextEpisodeTitle: _nextEpisodeTitle, videoQuality, hdr, onBack, onNextEpisode }: Props) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['stream', mediaId, episodeId],
     queryFn: () =>
@@ -105,7 +110,10 @@ export default function PlayerPage({ mediaId, episodeId, title, onBack }: Props)
       jellyfinItemId={data.jellyfinItemId}
       jellyfinBaseUrl={data.jellyfinBaseUrl}
       jellyfinApiToken={data.jellyfinApiToken}
+      videoQuality={videoQuality}
+      hdr={hdr}
       onBack={onBack}
+      onNextEpisode={onNextEpisode}
     />
   );
 }

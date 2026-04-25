@@ -17,7 +17,10 @@ interface Props {
   jellyfinItemId?: string;
   jellyfinBaseUrl?: string;
   jellyfinApiToken?: string;
+  videoQuality?: string;
+  hdr?: boolean;
   onBack: () => void;
+  onNextEpisode?: () => void;
 }
 
 function formatTime(s: number): string {
@@ -70,7 +73,7 @@ const HLS_CONFIG = {
 
 type TrackSection = 'audio' | 'subtitle';
 
-export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks, mediaId, episodeId, sourceType, onBack }: Props) {
+export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks, mediaId, episodeId, sourceType, videoQuality, hdr, onBack, onNextEpisode }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const saveTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -92,6 +95,8 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   const [seekMode, setSeekMode] = useState(false);
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [videoError, setVideoError] = useState<{ code: number; message: string } | null>(null);
+  const [nextEpCountdown, setNextEpCountdown] = useState<number | null>(null);
+  const nextEpTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [isBuffering, setIsBuffering] = useState(true);
 
@@ -342,6 +347,28 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     showControlsFor(6000);
   }, [playing, showResume, menuOpen, seekMode, showControlsFor]);
 
+  // ── Épisode suivant: déclenche le compte à rebours à 90% de progression ──
+  useEffect(() => {
+    if (!onNextEpisode || nextEpCountdown !== null) return;
+    const dur = durationSeconds || videoRef.current?.duration || 0;
+    if (!dur || !playing) return;
+    if (currentTime / dur < 0.9) return;
+    // Start countdown
+    setNextEpCountdown(15);
+    nextEpTimer.current = setInterval(() => {
+      setNextEpCountdown((c) => {
+        if (c === null || c <= 1) {
+          clearInterval(nextEpTimer.current);
+          onNextEpisode();
+          return null;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(nextEpTimer.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTime, playing, durationSeconds, onNextEpisode]);
+
   // ── Auto-save progress every 15s ─────────────────────────────────────
   useEffect(() => {
     saveTimer.current = setInterval(() => {
@@ -502,13 +529,24 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   const displayTime = pendingSeekTime ?? currentTime;
   const progress = duration > 0 ? (displayTime / duration) * 100 : 0;
 
-  const activeAudioTrack = effectiveAudioTracks[activeAudio];
-  const activeSubTrack = activeSubtitle >= 0 ? effectiveSubtitles[activeSubtitle] : null;
-
   // ── Remote keys ────────────────────────────────────────────────────────
   useRemoteKeys((e) => {
     const video = videoRef.current;
     if (!video) return;
+
+    // Next episode countdown: OK = go now, BACK = dismiss
+    if (nextEpCountdown !== null) {
+      e.preventDefault();
+      if (e.keyCode === KEY.OK) {
+        clearInterval(nextEpTimer.current);
+        setNextEpCountdown(null);
+        onNextEpisode?.();
+      } else if (e.keyCode === KEY.BACK) {
+        clearInterval(nextEpTimer.current);
+        setNextEpCountdown(null);
+      }
+      return;
+    }
 
     // Resume prompt: OK = resume, anything else = start over
     if (showResume) {
@@ -602,7 +640,26 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       watchProgress.save(mediaId, episodeId, video.currentTime, dur);
       onBack();
     }
-  }, [onBack, menuOpen, menuSection, menuIndex, currentItems, activeAudio, tracks, hasMenu, seekMode, pendingSeekTime, durationSeconds, showResume, mediaId, episodeId, showControlsFor]);
+  }, [onBack, menuOpen, menuSection, menuIndex, currentItems, activeAudio, tracks, hasMenu, seekMode, pendingSeekTime, durationSeconds, showResume, mediaId, episodeId, showControlsFor, nextEpCountdown, onNextEpisode]);
+
+  const audioSummary = (() => {
+    const t = effectiveAudioTracks[activeAudio];
+    if (!t) return 'Audio';
+    const lang = langName(t.language) || t.title;
+    const ch = t.channels > 0 ? ` · ${channelLabel(t.channels)}` : '';
+    return `${lang}${ch}`;
+  })();
+
+  const subSummary = (() => {
+    if (activeSubtitle < 0) return 'Désactivés';
+    const t = effectiveSubtitles[activeSubtitle];
+    return t ? (langName(t.language) || t.title) : 'Désactivés';
+  })();
+
+  const clockTime = (() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  })();
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
@@ -614,18 +671,18 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
           position: 'absolute', inset: 0,
           display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center',
-          gap: '1rem', pointerEvents: 'none',
+          gap: '0.625rem', pointerEvents: 'none',
           background: 'rgba(0,0,0,0.35)',
         }}>
           <div style={{
-            width: '3.2rem', height: '3.2rem',
-            border: '0.2rem solid rgba(255,255,255,0.18)',
-            borderTop: '0.2rem solid var(--red)',
+            width: '2rem', height: '2rem',
+            border: '2px solid rgba(255,255,255,0.1)',
+            borderTop: '2px solid var(--accent)',
             borderRadius: '50%',
-            animation: 'nasflix-spin 1s linear infinite',
+            animation: 'nasflix-spin 0.8s linear infinite',
           }} />
-          <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: '0.65rem', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            Chargement…
+          <span style={{ color: 'rgba(255,255,255,0.6)', fontFamily: 'var(--mono)', fontSize: '0.34rem', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            BUFFER…
           </span>
           <style>{`@keyframes nasflix-spin { to { transform: rotate(360deg); } }`}</style>
         </div>
@@ -690,223 +747,388 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       {showResume && savedProgress && (
         <div style={{
           position: 'absolute', inset: 0,
-          background: 'rgba(0,0,0,0.75)',
+          background: 'rgba(0,0,0,0.55)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
-            background: 'rgba(14,14,18,0.97)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: '16px',
-            padding: '2rem 2.5rem',
+            background: 'rgba(14,14,18,0.88)',
+            backdropFilter: 'blur(24px)',
+            WebkitBackdropFilter: 'blur(24px)',
+            border: '1px solid var(--line-strong)',
+            borderRadius: '0.5rem',
+            padding: '1.25rem 1.5rem',
             textAlign: 'center',
-            maxWidth: '480px',
+            maxWidth: '17.5rem',
           }}>
-            <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Reprendre la lecture
+            <div className="uppercase-eyebrow" style={{ marginBottom: '0.4375rem' }}>
+              Reprendre la lecture ?
             </div>
             {title && (
-              <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem' }}>{title}</div>
+              <h2 style={{ fontFamily: 'var(--serif)', fontSize: '1.1875rem', fontWeight: 400, marginBottom: '0.1875rem', color: '#fff' }}>
+                {title}
+              </h2>
             )}
-            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--red)', marginBottom: '1.2rem' }}>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '2.25rem', fontWeight: 500, color: 'var(--accent)', marginBottom: '0.125rem', fontVariantNumeric: 'tabular-nums' }}>
               {formatTime(savedProgress.currentTime)}
-              <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginLeft: '0.5rem', fontWeight: 400 }}>
-                / {formatTime(savedProgress.duration)}
-              </span>
             </div>
-            <div style={{ display: 'flex', gap: '0.8rem', justifyContent: 'center', marginBottom: '1rem' }}>
-              <button style={resumeBtn(true)} onClick={doResume}>
-                ▶ Reprendre
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '0.375rem', color: 'var(--text-dim)', marginBottom: '0.875rem' }}>
+              sur {formatTime(savedProgress.duration)} · {formatTime(Math.max(0, savedProgress.duration - savedProgress.currentTime))} restantes
+            </div>
+            <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center', marginBottom: '0.5rem' }}>
+              <button style={{
+                background: '#fff', color: '#0a0a0e', border: 'none',
+                padding: '0.375rem 0.75rem', borderRadius: '4px',
+                fontSize: '0.44rem', fontWeight: 600, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '0.25rem',
+              }} onClick={doResume}>
+                <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor"/></svg>
+                Reprendre
               </button>
-              <button style={resumeBtn(false)} onClick={doStartOver}>
-                ↺ Recommencer
+              <button style={{
+                background: 'rgba(255,255,255,0.08)', color: '#fff',
+                border: '1px solid var(--line-strong)',
+                padding: '0.375rem 0.6875rem', borderRadius: '4px',
+                fontSize: '0.44rem', cursor: 'pointer',
+              }} onClick={doStartOver}>
+                ↻ Recommencer
               </button>
             </div>
-            <div style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.25)' }}>
-              OK reprendre · autre touche recommencer · auto dans {resumeCountdown}s
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3125rem', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
+              REPRISE AUTOMATIQUE DANS {resumeCountdown} SEC.
             </div>
           </div>
         </div>
       )}
 
-      {/* Seek hint */}
-      {seekHint && (
+      {/* Seek hint (center of screen, brief) */}
+      {seekHint && !seekMode && (
         <div style={{
           position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
-          background: 'rgba(0,0,0,0.82)', border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: '12px', padding: '0.7rem 1.6rem',
-          fontSize: '1.8rem', fontWeight: 700, color: '#fff', pointerEvents: 'none',
+          background: 'rgba(0,0,0,0.75)', border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: '0.5rem', padding: '0.4375rem 1rem',
+          fontFamily: 'var(--mono)', fontSize: '1.125rem', fontWeight: 700,
+          color: '#fff', pointerEvents: 'none', letterSpacing: '0.06em',
         }}>
           {seekHint}
         </div>
       )}
 
-      {/* Track menu */}
-      {menuOpen && (
+      {/* Next episode countdown */}
+      {nextEpCountdown !== null && onNextEpisode && (
         <div style={{
-          position: 'absolute', bottom: '9rem', left: '3rem',
-          background: 'rgba(8,8,10,0.96)', border: '1px solid rgba(255,255,255,0.1)',
-          borderRadius: '14px', padding: '1.1rem', minWidth: '340px', maxWidth: '440px',
+          position: 'absolute', bottom: '13rem', right: '2rem',
+          background: 'rgba(9,9,11,0.92)',
+          backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: '0.5rem', padding: '0.75rem 1rem',
+          display: 'flex', flexDirection: 'column', gap: '0.5rem',
+          minWidth: '9rem', zIndex: 50,
         }}>
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.9rem' }}>
-            {(['audio', 'subtitle'] as TrackSection[]).map((s) => (
-              <button key={s} onClick={() => { setMenuSection(s); setMenuIndex(0); }} style={{
-                flex: 1, padding: '0.5rem 0', borderRadius: '8px', border: 'none',
-                fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer',
-                background: menuSection === s ? 'var(--red)' : 'rgba(255,255,255,0.08)',
-                color: '#fff', textTransform: 'uppercase', letterSpacing: '0.05em',
-              }}>
-                {s === 'audio' ? '🔊 Audio' : '💬 Sous-titres'}
-              </button>
-            ))}
+          <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+            Épisode suivant dans {nextEpCountdown}s
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            {currentItems.map((item, i) => {
-              const isActive = menuSection === 'audio' ? (i === activeAudio) : (item.index === activeSubtitle);
-              const isFocused = i === menuIndex;
-              const audioItem = menuSection === 'audio'
-                ? (item as { index: number; title: string; codec: string; channels: number; language: string })
-                : null;
-              return (
-                <div key={item.index} style={{
-                  display: 'flex', alignItems: 'center', gap: '0.7rem',
-                  padding: '0.6rem 0.8rem', borderRadius: '8px',
-                  background: isFocused ? 'rgba(229,9,20,0.2)' : (isActive ? 'rgba(255,255,255,0.05)' : 'transparent'),
-                  border: `2px solid ${isFocused ? 'rgba(229,9,20,0.5)' : 'transparent'}`,
-                }}>
-                  <span style={{ fontSize: '0.6rem', color: isActive ? 'var(--red)' : 'rgba(255,255,255,0.15)', flexShrink: 0 }}>●</span>
-                  <span style={{ flex: 1, fontSize: '0.75rem', color: isFocused ? '#fff' : 'rgba(255,255,255,0.65)' }}>
-                    {item.title}
-                    {item.language && langName(item.language) !== item.title && (
-                      <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.6rem', marginLeft: '0.35rem' }}>
-                        {langName(item.language)}
-                      </span>
-                    )}
-                    {audioItem && (audioItem.codec || audioItem.channels > 0) && (
-                      <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.6rem', marginLeft: '0.4rem' }}>
-                        {[audioItem.codec, audioItem.channels > 0 ? channelLabel(audioItem.channels) : ''].filter(Boolean).join(' · ')}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-            {currentItems.length === 0 && (
-              <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', padding: '0.4rem 0.8rem' }}>Aucune piste disponible</span>
-            )}
-          </div>
-          <div style={{ marginTop: '0.7rem', fontSize: '0.5rem', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>
-            ↑↓ naviguer · ←→ changer section · OK confirmer · BACK fermer
+          <div style={{ display: 'flex', gap: '0.375rem' }}>
+            <button
+              onClick={() => { clearInterval(nextEpTimer.current); setNextEpCountdown(null); onNextEpisode(); }}
+              style={{
+                flex: 1, padding: '0.375rem 0.5rem',
+                background: '#fff', color: '#0a0a0e',
+                border: 'none', borderRadius: '4px',
+                fontSize: '0.38rem', fontWeight: 700, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '0.25rem', justifyContent: 'center',
+              }}
+            >
+              <svg width="9" height="9" viewBox="0 0 12 12"><path d="M2 1.5v9l8-4.5z M11 1.5v9" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+              Suivant
+            </button>
+            <button
+              onClick={() => { clearInterval(nextEpTimer.current); setNextEpCountdown(null); }}
+              style={{
+                padding: '0.375rem 0.5rem',
+                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: '4px', color: '#fff', fontSize: '0.38rem', cursor: 'pointer',
+              }}
+            >
+              Annuler
+            </button>
           </div>
         </div>
       )}
 
-      {/* Controls overlay */}
+      {/* ── Controls overlay ──────────────────────────────────────────── */}
       <div style={{
         position: 'absolute', inset: 0,
         opacity: showControls ? 1 : 0,
         transition: 'opacity 0.3s',
-        pointerEvents: 'none',
+        pointerEvents: showControls ? 'auto' : 'none',
       }}>
-        {/* Title */}
-        {title && (
-          <div style={{
-            position: 'absolute', top: 0, left: 0, right: 0,
-            padding: '2rem 3rem 4rem',
-            background: 'linear-gradient(rgba(0,0,0,0.75), transparent)',
-          }}>
-            <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>{title}</div>
-          </div>
-        )}
-
-        {/* Bottom bar */}
+        {/* ── TOP BAR ── */}
         <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          padding: '2.5rem 3rem 2rem',
-          background: 'linear-gradient(transparent, rgba(0,0,0,0.9) 35%)',
+          position: 'absolute', top: 0, left: 0, right: 0,
+          padding: '0.875rem 2rem',
+          display: 'flex', alignItems: 'center', gap: '0.5625rem',
+          background: 'linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%)',
+          pointerEvents: 'none',
         }}>
-          {/* Active tracks bar */}
-          {hasTracks && (
-            <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '0.75rem', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.45rem', color: 'rgba(255,255,255,0.25)' }}>{hasMenu ? '↑ Pistes :' : 'Piste :'}</span>
-              <span style={{
-                fontSize: '0.45rem', padding: '0.18rem 0.55rem', borderRadius: '4px',
-                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff',
-                display: 'flex', alignItems: 'center', gap: '0.3rem',
-              }}>
-                🔊 {activeAudioTrack?.title || 'Audio'}
-                {activeAudioTrack?.language && (
-                  <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.38rem', borderLeft: '1px solid rgba(255,255,255,0.18)', paddingLeft: '0.3rem' }}>
-                    {langName(activeAudioTrack.language)}
+          <button
+            onClick={onBack}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.3125rem',
+              padding: '0.25rem 0.4375rem',
+              background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: '4px', color: '#fff', cursor: 'pointer',
+              pointerEvents: 'auto',
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 14 14" fill="none">
+              <path d="M9 2L4 7l5 5" stroke="#fff" strokeWidth="1.6" strokeLinecap="round"/>
+            </svg>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '0.34rem', letterSpacing: '0.08em' }}>RETOUR</span>
+          </button>
+          {title && (
+            <div>
+              <div className="uppercase-eyebrow" style={{ fontSize: '0.3rem' }}>{title}</div>
+            </div>
+          )}
+          <div style={{ flex: 1 }} />
+          {videoQuality === '4K' && <span className="quality uhd">4K</span>}
+          {hdr && <span className="quality hdr">HDR</span>}
+          <span style={{ fontFamily: 'var(--mono)', fontSize: '0.375rem', color: 'rgba(255,255,255,0.6)' }}>
+            {clockTime}
+          </span>
+        </div>
+
+        {/* ── BOTTOM PANEL ── */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0,
+          background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.65) 30%, rgba(0,0,0,0.97) 100%)',
+          padding: '3.75rem 2rem 1rem',
+        }}>
+          {/* Tabs */}
+          <div style={{ display: 'flex', gap: '0.1875rem', marginBottom: '0.875rem', alignItems: 'center' }}>
+            {[
+              { id: 'play' as const, label: 'Lecture', sub: null, active: !menuOpen },
+              { id: 'audio' as const, label: 'Audio', sub: audioSummary, active: menuOpen && menuSection === 'audio' },
+              { id: 'subtitle' as const, label: 'Sous-titres', sub: subSummary, active: menuOpen && menuSection === 'subtitle' },
+            ].map((tab) => (
+              <div
+                key={tab.id}
+                onClick={() => {
+                  if (tab.id === 'play') { setMenuOpen(false); showControlsFor(); }
+                  else { setMenuSection(tab.id as TrackSection); setMenuIndex(0); setMenuOpen(true); clearTimeout(hideTimer.current); }
+                }}
+                style={{
+                  padding: '0.3125rem 0.5625rem',
+                  borderRadius: '4px',
+                  background: tab.active ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${tab.active ? 'rgba(255,255,255,0.25)' : 'var(--line-strong)'}`,
+                  display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '3.75rem',
+                  cursor: 'pointer',
+                  outline: tab.active ? '3px solid rgba(255,255,255,0.5)' : 'none',
+                  outlineOffset: '3px',
+                }}
+              >
+                <span style={{ fontSize: '0.41rem', fontWeight: 500, color: tab.active ? '#fff' : 'var(--text-muted)' }}>
+                  {tab.label}
+                </span>
+                {tab.sub && (
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'var(--text-dim)' }}>
+                    {tab.sub}
                   </span>
                 )}
-                {activeAudioTrack && activeAudioTrack.channels > 0 && (
-                  <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '0.38rem' }}>
-                    {activeAudioTrack.codec ? `${activeAudioTrack.codec} · ` : ''}{channelLabel(activeAudioTrack.channels)}
-                  </span>
-                )}
-              </span>
-              <span style={{
-                fontSize: '0.45rem', padding: '0.18rem 0.55rem', borderRadius: '4px',
-                background: activeSubTrack ? 'rgba(229,9,20,0.12)' : 'rgba(255,255,255,0.05)',
-                border: `1px solid ${activeSubTrack ? 'rgba(229,9,20,0.25)' : 'rgba(255,255,255,0.08)'}`,
-                color: activeSubTrack ? '#fca5a5' : 'rgba(255,255,255,0.35)',
-              }}>
-                💬 {activeSubTrack?.title || 'off'}
-              </span>
+              </div>
+            ))}
+            <div style={{ flex: 1 }} />
+            <span className="chip" style={{ fontSize: '0.3rem' }}>
+              {seekMode ? '◀▶ ±30s · OK valider · BACK annuler' : '↑ Pistes · ↓ Scrub · ←→ ±10s'}
+            </span>
+          </div>
+
+          {/* Track list (when menu open) */}
+          {menuOpen && (
+            <div style={{
+              marginBottom: '0.875rem',
+              maxHeight: '7.5rem', overflowY: 'auto',
+              display: 'flex', flexDirection: 'column', gap: '2px',
+            }}>
+              {currentItems.map((item, i) => {
+                const isActive = menuSection === 'audio' ? (i === activeAudio) : (item.index === activeSubtitle);
+                const isFocused = i === menuIndex;
+                const audioItem = menuSection === 'audio'
+                  ? (item as { index: number; title: string; codec: string; channels: number; language: string })
+                  : null;
+                return (
+                  <div key={item.index} style={{
+                    display: 'flex', alignItems: 'center', gap: '0.4375rem',
+                    padding: '0.4375rem 0.5rem', borderRadius: '4px',
+                    background: isFocused
+                      ? 'var(--accent-soft)'
+                      : isActive ? 'rgba(255,255,255,0.04)' : 'transparent',
+                    border: `1px solid ${isFocused ? 'var(--accent-line)' : 'transparent'}`,
+                    cursor: 'pointer',
+                  }}>
+                    <span style={{
+                      width: '0.25rem', height: '0.25rem', borderRadius: '50%', flexShrink: 0,
+                      background: isActive ? 'var(--accent)' : 'transparent',
+                      border: '1px solid var(--line-strong)',
+                    }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '0.44rem', color: isFocused ? '#fff' : 'var(--text)', fontWeight: 500 }}>
+                        {item.title}
+                        {item.language && langName(item.language) !== item.title && (
+                          <span style={{ color: 'var(--text-dim)', fontSize: '0.34rem', marginLeft: '0.375rem' }}>
+                            {langName(item.language)}
+                          </span>
+                        )}
+                      </div>
+                      {audioItem && (audioItem.codec || audioItem.channels > 0) && (
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'var(--text-dim)', marginTop: '1px' }}>
+                          {[audioItem.codec, audioItem.channels > 0 ? channelLabel(audioItem.channels) : ''].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
+                    </div>
+                    {isActive && <span className="chip accent" style={{ fontSize: '0.28rem' }}>ACTIF</span>}
+                  </div>
+                );
+              })}
+              {currentItems.length === 0 && (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: '0.38rem', color: 'var(--text-dim)', padding: '0.25rem 0.5rem' }}>
+                  Aucune piste disponible
+                </span>
+              )}
             </div>
           )}
 
           {/* Timeline */}
-          <div style={{
-            height: '5px', background: 'rgba(255,255,255,0.18)', borderRadius: '3px',
-            marginBottom: '1.2rem', position: 'relative',
-            outline: seekMode ? '2px solid var(--red)' : 'none', outlineOffset: '5px',
-          }}>
-            <div style={{
-              height: '100%', width: `${progress}%`,
-              background: seekMode ? '#fff' : 'var(--red)', borderRadius: '3px',
-              transition: seekMode ? 'none' : 'width 0.5s linear',
-            }} />
-            <div style={{
-              position: 'absolute', top: '50%', left: `${progress}%`,
-              transform: 'translate(-50%, -50%)',
-              width: seekMode ? '18px' : '12px', height: seekMode ? '18px' : '12px',
-              borderRadius: '50%', background: '#fff',
-              boxShadow: seekMode ? '0 0 0 3px var(--red)' : '0 0 0 2px var(--red)',
-              transition: seekMode ? 'none' : 'left 0.5s linear, width 0.15s, height 0.15s',
-              willChange: 'left',
-            }} />
-          </div>
-
-          {/* Controls row */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.2rem' }}>
-              <div style={{
-                width: '2.8rem', height: '2.8rem', borderRadius: '50%', background: 'var(--red)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '1.2rem', lineHeight: 1, flexShrink: 0,
+          <div style={{ position: 'relative', marginBottom: '0.875rem' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: '0.5rem' }}>
+              <span style={{
+                fontFamily: 'var(--mono)', fontSize: '1.75rem', color: '#fff',
+                fontWeight: 500, letterSpacing: '0.02em', fontVariantNumeric: 'tabular-nums',
               }}>
-                {playing ? '⏸' : '▶'}
-              </div>
-              <span style={{ fontSize: '1.1rem', fontWeight: 600, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>
                 {formatTime(displayTime)}
-                <span style={{ color: 'rgba(255,255,255,0.35)', fontWeight: 400 }}> / {formatTime(duration)}</span>
+              </span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: '0.4375rem', color: 'rgba(255,255,255,0.4)', marginLeft: '0.375rem' }}>
+                / {formatTime(duration)}
+              </span>
+              <div style={{ flex: 1 }} />
+              {seekMode && (
+                <span style={{
+                  display: 'flex', alignItems: 'center', gap: '0.3125rem',
+                  padding: '0.1875rem 0.4375rem',
+                  background: 'var(--accent-soft)', border: '1px solid var(--accent-line)',
+                  borderRadius: '4px',
+                }}>
+                  <span style={{ width: '0.25rem', height: '0.25rem', borderRadius: '50%', background: 'var(--accent)', animation: 'pulse-soft 2s ease-in-out infinite' }} />
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: '0.375rem', color: '#e8b3ad', letterSpacing: '0.08em' }}>
+                    SCRUB
+                  </span>
+                </span>
+              )}
+              <span style={{ fontFamily: 'var(--mono)', fontSize: '0.375rem', color: 'rgba(255,255,255,0.5)', marginLeft: '0.5625rem' }}>
+                −{formatTime(Math.max(0, duration - displayTime))} restantes
               </span>
             </div>
-            <div style={{ display: 'flex', gap: '1.2rem', alignItems: 'center' }}>
-              {seekMode ? (
-                <span style={{ fontSize: '0.6rem', color: 'var(--red)', fontWeight: 700 }}>
-                  ⬤ SEEK — ←→ ±30s · OK valider · BACK annuler
-                </span>
-              ) : (
-                <>
-                  <span style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.3)' }}>←→ ±10s</span>
-                  <span style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.3)' }}>⏮⏭ ±30s</span>
-                  <span style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.3)' }}>↓ Seek · ↑ Pistes</span>
-                  <span style={{ fontSize: '0.5rem', color: 'rgba(255,255,255,0.3)' }}>BACK quitter</span>
-                </>
+
+            {/* Progress bar */}
+            <div style={{ position: 'relative', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.15)', overflow: 'visible' }}>
+              {/* Played */}
+              <div style={{
+                position: 'absolute', left: 0, top: 0, bottom: 0, width: `${progress}%`,
+                background: seekMode ? '#fff' : 'var(--accent)', borderRadius: '3px',
+                transition: seekMode ? 'none' : 'width 0.5s linear',
+              }} />
+              {/* Thumb */}
+              <div style={{
+                position: 'absolute', left: `${progress}%`, top: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: seekMode ? '1.375rem' : '1rem', height: seekMode ? '1.375rem' : '1rem',
+                borderRadius: '50%', background: '#fff',
+                boxShadow: seekMode
+                  ? '0 0 0 5px var(--accent), 0 0 24px rgba(177,58,48,0.6)'
+                  : '0 0 0 3px var(--accent)',
+                transition: seekMode ? 'none' : 'left 0.5s linear',
+                willChange: 'left',
+              }} />
+              {/* Scrub preview thumbnail (placeholder) */}
+              {seekMode && (
+                <div style={{
+                  position: 'absolute', left: `${progress}%`, bottom: '1.125rem',
+                  transform: 'translateX(-50%)',
+                  width: '7.5rem', height: '4.21875rem',
+                  borderRadius: '4px', overflow: 'hidden',
+                  border: '2px solid #fff',
+                  boxShadow: '0 10px 40px rgba(0,0,0,0.8)',
+                  background: 'linear-gradient(135deg, #1a1a22, #0a0a0e)',
+                  display: 'flex', alignItems: 'flex-end', padding: '0.1875rem 0.25rem',
+                }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: '#fff', background: 'rgba(0,0,0,0.7)', padding: '1px 4px', borderRadius: '2px' }}>
+                    {formatTime(displayTime)}
+                  </span>
+                </div>
               )}
             </div>
+          </div>
+
+          {/* Transport row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {/* Round transport buttons */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4375rem' }}>
+              {/* Prev */}
+              <RoundBtn size={46}>
+                <svg width="13" height="13" viewBox="0 0 13 13"><path d="M10 1.5v10l-8-5z M2 1.5v10" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+              </RoundBtn>
+              {/* −10s */}
+              <RoundBtn size={46} sub="−10">
+                <svg width="14" height="14" viewBox="0 0 14 14"><path d="M12 7a5 5 0 1 1-5-5V0L3.5 3.5 7 7" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </RoundBtn>
+              {/* Play/Pause — big */}
+              <RoundBtn size={64} big onClick={() => { const v = videoRef.current; if (!v) return; v.paused ? v.play() : v.pause(); }}>
+                {playing
+                  ? <svg width="18" height="18" viewBox="0 0 18 18"><rect x="2" y="2" width="5" height="14" rx="1" fill="currentColor"/><rect x="11" y="2" width="5" height="14" rx="1" fill="currentColor"/></svg>
+                  : <svg width="18" height="18" viewBox="0 0 18 18"><path d="M4 2v14l12-7z" fill="currentColor"/></svg>
+                }
+              </RoundBtn>
+              {/* +10s */}
+              <RoundBtn size={46} sub="+10">
+                <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 7a5 5 0 1 0 5-5V0L10.5 3.5 7 7" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </RoundBtn>
+              {/* Next */}
+              <RoundBtn size={46}>
+                <svg width="13" height="13" viewBox="0 0 13 13"><path d="M3 1.5v10l8-5z M11 1.5v10" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+              </RoundBtn>
+            </div>
+
+            <div style={{ flex: 1 }} />
+
+            {/* Track summary chips */}
+            {hasTracks && (
+              <div style={{ display: 'flex', gap: '0.375rem' }}>
+                <span className="chip" style={{ fontSize: '0.34rem' }}>
+                  🔊 {audioSummary}
+                </span>
+                <span className="chip" style={{ fontSize: '0.34rem', color: activeSubtitle >= 0 ? 'var(--text)' : 'var(--text-dim)' }}>
+                  💬 {subSummary}
+                </span>
+              </div>
+            )}
+
+            {/* Next episode button */}
+            {onNextEpisode && (
+              <button
+                onClick={() => { clearInterval(nextEpTimer.current); onNextEpisode(); }}
+                style={{
+                  background: 'rgba(255,255,255,0.06)', color: '#fff',
+                  border: '1px solid var(--line-strong)', borderRadius: '4px',
+                  padding: '0.3125rem 0.5625rem', fontSize: '0.41rem', fontWeight: 500,
+                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '0.25rem',
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 13 13"><path d="M3 1v11l8-5.5z M11 1v11" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+                Épisode suivant
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -970,12 +1192,34 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   );
 }
 
-function resumeBtn(primary: boolean): React.CSSProperties {
-  return {
-    padding: '0.6rem 1.4rem',
-    background: primary ? 'var(--red)' : 'rgba(255,255,255,0.08)',
-    border: `1px solid ${primary ? 'var(--red)' : 'rgba(255,255,255,0.12)'}`,
-    borderRadius: '8px', color: '#fff',
-    fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer',
-  };
+function RoundBtn({ size, big, sub, onClick, children }: {
+  size: number; big?: boolean; sub?: string;
+  onClick?: () => void; children: React.ReactNode;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        width: `${size / 32}rem`, height: `${size / 32}rem`, borderRadius: '50%',
+        background: big ? '#fff' : 'rgba(255,255,255,0.08)',
+        border: big ? 'none' : '1px solid rgba(255,255,255,0.15)',
+        color: big ? '#0a0a0e' : '#fff',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        cursor: onClick ? 'pointer' : 'default',
+        position: 'relative', flexShrink: 0,
+        transition: 'transform 0.1s, background 0.15s',
+      }}
+    >
+      {children}
+      {sub && (
+        <span style={{
+          fontFamily: 'var(--mono)', fontSize: '0.25rem',
+          position: 'absolute', bottom: '0.15rem',
+          color: big ? '#0a0a0e' : 'rgba(255,255,255,0.5)',
+        }}>
+          {sub}
+        </span>
+      )}
+    </div>
+  );
 }

@@ -1,46 +1,87 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
-import { getMedia, getNasStatus, wakeNas } from '../lib/api';
+import { getNasStatus, wakeNas } from '../lib/api';
 
 interface Props {
   focused: boolean;
+  currentScreen?: string;
   cineClubName?: string;
   isAdmin?: boolean;
   onFocusDown: () => void;
   onNavigateHome: () => void;
+  onNavigateFilms: () => void;
+  onNavigateSeries: () => void;
   onNavigateSearch: () => void;
   onChangeCineClub: () => void;
   onLogout: () => void;
 }
 
-// Nav items order (for LEFT/RIGHT navigation)
-type NavItemId = 'logo' | 'wol' | 'search' | 'cineclubs' | 'logout';
-const NAV_ITEMS: NavItemId[] = ['logo', 'wol', 'search', 'cineclubs', 'logout'];
+type NavItemId = 'home' | 'films' | 'series' | 'search' | 'wol' | 'cineclubs' | 'logout';
+
+const BASE_ITEMS: NavItemId[] = ['home', 'films', 'series', 'search', 'wol', 'cineclubs', 'logout'];
+
+/** Play-variant logo: rounded square with accent fill + play triangle */
+function NasflixLogo() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="40" height="40" rx="9" fill="var(--accent)" />
+        <path d="M16 13 L28 20 L16 27 Z" fill="#0c0c10" />
+      </svg>
+      <span style={{
+        fontFamily: 'Inter, sans-serif',
+        fontWeight: 800,
+        fontSize: '0.56rem',
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: 'var(--text-muted)',
+        lineHeight: 1,
+      }}>
+        nasflix
+      </span>
+    </div>
+  );
+}
+
+function ClockDisplay() {
+  const [time, setTime] = useState(() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  });
+
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      setTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+    };
+    const id = setInterval(update, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <span style={{ fontFamily: 'var(--mono)', fontSize: '0.38rem', color: 'var(--text-muted)' }}>
+      {time}
+    </span>
+  );
+}
 
 export default function TVNavbar({
   focused,
+  currentScreen,
   cineClubName,
   isAdmin,
   onFocusDown,
   onNavigateHome,
+  onNavigateFilms,
+  onNavigateSeries,
   onNavigateSearch,
   onChangeCineClub,
   onLogout,
 }: Props) {
-  const [focusedItem, setFocusedItem] = useState<NavItemId>('logo');
+  const [focusedItem, setFocusedItem] = useState<NavItemId>('home');
   const [wolStatus, setWolStatus] = useState<'idle' | 'waking' | 'online'>('idle');
 
-  const { data: moviesResult } = useQuery({
-    queryKey: ['count', 'movie'],
-    queryFn: () => getMedia({ type: 'movie', limit: 1 }),
-    staleTime: 5 * 60 * 1000,
-  });
-  const { data: seriesResult } = useQuery({
-    queryKey: ['count', 'series'],
-    queryFn: () => getMedia({ type: 'series', limit: 1 }),
-    staleTime: 5 * 60 * 1000,
-  });
   const { data: nasStatus } = useQuery({
     queryKey: ['nasStatus'],
     queryFn: getNasStatus,
@@ -69,15 +110,17 @@ export default function TVNavbar({
   };
 
   const activateItem = (item: NavItemId) => {
-    if (item === 'logo') onNavigateHome();
-    else if (item === 'wol' && !nasOnline) handleWoL();
+    if (item === 'home') onNavigateHome();
+    else if (item === 'films') onNavigateFilms();
+    else if (item === 'series') onNavigateSeries();
     else if (item === 'search') onNavigateSearch();
+    else if (item === 'wol' && !nasOnline) handleWoL();
     else if (item === 'cineclubs') onChangeCineClub();
     else if (item === 'logout') onLogout();
   };
 
-  // Compute visible nav items (hide wol if NAS online)
-  const visibleItems = NAV_ITEMS.filter(id => id !== 'wol' || !nasOnline) as NavItemId[];
+  // Hide wol when NAS is online
+  const visibleItems = BASE_ITEMS.filter((id) => id !== 'wol' || !nasOnline) as NavItemId[];
 
   useRemoteKeys((e) => {
     if (!focused) return;
@@ -97,157 +140,187 @@ export default function TVNavbar({
     }
   }, [focused, focusedItem, visibleItems, nasOnline, wolStatus]);
 
-  const filmCount = moviesResult?.total;
-  const seriesCount = seriesResult?.total;
+  const navLinks: { id: NavItemId; label: string; icon?: React.ReactNode }[] = [
+    { id: 'home', label: 'Accueil' },
+    { id: 'films', label: 'Films' },
+    { id: 'series', label: 'Séries' },
+    {
+      id: 'search',
+      label: 'Rechercher',
+      icon: (
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+          <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M10.5 10.5 L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+  ];
 
   return (
     <header style={{
-      height: '64px',
+      height: '84px',
       flexShrink: 0,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingLeft: '3rem',
-      paddingRight: '3rem',
-      background: 'rgba(9,9,11,0.97)',
-      borderBottom: '1px solid rgba(255,255,255,0.06)',
+      paddingLeft: '2rem',
+      paddingRight: '2rem',
+      background: 'linear-gradient(180deg, rgba(7,7,10,0.95) 0%, rgba(7,7,10,0.4) 80%, transparent)',
       position: 'relative',
       zIndex: 100,
     }}>
-      {/* Left: Logo + NAS status */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+      {/* Left: Logo + separator + nav links */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
         {/* Logo */}
         <button
-          onClick={() => { setFocusedItem('logo'); activateItem('logo'); }}
+          onClick={() => { setFocusedItem('home'); onNavigateHome(); }}
           style={{
-            background: 'none', border: 'none', cursor: 'pointer', padding: '0.3rem 0.5rem',
-            borderRadius: '6px',
-            outline: focused && focusedItem === 'logo' ? '3px solid #fff' : 'none',
+            background: 'none', border: 'none', cursor: 'pointer', padding: '0',
+            borderRadius: '4px',
+            outline: focused && focusedItem === 'home' ? '2px solid var(--accent)' : 'none',
+            outlineOffset: '5px',
+            boxShadow: focused && focusedItem === 'home' ? '0 0 0 7px rgba(177,58,48,0.12)' : 'none',
           }}
         >
-          <span style={{
-            fontSize: '1.6rem',
-            fontWeight: 900,
-            letterSpacing: '-0.04em',
-            color: 'var(--red)',
-            lineHeight: 1,
-          }}>
-            N<span style={{ color: '#fff', fontSize: '1rem', letterSpacing: '0.02em' }}>ASFLIX</span>
-          </span>
+          <NasflixLogo />
         </button>
 
-        {/* NAS status dot */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        {/* Separator */}
+        <div style={{ width: 1, height: '24px', background: 'var(--line-strong)', flexShrink: 0 }} />
+
+        {/* Nav tabs */}
+        <nav style={{ display: 'flex', gap: '0.1rem' }}>
+          {navLinks.map((item) => {
+            const isActive = currentScreen === item.id;
+            const isFocused = focused && focusedItem === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => { setFocusedItem(item.id); activateItem(item.id); }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  padding: '0.25rem 0.6rem',
+                  paddingBottom: isActive ? 'calc(0.25rem - 2px)' : '0.25rem',
+                  borderRadius: '4px',
+                  borderBottom: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}`,
+                  display: 'flex', alignItems: 'center', gap: '0.22rem',
+                  fontSize: '0.47rem', fontWeight: isActive ? 600 : 500,
+                  color: isActive ? '#fff' : 'var(--text-muted)',
+                  outline: isFocused ? '2px solid var(--accent)' : 'none',
+                  outlineOffset: '5px',
+                  boxShadow: isFocused ? '0 0 0 7px rgba(177,58,48,0.12)' : 'none',
+                  transition: 'color 0.12s, border-color 0.12s',
+                }}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Right: NAS status + WoL + clock + cinéclub + avatar + logout */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem' }}>
+        {/* NAS status chip */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.3rem',
+          padding: '3px 10px',
+          background: 'rgba(255,255,255,0.04)',
+          border: '1px solid var(--line-strong)',
+          borderRadius: '999px',
+        }}>
           <span style={{
-            width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0,
-            background: nasOnline ? '#22c55e' : '#ef4444',
-            boxShadow: nasOnline ? '0 0 6px #22c55e' : 'none',
+            width: '5px', height: '5px', borderRadius: '50%', flexShrink: 0,
+            background: nasOnline ? 'var(--green-online)' : 'var(--red-offline)',
+            boxShadow: nasOnline ? '0 0 5px var(--green-online)' : 'none',
             display: 'inline-block',
           }} />
-          <span style={{ fontSize: '0.55rem', color: 'rgba(255,255,255,0.35)', fontWeight: 500 }}>
-            {nasOnline ? 'NAS en ligne' : 'NAS hors ligne'}
+          <span style={{ fontFamily: 'var(--mono)', fontSize: '0.34rem', color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+            NAS · DS920+
           </span>
         </div>
 
-        {/* WoL button (only if NAS offline and admin) */}
+        {/* WoL (only if NAS offline and admin) */}
         {!nasOnline && isAdmin && (
           <button
             onClick={() => { setFocusedItem('wol'); handleWoL(); }}
             disabled={wolStatus !== 'idle'}
+            data-focused={focused && focusedItem === 'wol'}
             style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              padding: '0.3rem 0.8rem',
-              background: focused && focusedItem === 'wol' ? 'var(--red)' : 'rgba(229,9,20,0.15)',
-              border: `1px solid ${focused && focusedItem === 'wol' ? 'var(--red)' : 'rgba(229,9,20,0.3)'}`,
-              borderRadius: '2rem', color: '#fff',
-              fontSize: '0.5rem', fontWeight: 700, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '0.3rem',
+              padding: '3px 10px',
+              background: 'var(--accent-soft)',
+              border: '1px solid var(--accent-line)',
+              borderRadius: '999px', color: 'var(--text)',
+              fontFamily: 'var(--mono)',
+              fontSize: '0.34rem', fontWeight: 600, cursor: 'pointer',
+              letterSpacing: '0.06em', textTransform: 'uppercase',
+              outline: focused && focusedItem === 'wol' ? '2px solid var(--accent)' : 'none',
+              outlineOffset: '5px',
             }}
           >
-            ⚡ {wolStatus === 'idle' ? 'Allumer' : wolStatus === 'waking' ? 'Démarrage…' : 'En ligne ✓'}
+            {wolStatus === 'idle' ? '⚡ ALLUMER' : wolStatus === 'waking' ? 'DÉMARRAGE…' : 'EN LIGNE ✓'}
           </button>
         )}
-      </div>
 
-      {/* Center: search button */}
-      <button
-        onClick={() => { setFocusedItem('search'); activateItem('search'); }}
-        style={{
-          display: 'flex', alignItems: 'center', gap: '0.45rem',
-          padding: '0.35rem 1rem',
-          background: focused && focusedItem === 'search' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)',
-          border: `1px solid ${focused && focusedItem === 'search' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.1)'}`,
-          borderRadius: '2rem', color: '#fff',
-          fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer',
-          outline: focused && focusedItem === 'search' ? '3px solid #fff' : 'none',
-        }}
-      >
-        🔍 <span style={{ color: 'rgba(255,255,255,0.6)' }}>Rechercher…</span>
-      </button>
+        {/* Clock */}
+        <ClockDisplay />
 
-      {/* Right: counts + cinéclub + logout */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1.2rem' }}>
-        {/* Compteurs */}
-        {(filmCount !== undefined || seriesCount !== undefined) && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '0.5rem',
-            padding: '0.3rem 0.75rem',
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '2rem',
-            fontSize: '0.5rem', color: 'rgba(255,255,255,0.45)',
-          }}>
-            <span>🎬</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums', color: '#fff', fontWeight: 600 }}>{filmCount ?? '—'}</span>
-            <span style={{ color: 'rgba(255,255,255,0.2)' }}>·</span>
-            <span>📺</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums', color: '#fff', fontWeight: 600 }}>{seriesCount ?? '—'}</span>
-          </div>
-        )}
+        {/* Separator */}
+        <div style={{ width: 1, height: '24px', background: 'var(--line-strong)', flexShrink: 0 }} />
 
         {/* Cinéclub switcher */}
         {cineClubName && (
           <button
             onClick={() => { setFocusedItem('cineclubs'); onChangeCineClub(); }}
             style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              padding: '0.3rem 0.75rem',
+              display: 'flex', alignItems: 'center', gap: '0.3rem',
+              padding: '3px 10px',
               background: focused && focusedItem === 'cineclubs' ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${focused && focusedItem === 'cineclubs' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.08)'}`,
-              borderRadius: '2rem', color: '#fff',
-              fontSize: '0.5rem', fontWeight: 600, cursor: 'pointer',
-              outline: focused && focusedItem === 'cineclubs' ? '3px solid #fff' : 'none',
+              border: `1px solid ${focused && focusedItem === 'cineclubs' ? 'rgba(255,255,255,0.3)' : 'var(--line-strong)'}`,
+              borderRadius: '999px', color: 'var(--text)',
+              fontSize: '0.38rem', fontWeight: 600, cursor: 'pointer',
+              outline: focused && focusedItem === 'cineclubs' ? '2px solid var(--accent)' : 'none',
+              outlineOffset: '5px',
             }}
           >
-            <span style={{ color: 'rgba(255,255,255,0.5)' }}>↕</span>
+            <span style={{ color: 'var(--text-dim)', fontSize: '0.34rem' }}>↕</span>
             {cineClubName}
           </button>
         )}
+
+        {/* User avatar */}
+        <div style={{
+          width: '36px', height: '36px', borderRadius: '8px',
+          background: 'linear-gradient(135deg, rgba(177,58,48,0.6), rgba(177,58,48,0.25))',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: 'var(--serif)',
+          fontSize: '0.56rem', fontWeight: 400,
+          color: 'var(--accent)',
+          flexShrink: 0,
+          border: '1px solid var(--accent-line)',
+        }}>
+          K
+        </div>
 
         {/* Logout */}
         <button
           onClick={() => { setFocusedItem('logout'); onLogout(); }}
           style={{
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            padding: '0.3rem 0.75rem',
-            background: focused && focusedItem === 'logout' ? 'rgba(229,9,20,0.2)' : 'transparent',
-            border: `1px solid ${focused && focusedItem === 'logout' ? 'rgba(229,9,20,0.5)' : 'transparent'}`,
-            borderRadius: '2rem', color: focused && focusedItem === 'logout' ? '#ef4444' : 'rgba(255,255,255,0.35)',
-            fontSize: '0.5rem', fontWeight: 600, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: '0.3rem',
+            padding: '3px 10px',
+            background: focused && focusedItem === 'logout' ? 'rgba(177,58,48,0.2)' : 'transparent',
+            border: `1px solid ${focused && focusedItem === 'logout' ? 'var(--accent-line)' : 'transparent'}`,
+            borderRadius: '999px',
+            color: focused && focusedItem === 'logout' ? '#fca5a5' : 'var(--text-dim)',
+            fontSize: '0.38rem', fontWeight: 600, cursor: 'pointer',
             outline: 'none',
           }}
         >
-          ⏻ Déconnexion
+          ⏻
         </button>
       </div>
-
-      {/* Focus indicator bar at bottom */}
-      {focused && (
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          height: '2px',
-          background: 'linear-gradient(90deg, transparent, var(--red), transparent)',
-        }} />
-      )}
     </header>
   );
 }

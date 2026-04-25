@@ -20,7 +20,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
 
-  if (res.status === 401) {
+  if (res.status === 401 && tokens.getAccess()) {
     tokens.clear();
     window.location.reload();
   }
@@ -49,6 +49,20 @@ export function getMe() {
 
 export function getMyCineClubs() {
   return request<CineClubResponse[]>('/auth/me/cineclubs');
+}
+
+export function getCineClubMembers(id: number) {
+  return request<Array<{ role: string; user: { id: number; username: string; firstName: string; lastName: string } }>>(`/cineclubs/${id}/members`);
+}
+
+export async function getHealth(): Promise<{ status: string; nas: 'ok' | 'offline' | 'unknown'; db: string }> {
+  try {
+    const res = await fetch(`${BASE}/health`);
+    if (!res.ok) return { status: 'error', nas: 'unknown', db: 'error' };
+    return res.json() as Promise<{ status: string; nas: 'ok' | 'offline' | 'unknown'; db: string }>;
+  } catch {
+    return { status: 'error', nas: 'unknown', db: 'error' };
+  }
 }
 
 export function selectCineClub(id: number) {

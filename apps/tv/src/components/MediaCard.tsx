@@ -28,12 +28,12 @@ function MediaCard({ media, focused, onFocus, onSelect }: Props) {
         borderRadius: '8px',
         overflow: 'hidden',
         position: 'relative',
-        outline: focused ? '4px solid #fff' : '4px solid transparent',
+        outline: focused ? '3px solid #fff' : '3px solid transparent',
         outlineOffset: '4px',
-        transform: focused ? 'scale(1.1)' : 'scale(1)',
+        transform: focused ? 'scale(1.09)' : 'scale(1)',
         transition: focused
-          ? 'transform 175ms ease-out, outline 175ms ease-out, box-shadow 175ms ease-out'
-          : 'transform 100ms ease-in, outline 100ms ease-in, box-shadow 100ms ease-in',
+          ? 'transform 140ms cubic-bezier(0.2,0,0,1), outline 110ms ease, box-shadow 140ms ease'
+          : 'transform 90ms ease-in, outline 90ms ease-in, box-shadow 90ms ease-in',
         zIndex: focused ? 10 : 1,
         willChange: 'transform',
         backfaceVisibility: 'hidden',

@@ -2,19 +2,52 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --red: #e50914;
-  --bg: #09090b;
-  --bg-card: #18181b;
-  --bg-overlay: rgba(0,0,0,0.7);
-  --text: #f0f0f0;
-  --text-muted: #a1a1aa;
-  --text-dim: #52525b;
-  /* TV focus: always white for maximum visibility on any background */
-  --focus-ring: 4px solid #ffffff;
-  --focus-shadow: 0 0 0 4px rgba(255,255,255,0.25), 0 8px 32px rgba(0,0,0,0.6);
+  /* Backgrounds */
+  --bg-deep: #07070a;
+  --bg-base: #0c0c10;
+  --bg-elevated: #14141a;
+  --bg-card: #1a1a22;
+
+  /* Alias rétro-compat */
+  --bg: var(--bg-base);
+
+  /* Accent — brique rouge (not crimson) */
+  --accent: #b13a30;
+  --accent-soft: rgba(177,58,48,0.18);
+  --accent-line: rgba(177,58,48,0.45);
+  --accent-glow: 0 0 0 3px rgba(177,58,48,0.35), 0 12px 36px rgba(177,58,48,0.2);
+
+  /* Alias rétro-compat */
+  --red: var(--accent);
+
+  /* Lines */
+  --line: rgba(255,255,255,0.06);
+  --line-strong: rgba(255,255,255,0.12);
+
+  /* Text */
+  --text: #ece9e2;
+  --text-muted: #8b8a85;
+  --text-dim: #4f4e4a;
+
+  /* Status */
+  --green-online: #4f9a6e;
+  --red-offline: #b04949;
+  --gold: #c9a96a;
+
+  /* Typography */
+  --serif: 'Bebas Neue', Georgia, serif;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --font: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+
+  /* TV focus: rouge accent */
+  --focus-ring: 2px solid var(--accent);
+  --focus-shadow: 0 0 0 8px rgba(177,58,48,0.15);
+  --focus-accent-ring: 3px solid var(--accent);
+  --focus-accent-shadow: var(--accent-glow);
+
   --radius: 8px;
-  --font: 'Helvetica Neue', Arial, sans-serif;
-  /* Safe zones — 5% horizontal, 3.75% vertical (EBU R95 / webOS guidance) */
+
+  /* Safe zones — 5% horizontal, 3.75% vertical (EBU R95 / webOS) */
   --safe-h: 96px;
   --safe-v: 60px;
 
@@ -25,7 +58,7 @@
 html, body, #root {
   width: 100%;
   height: 100%;
-  background: var(--bg);
+  background: var(--bg-deep);
   color: var(--text);
   font-family: var(--font);
   overflow: hidden;
@@ -41,16 +74,108 @@ html, body, #root {
   z-index: 10;
 }
 
+/* ── Typography utilities ──────────────────────────────────────────────── */
+.serif { font-family: var(--serif); }
+.mono  { font-family: var(--mono); }
+
+.uppercase-eyebrow {
+  font-family: var(--font);
+  font-size: 0.38rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ── Chip / pill ────────────────────────────────────────────────────────── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  font-size: 0.38rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.chip.accent {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+.chip.gold {
+  background: rgba(201,169,106,0.15);
+  border-color: rgba(201,169,106,0.4);
+  color: var(--gold);
+}
+
+/* ── Quality badge ──────────────────────────────────────────────────────── */
+.quality {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 0.32rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(255,255,255,0.1);
+  color: var(--text-muted);
+  border: 1px solid var(--line-strong);
+}
+.quality.uhd {
+  background: rgba(201,169,106,0.18);
+  border-color: rgba(201,169,106,0.4);
+  color: var(--gold);
+}
+.quality.hdr {
+  background: rgba(120,80,200,0.18);
+  border-color: rgba(120,80,200,0.4);
+  color: #b89fd8;
+}
+
+/* ── Progress bar ───────────────────────────────────────────────────────── */
+.progress-bar {
+  height: 3px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* ── Glass ──────────────────────────────────────────────────────────────── */
+.glass {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  background: rgba(14,14,18,0.85);
+  border: 1px solid var(--line-strong);
+}
+
 /* ── Loading shimmer ────────────────────────────────────────────────────── */
 @keyframes shimmer {
   0% { background-position: -800px 0; }
   100% { background-position: 800px 0; }
 }
 .shimmer {
-  background: linear-gradient(90deg, #1c1c1e 25%, #27272a 50%, #1c1c1e 75%);
+  background: linear-gradient(90deg, #1a1a22 25%, #22222a 50%, #1a1a22 75%);
   background-size: 800px 100%;
   animation: shimmer 1.4s ease-in-out infinite;
 }
+
+/* ── Pulse ──────────────────────────────────────────────────────────────── */
+@keyframes pulse-soft { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+.pulse { animation: pulse-soft 2s ease-in-out infinite; }
+
+/* ── Spin ───────────────────────────────────────────────────────────────── */
+@keyframes nasflix-spin { to { transform: rotate(360deg); } }
 
 /* ── Scrollbar cachée ───────────────────────────────────────────────────── */
 ::-webkit-scrollbar { display: none; }

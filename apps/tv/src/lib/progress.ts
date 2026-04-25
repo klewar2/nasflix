@@ -56,4 +56,21 @@ export const watchProgress = {
     if (!p || !p.duration) return 0;
     return Math.min(100, (p.currentTime / p.duration) * 100);
   },
+
+  /** Returns all in-progress entries sorted by most recently watched */
+  listInProgress(): Array<{ mediaId: number; episodeId?: number; progress: WatchProgress }> {
+    const result: Array<{ mediaId: number; episodeId?: number; progress: WatchProgress }> = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith(PREFIX)) continue;
+      const rest = k.slice(PREFIX.length);
+      const parts = rest.split('_');
+      const mediaId = Number(parts[0]);
+      const episodeId = parts[1] && parts[1] !== 'm' ? Number(parts[1]) : undefined;
+      if (!isFinite(mediaId)) continue;
+      const p = watchProgress.get(mediaId, episodeId);
+      if (p) result.push({ mediaId, episodeId, progress: p });
+    }
+    return result.sort((a, b) => b.progress.savedAt - a.progress.savedAt);
+  },
 };
