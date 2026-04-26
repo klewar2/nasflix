@@ -217,10 +217,10 @@ export class MediaService {
     const patch: typeof data = { ...data };
 
     // Resync strategy: the sync engine tries tmdbId first and falls back to title+year on failure.
-    // When the admin pins a *new* tmdbId via the form, keep it so sync attempts that one; when
-    // they submit the same tmdbId (or none), clear it to force a fresh title+year search.
+    // If the admin explicitly sets a tmdbId (even the same), keep it so sync uses it.
+    // If no tmdbId is provided, clear it to force a fresh title+year search.
     if (data.syncStatus === SyncStatus.PENDING) {
-      if (data.tmdbId !== undefined && data.tmdbId !== null && data.tmdbId !== existing.tmdbId) {
+      if (data.tmdbId !== undefined && data.tmdbId !== null) {
         patch.tmdbId = data.tmdbId;
       } else {
         patch.tmdbId = null;
