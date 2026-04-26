@@ -396,16 +396,22 @@ export class SyncService {
       this.logger.log(`[Sync #${mediaId}] File: "${filename}"`);
 
       // --- If tmdbId is set (manually by admin via edit form), try it first ---
-      // On failure (unknown id / TMDB 404), fall through to title+year search.
+      // On TMDB 404 / network error, fall through to title+year search.
       if (media.tmdbId) {
         this.logger.log(`[Sync #${mediaId}] Trying pinned tmdbId=${media.tmdbId}`);
         try {
           if (media.type === MediaType.SERIES) {
             await this.syncTvDetails(mediaId, media.tmdbId, cineClubId);
+            // syncTvDetails succeeded and already set syncStatus=SYNCED.
+            // Run post-sync helpers non-throwingly so a merge error doesn't corrupt the result.
             if (parsed.season !== undefined && parsed.episode !== undefined) {
-              await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId ?? undefined, cineClubId);
+              await this.linkEpisodeFile(mediaId, media, parsed, media.tmdbId, cineClubId).catch((e) =>
+                this.logger.warn(`[Sync #${mediaId}] linkEpisodeFile failed: ${e instanceof Error ? e.message : String(e)}`),
+              );
             }
-            await this.mergeSeriesByTmdbId(mediaId, media.tmdbId, cineClubId);
+            await this.mergeSeriesByTmdbId(mediaId, media.tmdbId, cineClubId).catch((e) =>
+              this.logger.warn(`[Sync #${mediaId}] mergeSeriesByTmdbId failed: ${e instanceof Error ? e.message : String(e)}`),
+            );
           } else {
             await this.syncMovieDetails(mediaId, media.tmdbId, cineClubId);
           }
