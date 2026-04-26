@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import SplashScreen from './components/SplashScreen';
 import TVNavbar from './components/TVNavbar';
@@ -32,7 +32,9 @@ export default function App() {
   const [splashDone, setSplashDone] = useState(false);
   const [navFocused, setNavFocused] = useState(false);
 
-  const { data: me } = useQuery({
+  const handleSplashDone = useCallback(() => setSplashDone(true), []);
+
+  const { data: me, isError: meError } = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
     enabled: splashDone && !!tokens.getAccess(),
@@ -51,12 +53,17 @@ export default function App() {
       setScreen({ name: 'login' });
       return;
     }
+    if (meError) {
+      tokens.clear();
+      setScreen({ name: 'login' });
+      return;
+    }
     if (me) {
       const club = tokens.getCineClub();
       if (!club) setScreen({ name: 'cineclub' });
       else setScreen({ name: 'home' });
     }
-  }, [splashDone, me]);
+  }, [splashDone, me, meError]);
 
   const navigate = (s: Screen) => {
     setNavFocused(false);
@@ -76,7 +83,7 @@ export default function App() {
   };
 
   if (screen.name === 'splash') {
-    return <SplashScreen onDone={() => setSplashDone(true)} />;
+    return <SplashScreen onDone={handleSplashDone} />;
   }
 
   if (screen.name === 'login') {
