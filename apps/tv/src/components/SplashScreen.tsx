@@ -51,7 +51,7 @@ export default function SplashScreen({ onDone }: Props) {
       }}>
         {/* Logo */}
         <svg
-          width="140" height="140" viewBox="0 0 40 40" fill="none"
+          width="96" height="96" viewBox="0 0 40 40" fill="none"
           xmlns="http://www.w3.org/2000/svg"
           style={{ filter: 'drop-shadow(0 0 24px rgba(177,58,48,0.5))' }}
         >

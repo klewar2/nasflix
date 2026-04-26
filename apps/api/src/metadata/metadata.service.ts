@@ -49,6 +49,11 @@ interface TmdbEpisodeDetail {
   vote_average: number;
 }
 
+interface TmdbSeasonDetail {
+  season_number: number;
+  episodes: TmdbEpisodeDetail[];
+}
+
 interface TmdbTvDetail {
   id: number;
   name: string;
@@ -149,6 +154,15 @@ export class MetadataService {
     try {
       const apiKey = await this.getApiKeyForCineClub(cineClubId);
       return await this.tmdbFetch<TmdbEpisodeDetail>(`/tv/${seriesId}/season/${season}/episode/${episode}`, {}, apiKey);
+    } catch {
+      return null;
+    }
+  }
+
+  async getTvSeasonDetail(seriesId: number, seasonNumber: number, cineClubId?: number): Promise<TmdbSeasonDetail | null> {
+    try {
+      const apiKey = await this.getApiKeyForCineClub(cineClubId);
+      return await this.tmdbFetch<TmdbSeasonDetail>(`/tv/${seriesId}/season/${seasonNumber}`, {}, apiKey);
     } catch {
       return null;
     }

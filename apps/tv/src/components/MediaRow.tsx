@@ -81,10 +81,11 @@ export default function MediaRow({ title, items, rowFocused, onSelect, onPreview
         ref={scrollRef}
         style={{
           display: 'flex',
-          gap: '20px',
+          gap: '0.5rem',
           paddingLeft: '3rem',
           paddingRight: '3rem',
-          overflowX: 'hidden',
+          overflowX: 'auto',
+          paddingTop: '0.4rem',
           paddingBottom: '0.5rem',
         }}
       >

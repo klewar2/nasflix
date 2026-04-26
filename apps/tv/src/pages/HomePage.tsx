@@ -60,7 +60,7 @@ function ContinueCard({
     <div
       onClick={onClick}
       style={{
-        width: '380px', flexShrink: 0, borderRadius: '6px', overflow: 'hidden',
+        width: '8rem', flexShrink: 0, borderRadius: '6px', overflow: 'hidden',
         cursor: 'pointer', position: 'relative',
         outline: isFocused ? '2px solid var(--accent)' : '2px solid transparent',
         outlineOffset: '5px',
@@ -145,6 +145,11 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
   const [currentBackdrop, setCurrentBackdrop] = useState<string | null>(null);
   const [backdropKey, setBackdropKey] = useState(0);
   const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const resumeSectionRef = useRef<HTMLDivElement>(null);
+  const rowSectionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const mountedRef = useRef(false);
 
   const { data: recent = [] } = useQuery({
     queryKey: ['recent'],
@@ -251,6 +256,24 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
 
   const totalZones = (hasResume ? 1 : 0) + allRows.length;
 
+  // Auto-scroll to the focused zone whenever it changes
+  useEffect(() => {
+    if (!mountedRef.current) { mountedRef.current = true; return; }
+    if (!active) return;
+    if (navFocused) {
+      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    let el: HTMLDivElement | null = null;
+    if (hasResume && focusedZone === 0) {
+      el = resumeSectionRef.current;
+    } else {
+      const rowIdx = hasResume ? focusedZone - 1 : focusedZone;
+      el = rowSectionRefs.current[rowIdx] ?? null;
+    }
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusedZone, navFocused, active, hasResume]);
+
   useRemoteKeys((e) => {
     if (!active || navFocused) return;
     if (e.keyCode === KEY.UP) {
@@ -274,9 +297,9 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
   }, [active, navFocused, focusedZone, totalZones, hasResume, resumeItems, resumeFocusedIdx, onFocusNav, navigate]);
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto' }}>
+    <div ref={scrollContainerRef} style={{ height: '100%', overflowY: 'auto' }}>
       {/* ── Hero panel ── */}
-      <div style={{ height: '580px', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ height: '640px', position: 'relative', overflow: 'hidden' }}>
         {/* Backdrop */}
         {currentBackdrop ? (
           <div
@@ -310,8 +333,8 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
         {/* Hero info panel */}
         {previewMedia && (
           <div style={{
-            position: 'absolute', bottom: '3.125rem', left: '2rem',
-            maxWidth: '720px',
+            position: 'absolute', bottom: '1.75rem', left: '2rem',
+            maxWidth: '680px',
           }}>
             {/* Eyebrow */}
             <div className="uppercase-eyebrow" style={{ marginBottom: '0.5rem' }}>
@@ -321,9 +344,9 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
             {/* Title */}
             <h1 style={{
               fontFamily: 'var(--serif)',
-              fontSize: '2.44rem', fontWeight: 500,
+              fontSize: '1.75rem', fontWeight: 500,
               lineHeight: 0.95, letterSpacing: '-0.02em',
-              color: '#fff', marginBottom: '0.75rem',
+              color: '#fff', marginBottom: '0.5rem',
               textShadow: '0 2px 24px rgba(0,0,0,0.8)',
             }}>
               {previewMedia.title}
@@ -347,11 +370,11 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
             {/* Overview */}
             {previewMedia.overview && (
               <p style={{
-                fontSize: '0.53rem', color: `rgba(236,233,226,0.85)`,
-                lineHeight: 1.55, maxWidth: '580px',
-                display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                fontSize: '0.47rem', color: `rgba(236,233,226,0.85)`,
+                lineHeight: 1.5, maxWidth: '560px',
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
                 textShadow: '0 1px 8px rgba(0,0,0,0.8)',
-                marginBottom: '1.25rem',
+                marginBottom: '0.75rem',
               }}>
                 {previewMedia.overview}
               </p>
@@ -364,7 +387,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
                 style={{
                   display: 'flex', alignItems: 'center', gap: '0.31rem',
                   background: '#fff', color: '#0a0a0e',
-                  border: 'none', padding: '14px 26px', borderRadius: '4px',
+                  border: 'none', padding: '0.3rem 0.65rem', borderRadius: '4px',
                   fontSize: '0.44rem', fontWeight: 600, cursor: 'pointer',
                 }}
               >
@@ -379,7 +402,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
                   display: 'flex', alignItems: 'center', gap: '0.31rem',
                   background: 'rgba(255,255,255,0.08)',
                   border: '1px solid var(--line-strong)',
-                  padding: '14px 26px', borderRadius: '4px',
+                  padding: '0.3rem 0.65rem', borderRadius: '4px',
                   color: '#fff',
                   fontSize: '0.44rem', fontWeight: 600, cursor: 'pointer',
                 }}
@@ -395,7 +418,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
       <div style={{ paddingTop: '0.5rem' }}>
         {/* Resume row */}
         {hasResume && (
-          <div style={{ marginBottom: '1rem' }}>
+          <div ref={resumeSectionRef} style={{ marginBottom: '1rem' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', paddingLeft: '2rem', marginBottom: '0.5rem' }}>
               <h2 style={{
                 fontFamily: 'var(--serif)',
@@ -414,7 +437,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
               </span>
             </div>
             <div style={{
-              display: 'flex', gap: '16px',
+              display: 'flex', gap: '0.5rem',
               paddingLeft: '2rem', paddingRight: '2rem',
               paddingTop: '0.5rem', paddingBottom: '0.5rem',
               overflowX: 'auto',
@@ -437,20 +460,17 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
         {allRows.map((row, idx) => {
           const zone = hasResume ? idx + 1 : idx;
           return (
-            <MediaRow
-              key={row.title}
-              title={row.title}
-              items={row.items}
-              rowFocused={active && !navFocused && focusedZone === zone}
-              onSelect={(media) => navigate({ name: 'detail', mediaId: media.id, mediaType: media.type })}
-              onPreview={updateBackdrop}
-              onUp={() => {
-                setFocusedZone(zone - 1);
-              }}
-              onDown={() => {
-                if (zone + 1 < totalZones) setFocusedZone(zone + 1);
-              }}
-            />
+            <div key={row.title} ref={(el) => { rowSectionRefs.current[idx] = el; }}>
+              <MediaRow
+                title={row.title}
+                items={row.items}
+                rowFocused={active && !navFocused && focusedZone === zone}
+                onSelect={(media) => navigate({ name: 'detail', mediaId: media.id, mediaType: media.type })}
+                onPreview={updateBackdrop}
+                onUp={() => { setFocusedZone(zone - 1); }}
+                onDown={() => { if (zone + 1 < totalZones) setFocusedZone(zone + 1); }}
+              />
+            </div>
           );
         })}
       </div>

@@ -51,8 +51,8 @@
   --safe-h: 96px;
   --safe-v: 60px;
 
-  /* TV sizing — base 32px pour TV 72" à 3m */
-  font-size: 32px;
+  /* TV sizing — base 48px pour TV 65" 4K à 3m (min 22px texte guideline) */
+  font-size: 48px;
 }
 
 html, body, #root {

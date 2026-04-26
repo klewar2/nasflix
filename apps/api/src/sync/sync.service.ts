@@ -778,7 +778,7 @@ export class SyncService {
 
     for (const s of detail.seasons) {
       if (s.season_number === 0) continue;
-      await this.prisma.season.upsert({
+      const season = await this.prisma.season.upsert({
         where: { mediaId_seasonNumber: { mediaId, seasonNumber: s.season_number } },
         update: {
           name: s.name,
@@ -797,6 +797,32 @@ export class SyncService {
           airDate: s.air_date ? new Date(s.air_date) : null,
         },
       });
+
+      const seasonDetail = await this.metadataService.getTvSeasonDetail(tmdbId, s.season_number, cineClubId);
+      if (seasonDetail) {
+        for (const ep of seasonDetail.episodes) {
+          const stillUrl = this.metadataService.stillUrl(ep.still_path);
+          await this.prisma.episode.upsert({
+            where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber: ep.episode_number } },
+            update: {
+              name: ep.name || undefined,
+              overview: ep.overview || undefined,
+              airDate: ep.air_date ? new Date(ep.air_date) : undefined,
+              ...(stillUrl ? { stillUrl } : {}),
+              ...(ep.runtime ? { runtime: ep.runtime } : {}),
+            },
+            create: {
+              seasonId: season.id,
+              episodeNumber: ep.episode_number,
+              name: ep.name,
+              overview: ep.overview,
+              airDate: ep.air_date ? new Date(ep.air_date) : null,
+              stillUrl,
+              runtime: ep.runtime ?? null,
+            },
+          });
+        }
+      }
     }
   }
 

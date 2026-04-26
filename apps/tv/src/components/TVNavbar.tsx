@@ -158,7 +158,7 @@ export default function TVNavbar({
 
   return (
     <header style={{
-      height: '84px',
+      height: '2.25rem',
       flexShrink: 0,
       display: 'flex',
       alignItems: 'center',
@@ -186,7 +186,7 @@ export default function TVNavbar({
         </button>
 
         {/* Separator */}
-        <div style={{ width: 1, height: '24px', background: 'var(--line-strong)', flexShrink: 0 }} />
+        <div style={{ width: 1, height: '1rem', background: 'var(--line-strong)', flexShrink: 0 }} />
 
         {/* Nav tabs */}
         <nav style={{ display: 'flex', gap: '0.1rem' }}>
@@ -225,13 +225,13 @@ export default function TVNavbar({
         {/* NAS status chip */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: '0.3rem',
-          padding: '3px 10px',
+          padding: '0.1rem 0.3rem',
           background: 'rgba(255,255,255,0.04)',
           border: '1px solid var(--line-strong)',
           borderRadius: '999px',
         }}>
           <span style={{
-            width: '5px', height: '5px', borderRadius: '50%', flexShrink: 0,
+            width: '0.18rem', height: '0.18rem', borderRadius: '50%', flexShrink: 0,
             background: nasOnline ? 'var(--green-online)' : 'var(--red-offline)',
             boxShadow: nasOnline ? '0 0 5px var(--green-online)' : 'none',
             display: 'inline-block',
@@ -249,7 +249,7 @@ export default function TVNavbar({
             data-focused={focused && focusedItem === 'wol'}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.3rem',
-              padding: '3px 10px',
+              padding: '0.1rem 0.3rem',
               background: 'var(--accent-soft)',
               border: '1px solid var(--accent-line)',
               borderRadius: '999px', color: 'var(--text)',
@@ -268,7 +268,7 @@ export default function TVNavbar({
         <ClockDisplay />
 
         {/* Separator */}
-        <div style={{ width: 1, height: '24px', background: 'var(--line-strong)', flexShrink: 0 }} />
+        <div style={{ width: 1, height: '1rem', background: 'var(--line-strong)', flexShrink: 0 }} />
 
         {/* Cinéclub switcher */}
         {cineClubName && (
@@ -276,7 +276,7 @@ export default function TVNavbar({
             onClick={() => { setFocusedItem('cineclubs'); onChangeCineClub(); }}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.3rem',
-              padding: '3px 10px',
+              padding: '0.1rem 0.3rem',
               background: focused && focusedItem === 'cineclubs' ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)',
               border: `1px solid ${focused && focusedItem === 'cineclubs' ? 'rgba(255,255,255,0.3)' : 'var(--line-strong)'}`,
               borderRadius: '999px', color: 'var(--text)',
@@ -292,7 +292,7 @@ export default function TVNavbar({
 
         {/* User avatar */}
         <div style={{
-          width: '36px', height: '36px', borderRadius: '8px',
+          width: '1.1rem', height: '1.1rem', borderRadius: '8px',
           background: 'linear-gradient(135deg, rgba(177,58,48,0.6), rgba(177,58,48,0.25))',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontFamily: 'var(--serif)',
@@ -309,7 +309,7 @@ export default function TVNavbar({
           onClick={() => { setFocusedItem('logout'); onLogout(); }}
           style={{
             display: 'flex', alignItems: 'center', gap: '0.3rem',
-            padding: '3px 10px',
+            padding: '0.1rem 0.3rem',
             background: focused && focusedItem === 'logout' ? 'rgba(177,58,48,0.2)' : 'transparent',
             border: `1px solid ${focused && focusedItem === 'logout' ? 'var(--accent-line)' : 'transparent'}`,
             borderRadius: '999px',
