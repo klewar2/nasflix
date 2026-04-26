@@ -389,7 +389,9 @@ export class SyncService {
       // Title: admin-edited titleOriginal wins, otherwise ptt result from filename
       const title = media.titleOriginal || parsed.title || filename;
       const year = parsed.year;
-      const isSeries = parsed.season !== undefined;
+      // For Jellyfin sources the nasPath is a UUID, so filename parsing gives no season info.
+      // Fall back to the DB type so the title search uses the correct media type.
+      const isSeries = parsed.season !== undefined || media.type === MediaType.SERIES;
 
       this.logger.log(`[Sync #${mediaId}] File: "${filename}"`);
 
@@ -801,26 +803,32 @@ export class SyncService {
       const seasonDetail = await this.metadataService.getTvSeasonDetail(tmdbId, s.season_number, cineClubId);
       if (seasonDetail) {
         for (const ep of seasonDetail.episodes) {
+          if (!ep.episode_number) continue; // skip specials or malformed TMDB entries
           const stillUrl = this.metadataService.stillUrl(ep.still_path);
-          await this.prisma.episode.upsert({
-            where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber: ep.episode_number } },
-            update: {
-              name: ep.name || undefined,
-              overview: ep.overview || undefined,
-              airDate: ep.air_date ? new Date(ep.air_date) : undefined,
-              ...(stillUrl ? { stillUrl } : {}),
-              ...(ep.runtime ? { runtime: ep.runtime } : {}),
-            },
-            create: {
-              seasonId: season.id,
-              episodeNumber: ep.episode_number,
-              name: ep.name,
-              overview: ep.overview,
-              airDate: ep.air_date ? new Date(ep.air_date) : null,
-              stillUrl,
-              runtime: ep.runtime ?? null,
-            },
-          });
+          try {
+            await this.prisma.episode.upsert({
+              where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber: ep.episode_number } },
+              update: {
+                name: ep.name || undefined,
+                overview: ep.overview || undefined,
+                airDate: ep.air_date ? new Date(ep.air_date) : undefined,
+                ...(stillUrl ? { stillUrl } : {}),
+                ...(ep.runtime ? { runtime: ep.runtime } : {}),
+              },
+              create: {
+                seasonId: season.id,
+                episodeNumber: ep.episode_number,
+                name: ep.name,
+                overview: ep.overview,
+                airDate: ep.air_date ? new Date(ep.air_date) : null,
+                stillUrl,
+                runtime: ep.runtime ?? null,
+              },
+            });
+          } catch (epErr) {
+            const msg = epErr instanceof Error ? epErr.message : String(epErr);
+            this.logger.warn(`[syncTvDetails] Episode S${s.season_number}E${ep.episode_number} upsert failed: ${msg}`);
+          }
         }
       }
     }
