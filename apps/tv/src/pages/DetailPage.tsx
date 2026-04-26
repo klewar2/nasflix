@@ -28,7 +28,9 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
     queryFn: () => getMediaById(mediaId),
   });
 
-  // Sort seasons descending (latest first), attach seasonNumber from parent season
+  // Sort seasons descending, keep only episodes available on NAS or Jellyfin
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isEpAvailable = (ep: any) => !!ep.nasPath || !!ep.jellyfinItemId;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seasonGroups: Array<{ seasonNumber: number; episodes: any[] }> = [...(media?.seasons || [])]
     .sort((a: any, b: any) => b.seasonNumber - a.seasonNumber)
@@ -36,7 +38,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
     .map((s: any) => ({
       seasonNumber: s.seasonNumber,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      episodes: (s.episodes || []).map((ep: any) => ({ ...ep, seasonNumber: s.seasonNumber })),
+      episodes: (s.episodes || []).filter(isEpAvailable).map((ep: any) => ({ ...ep, seasonNumber: s.seasonNumber })),
     }))
     .filter((g) => g.episodes.length > 0);
 
@@ -348,7 +350,6 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
                 {seasonGroups.map((group, idx) => {
                   const isFocused = typeof focused === 'object' && focused.zone === 'tab' && focused.idx === idx;
                   const isActive = activeSeasonIdx === idx;
-                  const nasCount = group.episodes.filter((ep: { nasPath?: string }) => !!ep.nasPath).length;
                   return (
                     <div
                       key={group.seasonNumber}
@@ -372,7 +373,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
                         fontFamily: 'var(--mono)',
                         marginLeft: '0.4rem', fontSize: '0.31rem', opacity: 0.65,
                       }}>
-                        {nasCount}/{group.episodes.length}
+                        {group.episodes.length} ép.
                       </span>
                     </div>
                   );
@@ -417,6 +418,13 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
                     >
                       {/* Thumbnail — 16:9, 320×180 */}
                       <div style={{ width: '320px', height: '180px', position: 'relative', background: 'linear-gradient(135deg, #1a1a2e, #27272a)' }}>
+                        {ep.stillUrl && (
+                          <img
+                            src={ep.stillUrl}
+                            alt={epTitle}
+                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                          />
+                        )}
                         {/* Episode number badge top-left */}
                         <div style={{
                           position: 'absolute', top: '0.4rem', left: '0.4rem',

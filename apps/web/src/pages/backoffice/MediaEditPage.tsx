@@ -202,7 +202,8 @@ export default function MediaEditPage() {
   });
 
   const handleSaveAndSync = async () => {
-    const updateData: any = { titleOriginal: searchTitle, type: typeInput, syncStatus: 'PENDING', syncError: null };
+    const updateData: any = { type: typeInput, syncStatus: 'PENDING', syncError: null };
+    if (searchTitle.trim()) updateData.titleOriginal = searchTitle.trim();
     if (tmdbIdInput.trim()) updateData.tmdbId = parseInt(tmdbIdInput.trim());
     else updateData.tmdbId = null; // clear stale tmdbId so sync searches fresh
     if (releaseYearInput.trim()) updateData.releaseYear = parseInt(releaseYearInput.trim());
@@ -287,7 +288,7 @@ export default function MediaEditPage() {
                   </div>
                 </div>
               </div>
-              <Button onClick={handleSaveAndSync} disabled={!isAdmin || isPending || !searchTitle.trim()} className="w-full">
+              <Button onClick={handleSaveAndSync} disabled={!isAdmin || isPending || (!searchTitle.trim() && !tmdbIdInput.trim())} className="w-full">
                 {isPending
                   ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />En cours...</>
                   : <><Save className="w-4 h-4 mr-2" />Enregistrer et re-synchroniser</>

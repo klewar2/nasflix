@@ -24,11 +24,17 @@ type SeasonsSectionProps = {
   handleDownload: (fetchUrl: () => Promise<{ url: string }>, filename: string, key: string) => void;
 };
 
+const isEpAvailable = (ep: any) => !!ep.nasPath || !!ep.jellyfinItemId;
+
 function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadingId, openPlayer, handleDownload }: SeasonsSectionProps) {
-  // Sort seasons descending (most recent season first) — tabs default to the latest season.
-  const sortedSeasons = [...media.seasons].sort((a: any, b: any) => b.seasonNumber - a.seasonNumber);
-  const [activeSeasonId, setActiveSeasonId] = useState<number>(sortedSeasons[0].id);
+  // Sort seasons descending, keep only seasons that have at least one available episode
+  const sortedSeasons = [...media.seasons]
+    .sort((a: any, b: any) => b.seasonNumber - a.seasonNumber)
+    .filter((s: any) => s.episodes?.some(isEpAvailable));
+  const [activeSeasonId, setActiveSeasonId] = useState<number>(sortedSeasons[0]?.id);
   const activeSeason = sortedSeasons.find((s: any) => s.id === activeSeasonId) ?? sortedSeasons[0];
+
+  if (!activeSeason) return null;
 
   return (
     <section className="mt-10">
@@ -36,8 +42,7 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
 
       <div className="flex gap-2 overflow-x-auto pb-2 mb-4 border-b border-zinc-800 scrollbar-thin">
         {sortedSeasons.map((s: any) => {
-          const nasCount = s.episodes?.filter((e: any) => e.nasPath).length ?? 0;
-          const total = s.episodes?.length ?? s.episodeCount ?? 0;
+          const count = s.episodes?.filter(isEpAvailable).length ?? 0;
           const isActive = s.id === activeSeason.id;
           return (
             <button
@@ -50,9 +55,9 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
               }`}
             >
               <span>Saison {s.seasonNumber}</span>
-              {total > 0 && (
+              {count > 0 && (
                 <span className={`ml-2 text-xs ${isActive ? 'text-zinc-300' : 'text-zinc-500'}`}>
-                  {nasCount}/{total}
+                  {count} ép.
                 </span>
               )}
             </button>
@@ -79,28 +84,24 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
           </div>
         </div>
 
-        {activeSeason.episodes?.length > 0 ? (
+        {activeSeason.episodes?.some(isEpAvailable) ? (
           <div className="space-y-1">
             {[...activeSeason.episodes]
+              .filter(isEpAvailable)
               .sort((a: any, b: any) => a.episodeNumber - b.episodeNumber)
               .map((ep: any) => {
                 const epKey = `ep-${ep.id}`;
                 const epTitle = `${mediaTitle} — S${String(activeSeason.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')} ${ep.name ? `— ${ep.name}` : ''}`;
+                const isSeedbox = ep.sourceType === 'SEEDBOX';
                 return (
                   <div
                     key={ep.id}
-                    className={`flex justify-between items-center text-sm py-2 px-2 rounded border-t border-zinc-800 ${ep.nasPath ? 'hover:bg-zinc-800/50' : ''}`}
+                    className="flex justify-between items-center text-sm py-2 px-2 rounded border-t border-zinc-800 hover:bg-zinc-800/50"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      {ep.nasPath ? (
-                        <HardDrive className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" aria-label="Disponible sur le NAS" />
-                      ) : (
-                        <span className="w-3.5 h-3.5 flex-shrink-0" />
-                      )}
+                      <HardDrive className={`w-3.5 h-3.5 flex-shrink-0 ${isSeedbox ? 'text-blue-400' : 'text-emerald-400'}`} aria-label={isSeedbox ? 'Disponible sur Jellyfin' : 'Disponible sur le NAS'} />
                       <span className="text-zinc-500 flex-shrink-0">E{String(ep.episodeNumber).padStart(2, '0')}</span>
-                      <span className={`truncate ${ep.nasPath ? 'text-white' : 'text-zinc-400'}`}>
-                        {ep.name || `Épisode ${ep.episodeNumber}`}
-                      </span>
+                      <span className="truncate text-white">{ep.name || `Épisode ${ep.episodeNumber}`}</span>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                       {ep.runtime && <span className="text-zinc-500 text-xs">{ep.runtime} min</span>}
@@ -109,9 +110,9 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
                           {ep.nasFilename}
                         </span>
                       )}
-                      {isMember && ep.nasPath && (
+                      {isMember && (
                         <>
-                          {ep.sourceType !== 'SEEDBOX' && (
+                          {!isSeedbox && (
                             <button
                               disabled={!nasOnline || loadingId === `play-${epKey}`}
                               onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`, { mediaId, episodeId: ep.id })}
@@ -122,7 +123,7 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
                             </button>
                           )}
                           <button
-                            disabled={(ep.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${epKey}`}
+                            disabled={(!isSeedbox && !nasOnline) || loadingId === `dl-${epKey}`}
                             onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
                             className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-white transition-colors border border-zinc-700"
                             title="Télécharger"
@@ -137,7 +138,7 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
               })}
           </div>
         ) : (
-          <p className="text-sm text-zinc-500">Aucun épisode pour cette saison.</p>
+          <p className="text-sm text-zinc-500">Aucun épisode disponible pour cette saison.</p>
         )}
       </div>
     </section>
