@@ -47,28 +47,38 @@ export class SyncService {
       // Step 2: Reconcile Media records
       const existingMedia = await this.prisma.media.findMany({ where: { cineClubId }, select: { id: true, nasPath: true } });
       const nasPaths = new Set(nasFiles.map((f) => f.path));
-      const orphaned = existingMedia.filter((m) => !nasPaths.has(m.nasPath));
 
-      if (orphaned.length > 0) {
-        this.logger.log(`Removing ${orphaned.length} orphaned Media entries`);
-        await this.prisma.media.deleteMany({ where: { id: { in: orphaned.map((o) => o.id) } } });
-      }
+      // Safety guard: if the NAS returned 0 files but we have existing records, the scan
+      // likely failed (network error, NAS offline). Skip orphan cleanup to avoid wiping the DB.
+      const nasMediaCount = existingMedia.filter((m) => !m.nasPath.startsWith('jellyfin://')).length;
+      let orphanedCount = 0;
+      if (nasFiles.length === 0 && nasMediaCount > 0) {
+        this.logger.warn(`NAS returned 0 files but ${nasMediaCount} media records exist — skipping orphan cleanup (NAS may be offline)`);
+      } else {
+        // Only NAS-sourced records (not synthetic Jellyfin paths) can be orphaned by a NAS scan.
+        const orphaned = existingMedia.filter((m) => !m.nasPath.startsWith('jellyfin://') && !nasPaths.has(m.nasPath));
+        orphanedCount = orphaned.length;
+        if (orphaned.length > 0) {
+          this.logger.log(`Removing ${orphaned.length} orphaned Media entries`);
+          await this.prisma.media.deleteMany({ where: { id: { in: orphaned.map((o) => o.id) } } });
+        }
 
-      // Step 2b: Reconcile Episode nasPath (episode files removed from NAS)
-      const existingEpisodes = await this.prisma.episode.findMany({
-        where: {
-          nasPath: { not: null },
-          season: { media: { cineClubId } },
-        },
-        select: { id: true, nasPath: true },
-      });
-      const orphanedEpisodes = existingEpisodes.filter((e) => e.nasPath && !nasPaths.has(e.nasPath));
-      if (orphanedEpisodes.length > 0) {
-        this.logger.log(`Clearing nasPath for ${orphanedEpisodes.length} orphaned episode(s)`);
-        await this.prisma.episode.updateMany({
-          where: { id: { in: orphanedEpisodes.map((e) => e.id) } },
-          data: { nasPath: null, nasFilename: null, nasSize: null },
+        // Step 2b: Reconcile Episode nasPath (episode files removed from NAS)
+        const existingEpisodes = await this.prisma.episode.findMany({
+          where: {
+            nasPath: { not: null },
+            season: { media: { cineClubId } },
+          },
+          select: { id: true, nasPath: true },
         });
+        const orphanedEpisodes = existingEpisodes.filter((e) => e.nasPath && !nasPaths.has(e.nasPath));
+        if (orphanedEpisodes.length > 0) {
+          this.logger.log(`Clearing nasPath for ${orphanedEpisodes.length} orphaned episode(s)`);
+          await this.prisma.episode.updateMany({
+            where: { id: { in: orphanedEpisodes.map((e) => e.id) } },
+            data: { nasPath: null, nasFilename: null, nasSize: null },
+          });
+        }
       }
 
       // Step 3: Add new files to DB with parsed quality info
@@ -167,7 +177,7 @@ export class SyncService {
         message: 'Sync completed, metadata jobs enqueued',
         totalFiles: nasFiles.length,
         processed: processedItems,
-        orphanedRemoved: orphaned.length,
+        orphanedRemoved: orphanedCount,
         errors: errorCount,
         metadataQueued: queued,
       };
