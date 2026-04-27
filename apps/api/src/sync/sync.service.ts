@@ -1022,6 +1022,25 @@ export class SyncService {
               where: { id: seriesMedia.id },
               data: { nasAddedAt: new Date() },
             });
+
+            // If this is a synthetic Jellyfin record (nasPath = jellyfin://) with a known
+            // tmdbId, eagerly merge it into the real NAS series — bypassing the async
+            // metadata queue which would otherwise skip an already-SYNCED synthetic record.
+            if (seriesMedia.nasPath.startsWith('jellyfin://') && seriesMedia.tmdbId) {
+              const mainSeries = await this.prisma.media.findFirst({
+                where: {
+                  cineClubId,
+                  tmdbId: seriesMedia.tmdbId,
+                  type: MediaType.SERIES,
+                  id: { not: seriesMedia.id },
+                  syncStatus: SyncStatus.SYNCED,
+                },
+              });
+              if (mainSeries) {
+                await this.mergeSeriesInto(seriesMedia.id, mainSeries.id);
+                this.logger.log(`[Jellyfin sync] Eagerly merged Jellyfin series #${seriesMedia.id} → #${mainSeries.id}`);
+              }
+            }
           }
         } catch (seriesErr) {
           errorCount++;
