@@ -613,6 +613,7 @@ export class SyncService {
     }
 
     await this.prisma.media.delete({ where: { id: sourceId } });
+    await this.prisma.media.update({ where: { id: destId }, data: { nasAddedAt: new Date() } });
     this.logger.log(`Merged series #${sourceId} → #${destId}`);
   }
 
@@ -660,6 +661,11 @@ export class SyncService {
       where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber } },
       update: { nasPath: media.nasPath, nasFilename: media.nasFilename, nasSize: media.nasSize, ...episodeMeta },
       create: { seasonId: season.id, episodeNumber, nasPath: media.nasPath, nasFilename: media.nasFilename, nasSize: media.nasSize, ...episodeMeta },
+    });
+
+    await this.prisma.media.update({
+      where: { id: seriesMediaId },
+      data: { nasAddedAt: new Date() },
     });
   }
 
@@ -950,6 +956,7 @@ export class SyncService {
             });
           }
 
+          let hadNewEpisode = false;
           for (const ep of seriesEpisodes) {
             try {
               const seasonNumber = ep.ParentIndexNumber ?? 1;
@@ -973,6 +980,7 @@ export class SyncService {
                 where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber } },
               });
               if (!existingEp) {
+                hadNewEpisode = true;
                 await this.prisma.episode.create({
                   data: {
                     seasonId: season.id,
@@ -987,6 +995,7 @@ export class SyncService {
                 });
               } else {
                 const hasNas = existingEp.sourceType === SourceType.NAS && !!existingEp.nasPath;
+                if (!existingEp.jellyfinItemId) hadNewEpisode = true;
                 await this.prisma.episode.update({
                   where: { id: existingEp.id },
                   data: hasNas
@@ -1006,6 +1015,13 @@ export class SyncService {
               const msg = epErr instanceof Error ? epErr.message : String(epErr);
               errors.push(`${seriesName} S${ep.ParentIndexNumber ?? 1}E${ep.IndexNumber ?? 1}: ${msg}`);
             }
+          }
+
+          if (hadNewEpisode) {
+            await this.prisma.media.update({
+              where: { id: seriesMedia.id },
+              data: { nasAddedAt: new Date() },
+            });
           }
         } catch (seriesErr) {
           errorCount++;
