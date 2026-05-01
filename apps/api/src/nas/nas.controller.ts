@@ -270,14 +270,15 @@ export class NasController {
       this.logger.log(`[stream/episode] passthrough episodeId=${episodeId} token=compact`);
       return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: duration };
     }
-    this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
+    this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
-      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken) {
+      // Proxy HLS Jellyfin uniquement pour le web (CORS/SSL). La TV se connecte directement
+      // afin d'éviter que les segments 4K transitent par le backend (bottleneck bande passante).
+      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken && clientType === 'web') {
         const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
         return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
       if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
-      // SEEDBOX direct-play: URL Jellyfin brute (Range supporté, pas besoin de proxy/transcode).
       if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
     }
@@ -306,9 +307,10 @@ export class NasController {
       this.logger.log(`[stream/media] passthrough mediaId=${mediaId} token=compact`);
       return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: media };
     }
-    this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} sourceType=${sourceType ?? 'NAS'} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
+    this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
-      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken) {
+      // Proxy HLS Jellyfin uniquement pour le web. TV → connexion directe à Jellyfin.
+      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken && clientType === 'web') {
         const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
         return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
       }
