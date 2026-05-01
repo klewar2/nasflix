@@ -2,7 +2,7 @@ import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/c
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma.service';
-import { MemberRole } from '@prisma/client';
+import { MemberRole, StreamingQuality } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { JwtPayload } from './strategies/jwt.strategy';
 
@@ -103,8 +103,18 @@ export class AuthService {
   private signRefreshToken(payload: JwtPayload): string {
     return this.jwtService.sign(payload, {
       secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-      expiresIn: '7d',
+      expiresIn: '100y',
     });
+  }
+
+  async getPreferences(userId: number) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { streamingQuality: true } });
+    return { streamingQuality: user.streamingQuality };
+  }
+
+  async updatePreferences(userId: number, streamingQuality: StreamingQuality) {
+    await this.prisma.user.update({ where: { id: userId }, data: { streamingQuality } });
+    return { streamingQuality };
   }
 
   private formatUser(user: { id: number; username: string; firstName: string; lastName: string; isSuperAdmin: boolean; lastLoginAt: Date | null }) {

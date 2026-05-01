@@ -121,6 +121,17 @@ export function getEpisodeTracks(episodeId: number) {
   return request<MediaTracks>(`/nas/tracks/episode/${episodeId}`);
 }
 
+export function getPreferences() {
+  return request<{ streamingQuality: 'NATIVE' | 'DIRECT' }>('/auth/me/preferences');
+}
+
+export function updatePreferences(streamingQuality: 'NATIVE' | 'DIRECT') {
+  return request<{ streamingQuality: 'NATIVE' | 'DIRECT' }>('/auth/me/preferences', {
+    method: 'PATCH',
+    body: JSON.stringify({ streamingQuality }),
+  });
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function searchMedia(query: string, limit = 30): Promise<{ data: any[]; total: number }> {
   const q = new URLSearchParams({ q: query, limit: String(limit) });

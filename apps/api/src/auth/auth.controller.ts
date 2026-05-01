@@ -1,4 +1,5 @@
-import { Controller, Post, Get, Body, Param, ParseIntPipe, HttpCode, HttpStatus, Req } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Body, Param, ParseIntPipe, HttpCode, HttpStatus, Req } from '@nestjs/common';
+import { StreamingQuality } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { Public } from './guards/public.decorator';
 import { LoginDto } from './dto/login.dto';
@@ -18,6 +19,17 @@ export class AuthController {
   @Get('me')
   getMe(@Req() req: { user: JwtPayload }) {
     return this.authService.getMe(req.user.sub);
+  }
+
+  @Get('me/preferences')
+  getPreferences(@Req() req: { user: JwtPayload }) {
+    return this.authService.getPreferences(req.user.sub);
+  }
+
+  @Patch('me/preferences')
+  @HttpCode(HttpStatus.OK)
+  updatePreferences(@Req() req: { user: JwtPayload }, @Body('streamingQuality') quality: StreamingQuality) {
+    return this.authService.updatePreferences(req.user.sub, quality);
   }
 
   @Get('me/cineclubs')

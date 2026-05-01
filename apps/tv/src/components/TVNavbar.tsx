@@ -13,13 +13,14 @@ interface Props {
   onNavigateFilms: () => void;
   onNavigateSeries: () => void;
   onNavigateSearch: () => void;
+  onNavigateSettings: () => void;
   onChangeCineClub: () => void;
   onLogout: () => void;
 }
 
-type NavItemId = 'home' | 'films' | 'series' | 'search' | 'wol' | 'cineclubs' | 'logout';
+type NavItemId = 'home' | 'films' | 'series' | 'search' | 'wol' | 'cineclubs' | 'settings' | 'logout';
 
-const BASE_ITEMS: NavItemId[] = ['home', 'films', 'series', 'search', 'wol', 'cineclubs', 'logout'];
+const BASE_ITEMS: NavItemId[] = ['home', 'films', 'series', 'search', 'wol', 'cineclubs', 'settings', 'logout'];
 
 /** Play-variant logo: rounded square with accent fill + play triangle */
 function NasflixLogo() {
@@ -76,6 +77,7 @@ export default function TVNavbar({
   onNavigateFilms,
   onNavigateSeries,
   onNavigateSearch,
+  onNavigateSettings,
   onChangeCineClub,
   onLogout,
 }: Props) {
@@ -116,6 +118,7 @@ export default function TVNavbar({
     else if (item === 'search') onNavigateSearch();
     else if (item === 'wol' && !nasOnline) handleWoL();
     else if (item === 'cineclubs') onChangeCineClub();
+    else if (item === 'settings') onNavigateSettings();
     else if (item === 'logout') onLogout();
   };
 
@@ -303,6 +306,26 @@ export default function TVNavbar({
         }}>
           K
         </div>
+
+        {/* Settings */}
+        <button
+          onClick={() => { setFocusedItem('settings'); onNavigateSettings(); }}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: '1.1rem', height: '1.1rem',
+            background: focused && focusedItem === 'settings' ? 'rgba(255,255,255,0.1)' : 'transparent',
+            border: `1px solid ${focused && focusedItem === 'settings' ? 'rgba(255,255,255,0.3)' : 'transparent'}`,
+            borderRadius: '6px',
+            color: focused && focusedItem === 'settings' ? '#fff' : 'var(--text-dim)',
+            cursor: 'pointer',
+            outline: focused && focusedItem === 'settings' ? '2px solid var(--accent)' : 'none',
+            outlineOffset: '3px',
+            fontSize: '0.55rem',
+          }}
+          title="Paramètres"
+        >
+          ⚙
+        </button>
 
         {/* Logout */}
         <button

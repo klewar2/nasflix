@@ -342,11 +342,13 @@ export class NasService {
     audioTrack = 1,
     clientType: 'web' | 'tv' = 'web',
   ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
-    const [member, media, club] = await Promise.all([
+    const [member, media, club, user] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } }),
       this.prisma.cineClub.findUnique({ where: { id: cineClubId } }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { streamingQuality: true } }),
     ]);
+    const streamingQuality = user?.streamingQuality ?? 'NATIVE';
 
     if (!media?.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
     if (!club) throw new BadRequestException('CineClub introuvable');
@@ -368,8 +370,8 @@ export class NasService {
       }
       // TV: PlaybackInfo → stream HDR10 natif sans Dolby Vision (comme l'app Jellyfin native).
       if (clientType === 'tv') {
-        const { url, isHls } = await this.getJellyfinTvStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId);
-        this.logger.log(`[Stream #${mediaId}] Jellyfin TV isHls=${isHls} → ${url.slice(0, 80)}…`);
+        const { url, isHls } = await this.getJellyfinTvStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId, streamingQuality as 'NATIVE' | 'DIRECT');
+        this.logger.log(`[Stream #${mediaId}] Jellyfin TV quality=${streamingQuality} isHls=${isHls} → ${url.slice(0, 80)}…`);
         return { nasUrl: url, durationSeconds, isHls, sourceType: 'SEEDBOX', jellyfinItemId: media.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
       }
       // Web: HLS transcode via Jellyfin (navigateurs = codecs limités).
@@ -440,13 +442,15 @@ export class NasService {
     audioTrack = 1,
     clientType: 'web' | 'tv' = 'web',
   ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
-    const [member, episode] = await Promise.all([
+    const [member, episode, userPref] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.episode.findFirst({
         where: { id: episodeId, season: { media: { cineClubId } } },
         select: { nasPath: true, nasFilename: true, runtime: true, sourceType: true, jellyfinItemId: true, season: { select: { media: { select: { titleVf: true, titleOriginal: true } } } } },
       }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { streamingQuality: true } }),
     ]);
+    const streamingQuality = userPref?.streamingQuality ?? 'NATIVE';
 
     if (!episode) throw new NotFoundException('Épisode introuvable');
 
@@ -470,8 +474,8 @@ export class NasService {
       }
       // TV: PlaybackInfo → stream HDR10 natif sans Dolby Vision (comme l'app Jellyfin native).
       if (clientType === 'tv') {
-        const { url, isHls } = await this.getJellyfinTvStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId);
-        this.logger.log(`[Stream ep#${episodeId}] Jellyfin TV isHls=${isHls} → ${url.slice(0, 80)}…`);
+        const { url, isHls } = await this.getJellyfinTvStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId, streamingQuality as 'NATIVE' | 'DIRECT');
+        this.logger.log(`[Stream ep#${episodeId}] Jellyfin TV quality=${streamingQuality} isHls=${isHls} → ${url.slice(0, 80)}…`);
         return { nasUrl: url, durationSeconds, isHls, sourceType: 'SEEDBOX', jellyfinItemId: episode.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
       }
       const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId, clientType);
@@ -1032,6 +1036,7 @@ export class NasService {
     jellyfinBaseUrl: string,
     jellyfinApiToken: string,
     jellyfinItemId: string,
+    streamingQuality: 'NATIVE' | 'DIRECT' = 'NATIVE',
   ): Promise<{ url: string; isHls: boolean }> {
     const base = jellyfinBaseUrl.replace(/\/$/, '');
     const deviceId = 'nasflix-tv';
@@ -1059,26 +1064,35 @@ export class NasService {
       return staticFallback();
     }
 
-    // DirectPlayProfiles vide → force HLS pour tout contenu (évite Direct Play du fichier DV brut)
-    // dvhe/dvh1 dans TranscodingProfiles.VideoCodec → Jellyfin copie le bitstream DV sans ré-encoder
-    const deviceProfile = {
-      MaxStreamingBitrate: 200_000_000,
-      DirectPlayProfiles: [],
-      TranscodingProfiles: [{
-        Container: 'mp4',
-        Type: 'Video',
-        Protocol: 'hls',
-        VideoCodec: 'hevc,h264,dvhe,dvh1,vp9,av1',
-        AudioCodec: 'aac,ac3,eac3,truehd,dts,flac,mp3,opus,alac',
-        Context: 'Streaming',
-        MinSegments: 1,
-        BreakOnNonKeyFrames: true,
-      }],
-      SubtitleProfiles: [
-        { Format: 'srt', Method: 'External' },
-        { Format: 'vtt', Method: 'External' },
-      ],
-    };
+    // NATIVE : DirectPlayProfiles vide → force HLS, Jellyfin ne sert jamais le fichier DV brut.
+    // DIRECT : DirectPlayProfiles complet → Jellyfin sert le fichier tel quel (DV visible sur TV).
+    const deviceProfile = streamingQuality === 'DIRECT'
+      ? {
+          MaxStreamingBitrate: 200_000_000,
+          DirectPlayProfiles: [{
+            Container: 'mp4,m4v,mkv,mov,ts,avi',
+            Type: 'Video',
+            VideoCodec: 'h264,hevc,dvhe,dvh1,vp9,av1',
+            AudioCodec: 'aac,ac3,eac3,truehd,dts,flac,mp3,opus,alac',
+          }],
+          TranscodingProfiles: [{
+            Container: 'mp4', Type: 'Video', Protocol: 'hls',
+            VideoCodec: 'hevc,h264,dvhe,dvh1', AudioCodec: 'aac,ac3,eac3',
+            Context: 'Streaming', MinSegments: 1, BreakOnNonKeyFrames: true,
+          }],
+          SubtitleProfiles: [{ Format: 'srt', Method: 'External' }, { Format: 'vtt', Method: 'External' }],
+        }
+      : {
+          MaxStreamingBitrate: 200_000_000,
+          DirectPlayProfiles: [],
+          TranscodingProfiles: [{
+            Container: 'mp4', Type: 'Video', Protocol: 'hls',
+            VideoCodec: 'hevc,h264,dvhe,dvh1,vp9,av1',
+            AudioCodec: 'aac,ac3,eac3,truehd,dts,flac,mp3,opus,alac',
+            Context: 'Streaming', MinSegments: 1, BreakOnNonKeyFrames: true,
+          }],
+          SubtitleProfiles: [{ Format: 'srt', Method: 'External' }, { Format: 'vtt', Method: 'External' }],
+        };
 
     type JfSource = {
       Id?: string;

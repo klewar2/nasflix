@@ -339,6 +339,68 @@ function WebhookSecretCard() {
   );
 }
 
+// ── Toggle qualité streaming TV ────────────────────────────────────────────────
+function StreamingQualityCard() {
+  const queryClient = useQueryClient();
+  const { data: prefs, isLoading } = useQuery({
+    queryKey: ['preferences'],
+    queryFn: () => api.getPreferences(),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (q: 'NATIVE' | 'DIRECT') => api.updatePreferences(q),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['preferences'] }),
+  });
+
+  const current = prefs?.streamingQuality ?? 'NATIVE';
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Qualité streaming TV (Jellyfin)</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-zinc-500">
+          Conditionne les codecs envoyés à Jellyfin lors du streaming depuis l'app TV.
+          Si le serveur est trop chargé pour rendre le mode Natif, utilisez Direct Play.
+        </p>
+        {isLoading ? (
+          <p className="text-sm text-zinc-400">Chargement...</p>
+        ) : (
+          <div className="flex gap-3">
+            {(['NATIVE', 'DIRECT'] as const).map((q) => (
+              <button
+                key={q}
+                onClick={() => mutation.mutate(q)}
+                disabled={mutation.isPending}
+                className={[
+                  'flex-1 rounded-lg border px-4 py-3 text-left transition-colors',
+                  current === q
+                    ? 'border-red-600 bg-red-950/40 text-white'
+                    : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500',
+                ].join(' ')}
+              >
+                <p className="font-semibold text-sm">{q === 'NATIVE' ? 'Natif (HLS)' : 'Direct Play (DV)'}</p>
+                <p className="text-xs mt-0.5 text-zinc-500">
+                  {q === 'NATIVE'
+                    ? 'Force HLS — badge HDR · plus de ressources serveur'
+                    : 'Fichier brut — badge Dolby Vision · moins de charge serveur'}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+        {mutation.isSuccess && <p className="text-sm text-green-400">Préférence enregistrée.</p>}
+        {mutation.isError && (
+          <p className="text-sm text-destructive">
+            {mutation.error instanceof Error ? mutation.error.message : 'Erreur'}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Section Seedbox / Jellyfin ─────────────────────────────────────────────────
 function JellyfinCard() {
   const { cineClub, setCineClub } = useAuth();
@@ -484,6 +546,7 @@ export default function SettingsPage() {
           {isAdmin && <FreeboxCard />}
           {isAdmin && <JellyfinCard />}
           {isAdmin && <WebhookSecretCard />}
+          <StreamingQualityCard />
         </div>
       )}
     </div>

@@ -78,6 +78,17 @@ class ApiClient {
     return this.fetch<AuthTokens>(`/auth/cineclubs/${cineClubId}/select`, { method: 'POST' });
   }
 
+  getPreferences() {
+    return this.fetch<{ streamingQuality: 'NATIVE' | 'DIRECT' }>('/auth/me/preferences');
+  }
+
+  updatePreferences(streamingQuality: 'NATIVE' | 'DIRECT') {
+    return this.fetch<{ streamingQuality: 'NATIVE' | 'DIRECT' }>('/auth/me/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ streamingQuality }),
+    });
+  }
+
   // CineClubs
   getCineClubs() {
     return this.fetch<CineClubResponse[]>('/cineclubs');

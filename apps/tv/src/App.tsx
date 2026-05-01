@@ -10,6 +10,7 @@ import DetailPage from './pages/DetailPage';
 import PlayerPage from './pages/PlayerPage';
 import SearchPage from './pages/SearchPage';
 import ListPage from './pages/ListPage';
+import SettingsPage from './pages/SettingsPage';
 import { tokens } from './lib/tokens';
 import { getMe, getMyCineClubs } from './lib/api';
 
@@ -24,7 +25,8 @@ export type Screen =
   | { name: 'series' }
   | { name: 'search' }
   | { name: 'detail'; mediaId: number; mediaType: 'movie' | 'series' }
-  | { name: 'player'; mediaId: number; episodeId?: number; title?: string; nextEpisodeId?: number; nextEpisodeTitle?: string; videoQuality?: string; hdr?: boolean };
+  | { name: 'player'; mediaId: number; episodeId?: number; title?: string; nextEpisodeId?: number; nextEpisodeTitle?: string; videoQuality?: string; hdr?: boolean }
+  | { name: 'settings' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'splash' });
@@ -129,6 +131,10 @@ export default function App() {
     screen.name === 'search' ||
     screen.name === 'detail';
 
+  if (screen.name === 'settings') {
+    return <SettingsPage onBack={() => setScreen(prevScreen.name === 'home' || prevScreen.name === 'films' || prevScreen.name === 'series' || prevScreen.name === 'search' ? prevScreen : { name: 'home' })} />;
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {DEBUG && <DebugOverlay />}
@@ -143,6 +149,7 @@ export default function App() {
           onNavigateFilms={() => { setNavFocused(false); setScreen({ name: 'films' }); }}
           onNavigateSeries={() => { setNavFocused(false); setScreen({ name: 'series' }); }}
           onNavigateSearch={() => { setNavFocused(false); setScreen({ name: 'search' }); }}
+          onNavigateSettings={() => { navigate({ name: 'settings' }); }}
           onChangeCineClub={handleChangeCineClub}
           onLogout={handleLogout}
         />

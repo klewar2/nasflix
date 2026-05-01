@@ -30,17 +30,23 @@ enum SourceType {
   SEEDBOX
 }
 
+enum StreamingQuality {
+  NATIVE
+  DIRECT
+}
+
 model User {
   id           Int              @id @default(autoincrement())
   username     String           @unique
   firstName    String
   lastName     String
   passwordHash String
-  isSuperAdmin Boolean          @default(false)
-  lastLoginAt  DateTime?
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  memberships  CineClubMember[]
+  isSuperAdmin     Boolean          @default(false)
+  streamingQuality StreamingQuality @default(NATIVE)
+  lastLoginAt      DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  memberships      CineClubMember[]
 }
 
 model CineClub {
