@@ -605,15 +605,24 @@ export class SyncService {
           continue;
         }
         const update: Record<string, unknown> = {};
-        if (!destEp.nasPath && ep.nasPath) {
-          update.nasPath = ep.nasPath;
-          update.nasFilename = ep.nasFilename;
-          update.nasSize = ep.nasSize;
-          update.sourceType = SourceType.NAS;
-        }
+        // Jellyfin a la priorité : si la source a un jellyfinItemId, on l'applique
+        // et on bascule en SEEDBOX (même si destEp est sur NAS).
         if (!destEp.jellyfinItemId && ep.jellyfinItemId) {
           update.jellyfinItemId = ep.jellyfinItemId;
-          if (!destEp.nasPath && !update.nasPath) update.sourceType = SourceType.SEEDBOX;
+          update.sourceType = SourceType.SEEDBOX;
+        }
+        // nasPath : ne copier que si destEp n'en a pas ET qu'il n'y a pas de conflit
+        // (la même nasPath peut déjà appartenir à un autre épisode en DB).
+        if (!destEp.nasPath && ep.nasPath) {
+          const conflict = await this.prisma.episode.findFirst({
+            where: { nasPath: ep.nasPath, id: { not: destEp.id } },
+          });
+          if (!conflict) {
+            update.nasPath = ep.nasPath;
+            update.nasFilename = ep.nasFilename;
+            update.nasSize = ep.nasSize;
+            if (!update.sourceType) update.sourceType = SourceType.NAS;
+          }
         }
         if (!destEp.name && ep.name) update.name = ep.name;
         if (!destEp.overview && ep.overview) update.overview = ep.overview;
@@ -1022,7 +1031,13 @@ export class SyncService {
                 await this.prisma.episode.update({
                   where: { id: existingEp.id },
                   data: hasNas
-                    ? { jellyfinItemId: ep.Id, ...(runtime && !existingEp.runtime ? { runtime } : {}) }
+                    ? {
+                        // Épisode NAS existant : garde le nasPath mais bascule en SEEDBOX
+                        // (Jellyfin a la priorité de streaming quand il est disponible).
+                        jellyfinItemId: ep.Id,
+                        sourceType: SourceType.SEEDBOX,
+                        ...(runtime && !existingEp.runtime ? { runtime } : {}),
+                      }
                     : {
                         nasPath: ep.Path || undefined,
                         nasFilename: epFilename,
