@@ -1045,14 +1045,17 @@ export class NasService {
       return { url: `${base}/Videos/${jellyfinItemId}/stream?${p}`, isHls: false };
     };
 
-    // Récupère l'ID utilisateur Jellyfin depuis le token API
+    // Un API key serveur Jellyfin n'a pas de "moi" → /Users/Me retourne 400.
+    // On liste tous les utilisateurs et on prend l'admin (ou le premier).
     let userId: string;
     try {
-      const r = await fetch(`${base}/Users/Me?api_key=${jellyfinApiToken}`, { signal: AbortSignal.timeout(10_000) });
+      const r = await fetch(`${base}/Users?api_key=${jellyfinApiToken}`, { signal: AbortSignal.timeout(10_000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      userId = (await r.json() as { Id: string }).Id;
+      const users = await r.json() as Array<{ Id: string; Policy?: { IsAdministrator?: boolean } }>;
+      if (!users.length) throw new Error('No users');
+      userId = (users.find(u => u.Policy?.IsAdministrator) ?? users[0]).Id;
     } catch (e) {
-      this.logger.warn(`[jellyfin-tv] /Users/Me failed: ${e} — Static fallback`);
+      this.logger.warn(`[jellyfin-tv] /Users failed: ${e} — Static fallback`);
       return staticFallback();
     }
 
