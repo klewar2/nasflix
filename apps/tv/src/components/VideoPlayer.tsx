@@ -95,8 +95,6 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
   const [seekMode, setSeekMode] = useState(false);
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [videoError, setVideoError] = useState<{ code: number; message: string } | null>(null);
-  const [nextEpCountdown, setNextEpCountdown] = useState<number | null>(null);
-  const nextEpTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [isBuffering, setIsBuffering] = useState(true);
 
@@ -347,27 +345,6 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     showControlsFor(6000);
   }, [playing, showResume, menuOpen, seekMode, showControlsFor]);
 
-  // ── Épisode suivant: déclenche le compte à rebours à 90% de progression ──
-  useEffect(() => {
-    if (!onNextEpisode || nextEpCountdown !== null) return;
-    const dur = durationSeconds || videoRef.current?.duration || 0;
-    if (!dur || !playing) return;
-    if (currentTime / dur < 0.9) return;
-    // Start countdown
-    setNextEpCountdown(15);
-    nextEpTimer.current = setInterval(() => {
-      setNextEpCountdown((c) => {
-        if (c === null || c <= 1) {
-          clearInterval(nextEpTimer.current);
-          onNextEpisode();
-          return null;
-        }
-        return c - 1;
-      });
-    }, 1000);
-    return () => clearInterval(nextEpTimer.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTime, playing, durationSeconds, onNextEpisode]);
 
   // ── Auto-save progress every 15s ─────────────────────────────────────
   useEffect(() => {
@@ -534,20 +511,6 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
     const video = videoRef.current;
     if (!video) return;
 
-    // Next episode countdown: OK = go now, BACK = dismiss
-    if (nextEpCountdown !== null) {
-      e.preventDefault();
-      if (e.keyCode === KEY.OK) {
-        clearInterval(nextEpTimer.current);
-        setNextEpCountdown(null);
-        onNextEpisode?.();
-      } else if (e.keyCode === KEY.BACK) {
-        clearInterval(nextEpTimer.current);
-        setNextEpCountdown(null);
-      }
-      return;
-    }
-
     // Resume prompt: OK = resume, anything else = start over
     if (showResume) {
       e.preventDefault();
@@ -640,7 +603,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
       watchProgress.save(mediaId, episodeId, video.currentTime, dur);
       onBack();
     }
-  }, [onBack, menuOpen, menuSection, menuIndex, currentItems, activeAudio, tracks, hasMenu, seekMode, pendingSeekTime, durationSeconds, showResume, mediaId, episodeId, showControlsFor, nextEpCountdown, onNextEpisode]);
+  }, [onBack, menuOpen, menuSection, menuIndex, currentItems, activeAudio, tracks, hasMenu, seekMode, pendingSeekTime, durationSeconds, showResume, mediaId, episodeId, showControlsFor, onNextEpisode]);
 
   const audioSummary = (() => {
     const t = effectiveAudioTracks[activeAudio];
@@ -810,48 +773,6 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
           color: '#fff', pointerEvents: 'none', letterSpacing: '0.06em',
         }}>
           {seekHint}
-        </div>
-      )}
-
-      {/* Next episode countdown */}
-      {nextEpCountdown !== null && onNextEpisode && (
-        <div style={{
-          position: 'absolute', bottom: '13rem', right: '2rem',
-          background: 'rgba(9,9,11,0.92)',
-          backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: '0.5rem', padding: '0.75rem 1rem',
-          display: 'flex', flexDirection: 'column', gap: '0.5rem',
-          minWidth: '9rem', zIndex: 50,
-        }}>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            Épisode suivant dans {nextEpCountdown}s
-          </div>
-          <div style={{ display: 'flex', gap: '0.375rem' }}>
-            <button
-              onClick={() => { clearInterval(nextEpTimer.current); setNextEpCountdown(null); onNextEpisode(); }}
-              style={{
-                flex: 1, padding: '0.375rem 0.5rem',
-                background: '#fff', color: '#0a0a0e',
-                border: 'none', borderRadius: '4px',
-                fontSize: '0.38rem', fontWeight: 700, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: '0.25rem', justifyContent: 'center',
-              }}
-            >
-              <svg width="9" height="9" viewBox="0 0 12 12"><path d="M2 1.5v9l8-4.5z M11 1.5v9" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
-              Suivant
-            </button>
-            <button
-              onClick={() => { clearInterval(nextEpTimer.current); setNextEpCountdown(null); }}
-              style={{
-                padding: '0.375rem 0.5rem',
-                background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: '4px', color: '#fff', fontSize: '0.38rem', cursor: 'pointer',
-              }}
-            >
-              Annuler
-            </button>
-          </div>
         </div>
       )}
 
@@ -1116,7 +1037,7 @@ export default function VideoPlayer({ url, isHls, durationSeconds, title, tracks
             {/* Next episode button */}
             {onNextEpisode && (
               <button
-                onClick={() => { clearInterval(nextEpTimer.current); onNextEpisode(); }}
+                onClick={() => { onNextEpisode(); }}
                 style={{
                   background: 'rgba(255,255,255,0.06)', color: '#fff',
                   border: '1px solid var(--line-strong)', borderRadius: '4px',
