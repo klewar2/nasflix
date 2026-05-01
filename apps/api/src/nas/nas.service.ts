@@ -1059,21 +1059,17 @@ export class NasService {
       return staticFallback();
     }
 
-    // Device profile sans codecs DV (dvhe/dvh1) → Jellyfin expose le HDR10 base layer
+    // DirectPlayProfiles vide → force HLS pour tout contenu (évite Direct Play du fichier DV brut)
+    // dvhe/dvh1 dans TranscodingProfiles.VideoCodec → Jellyfin copie le bitstream DV sans ré-encoder
     const deviceProfile = {
       MaxStreamingBitrate: 200_000_000,
-      DirectPlayProfiles: [{
-        Container: 'mp4,m4v,mkv,mov,ts,avi',
-        Type: 'Video',
-        VideoCodec: 'h264,hevc,vp9,av1',
-        AudioCodec: 'aac,ac3,eac3,truehd,dts,flac,mp3,opus,alac',
-      }],
+      DirectPlayProfiles: [],
       TranscodingProfiles: [{
         Container: 'mp4',
         Type: 'Video',
         Protocol: 'hls',
-        VideoCodec: 'hevc,h264',
-        AudioCodec: 'aac,ac3,eac3',
+        VideoCodec: 'hevc,h264,dvhe,dvh1,vp9,av1',
+        AudioCodec: 'aac,ac3,eac3,truehd,dts,flac,mp3,opus,alac',
         Context: 'Streaming',
         MinSegments: 1,
         BreakOnNonKeyFrames: true,
