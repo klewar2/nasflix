@@ -71,6 +71,7 @@ export interface SubtitleTrackInfo {
   language: string;
   title: string;
   codec: string;
+  jellyfinIndex?: number;
 }
 
 export interface MediaTracks {
@@ -1197,6 +1198,7 @@ export class NasService {
         language: s.Language || 'und',
         title: s.DisplayTitle || s.Language || `Sous-titre ${i + 1}`,
         codec: s.Codec?.toUpperCase() || '',
+        jellyfinIndex: typeof s.Index === 'number' ? s.Index : undefined,
       }));
 
     return { audio, subtitles };

@@ -850,28 +850,21 @@ export class SyncService {
           if (!ep.episode_number) continue; // skip specials or malformed TMDB entries
           const stillUrl = this.metadataService.stillUrl(ep.still_path);
           try {
-            await this.prisma.episode.upsert({
-              where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber: ep.episode_number } },
-              update: {
-                name: ep.name || undefined,
-                overview: ep.overview || undefined,
-                airDate: ep.air_date ? new Date(ep.air_date) : undefined,
+            // Only enrich episodes that already exist (have a file on NAS or Jellyfin).
+            // Never create episodes from TMDB alone — files drive episode creation.
+            await this.prisma.episode.updateMany({
+              where: { seasonId: season.id, episodeNumber: ep.episode_number },
+              data: {
+                ...(ep.name ? { name: ep.name } : {}),
+                ...(ep.overview ? { overview: ep.overview } : {}),
+                ...(ep.air_date ? { airDate: new Date(ep.air_date) } : {}),
                 ...(stillUrl ? { stillUrl } : {}),
                 ...(ep.runtime ? { runtime: ep.runtime } : {}),
-              },
-              create: {
-                seasonId: season.id,
-                episodeNumber: ep.episode_number,
-                name: ep.name,
-                overview: ep.overview,
-                airDate: ep.air_date ? new Date(ep.air_date) : null,
-                stillUrl,
-                runtime: ep.runtime ?? null,
               },
             });
           } catch (epErr) {
             const msg = epErr instanceof Error ? epErr.message : String(epErr);
-            this.logger.warn(`[syncTvDetails] Episode S${s.season_number}E${ep.episode_number} upsert failed: ${msg}`);
+            this.logger.warn(`[syncTvDetails] Episode S${s.season_number}E${ep.episode_number} update failed: ${msg}`);
           }
         }
       }
@@ -1162,6 +1155,26 @@ export class SyncService {
             }
           }
         }
+      }
+
+      // Re-queue SYNCED series whose Jellyfin episodes are missing TMDB overview/stillUrl.
+      // syncTvDetails (now update-only) will fill in the metadata without creating ghost episodes.
+      const seriesWithMissingMeta = await this.prisma.media.findMany({
+        where: {
+          cineClubId,
+          type: MediaType.SERIES,
+          tmdbId: { not: null },
+          syncStatus: SyncStatus.SYNCED,
+          seasons: { some: { episodes: { some: { jellyfinItemId: { not: null }, overview: null } } } },
+        },
+        select: { id: true },
+      });
+      if (seriesWithMissingMeta.length > 0) {
+        await this.prisma.media.updateMany({
+          where: { id: { in: seriesWithMissingMeta.map((s) => s.id) } },
+          data: { syncStatus: SyncStatus.PENDING },
+        });
+        this.logger.log(`[Jellyfin sync] Re-queuing ${seriesWithMissingMeta.length} series with Jellyfin episodes missing TMDB metadata`);
       }
 
       // Enqueue metadata sync for new PENDING items

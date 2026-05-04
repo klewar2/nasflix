@@ -92,7 +92,7 @@ export function getMediaById(id: number): Promise<any> {
 
 export interface MediaTracks {
   audio: { index: number; language: string; title: string; codec: string; channels: number }[];
-  subtitles: { index: number; language: string; title: string; codec: string }[];
+  subtitles: { index: number; language: string; title: string; codec: string; jellyfinIndex?: number }[];
 }
 
 export function getNasStatus() {
