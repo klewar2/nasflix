@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
 import Hls from 'hls.js';
 import { getStreamUrl, getEpisodeStreamUrl } from '../lib/api';
-import type { MediaTracks } from '../lib/api';
+import type { MediaTracks, NasSubtitleTrack } from '../lib/api';
 import { HLS_CONFIG, langName, parseVTT } from './utils';
 import type { AudioTrack, SubtitleTrack } from './utils';
 import type { HlsAudioTrack } from './useVideoCore';
@@ -24,6 +24,7 @@ interface Params {
   mediaId: number;
   episodeId: number | undefined;
   urlChangeKey: number;
+  nasSubtitleCache?: NasSubtitleTrack[];
 }
 
 interface Return {
@@ -41,7 +42,7 @@ interface Return {
 export function useVideoTracks({
   videoRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
   tracks, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
-  currentTime, mediaId, episodeId, urlChangeKey,
+  currentTime, mediaId, episodeId, urlChangeKey, nasSubtitleCache,
 }: Params): Return {
   const [nativeAudioTracks, setNativeAudioTracks] = useState<AudioTrack[]>([]);
   const [nativeSubtitleTracks, setNativeSubtitleTracks] = useState<SubtitleTrack[]>([]);
@@ -49,11 +50,53 @@ export function useVideoTracks({
   const [subtitleCues, setSubtitleCues] = useState<Array<{ start: number; end: number; html: string }>>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
 
-  // Reset subtitle state on media change
+  // Unified cue cache: key → cues[]
+  // NAS: key = nasTrackIdx, SEEDBOX: key = jellyfinIndex
+  const cueCacheRef = useRef<Map<number, Array<{ start: number; end: number; html: string }>>>(new Map());
+
+  // Reset all subtitle state on media change
   useEffect(() => {
     setActiveSubtitle(-1);
     setSubtitleCues([]);
+    cueCacheRef.current = new Map();
   }, [urlChangeKey]);
+
+  // Populate cue cache from NAS subtitle cache prop (VTT already extracted by backend)
+  useEffect(() => {
+    if (sourceType !== 'NAS' || !nasSubtitleCache || nasSubtitleCache.length === 0) return;
+    for (const sub of nasSubtitleCache) {
+      if (!cueCacheRef.current.has(sub.trackIdx)) {
+        cueCacheRef.current.set(sub.trackIdx, parseVTT(sub.vttContent));
+      }
+    }
+  }, [sourceType, nasSubtitleCache]);
+
+  // Background-preload preferred subtitle (fr > en) for SEEDBOX sources
+  useEffect(() => {
+    if (sourceType !== 'SEEDBOX' || !jellyfinBaseUrl || !jellyfinItemId || !jellyfinApiToken) return;
+    const subs = nativeSubtitleTracks.length > 0 ? nativeSubtitleTracks : (tracks?.subtitles ?? []);
+    if (subs.length === 0) return;
+
+    const preferred = subs.find(t => t.language === 'fr')
+      ?? subs.find(t => t.language === 'en')
+      ?? subs[0];
+    if (!preferred || typeof preferred.jellyfinIndex !== 'number') return;
+
+    const targetIndex = preferred.jellyfinIndex;
+    if (cueCacheRef.current.has(targetIndex)) return;
+
+    let cancelled = false;
+    const base = jellyfinBaseUrl.replace(/\/$/, '');
+    const vttUrl = `${base}/Videos/${jellyfinItemId}/${jellyfinItemId}/Subtitles/${targetIndex}/0/Stream.vtt?api_key=${jellyfinApiToken}`;
+
+    fetch(vttUrl).then(async res => {
+      if (cancelled || !res.ok) return;
+      const cues = parseVTT(await res.text());
+      if (!cancelled) cueCacheRef.current.set(targetIndex, cues);
+    }).catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [sourceType, jellyfinBaseUrl, jellyfinItemId, jellyfinApiToken, nativeSubtitleTracks, tracks]);
 
   // Native audio/subtitle track detection (non-HLS)
   useEffect(() => {
@@ -114,9 +157,19 @@ export function useVideoTracks({
     ? hlsAudioTracks.map(t => ({ index: t.id, title: t.name, language: t.lang, codec: '', channels: 0 }))
     : nativeAudioTracks.length > 0 ? nativeAudioTracks : (tracks?.audio ?? []);
 
-  const effectiveSubtitles: SubtitleTrack[] = nativeSubtitleTracks.length > 0
-    ? nativeSubtitleTracks
-    : (tracks?.subtitles ?? []);
+  const effectiveSubtitles: SubtitleTrack[] = useMemo(() => {
+    if (sourceType === 'NAS' && nasSubtitleCache && nasSubtitleCache.length > 0) {
+      return nasSubtitleCache.map((t, i) => ({
+        index: i,
+        nasTrackIdx: t.trackIdx,
+        language: t.language,
+        title: t.title,
+        codec: t.codec,
+      }));
+    }
+    if (nativeSubtitleTracks.length > 0) return nativeSubtitleTracks;
+    return tracks?.subtitles ?? [];
+  }, [sourceType, nasSubtitleCache, nativeSubtitleTracks, tracks]);
 
   const activeCueHtml = useMemo(() => {
     if (activeSubtitle === -1 || subtitleCues.length === 0) return null;
@@ -182,14 +235,35 @@ export function useVideoTracks({
     const track = effectiveSubtitles[index];
     if (!track) return;
 
+    // NAS: cues pre-loaded from backend extraction, served from cache
+    if (sourceType === 'NAS') {
+      const cacheKey = track.nasTrackIdx ?? index;
+      const cached = cueCacheRef.current.get(cacheKey);
+      if (cached) {
+        setSubtitleCues(cached);
+        setActiveSubtitle(index);
+      }
+      // If not in cache yet (extraction still in progress backend-side): no-op
+      return;
+    }
+
+    // SEEDBOX: check cache first (background preload), fetch from Jellyfin if needed
     if (sourceType === 'SEEDBOX' && typeof track.jellyfinIndex === 'number' && jellyfinBaseUrl && jellyfinItemId && jellyfinApiToken) {
+      const cached = cueCacheRef.current.get(track.jellyfinIndex);
+      if (cached) {
+        setSubtitleCues(cached);
+        setActiveSubtitle(index);
+        return;
+      }
       setSubtitleLoading(true);
       try {
         const base = jellyfinBaseUrl.replace(/\/$/, '');
         const vttUrl = `${base}/Videos/${jellyfinItemId}/${jellyfinItemId}/Subtitles/${track.jellyfinIndex}/0/Stream.vtt?api_key=${jellyfinApiToken}`;
         const res = await fetch(vttUrl);
         if (!res.ok) throw new Error(`VTT ${res.status}`);
-        setSubtitleCues(parseVTT(await res.text()));
+        const cues = parseVTT(await res.text());
+        cueCacheRef.current.set(track.jellyfinIndex, cues);
+        setSubtitleCues(cues);
         setActiveSubtitle(index);
         console.info(`[NasflixTV] subtitles loaded ${JSON.stringify({ lang: track.language })}`);
       } catch (e) {
@@ -201,6 +275,7 @@ export function useVideoTracks({
       return;
     }
 
+    // Native text tracks (browser renders them — non-HLS, embedded tracks)
     if (video) {
       const tt = video.textTracks;
       for (let i = 0; i < tt.length; i++) tt[i].mode = (i === index) ? 'showing' : 'disabled';

@@ -95,6 +95,14 @@ export interface MediaTracks {
   subtitles: { index: number; language: string; title: string; codec: string; jellyfinIndex?: number }[];
 }
 
+export interface NasSubtitleTrack {
+  trackIdx: number;
+  language: string;
+  title: string;
+  codec: string;
+  vttContent: string;
+}
+
 export function getNasStatus() {
   return request<{ online: boolean }>('/nas/status');
 }
@@ -119,6 +127,14 @@ export function getMediaTracks(mediaId: number) {
 
 export function getEpisodeTracks(episodeId: number) {
   return request<MediaTracks>(`/nas/tracks/episode/${episodeId}`);
+}
+
+export function getNasSubtitles(mediaId: number) {
+  return request<NasSubtitleTrack[]>(`/nas/subtitles/${mediaId}`);
+}
+
+export function getNasEpisodeSubtitles(episodeId: number) {
+  return request<NasSubtitleTrack[]>(`/nas/subtitles/episode/${episodeId}`);
 }
 
 export function getPreferences() {

@@ -219,6 +219,26 @@ export class NasController {
     return { saved: true };
   }
 
+  // ── NAS subtitle cache ─────────────────────────────────────────────────────
+
+  @Get('subtitles/episode/:episodeId')
+  async getEpisodeSubtitles(
+    @Param('episodeId', ParseIntPipe) episodeId: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.getNasSubtitlesForEpisode(episodeId, req.user.sub, req.user.cineClubId);
+  }
+
+  @Get('subtitles/:mediaId')
+  async getMediaSubtitles(
+    @Param('mediaId', ParseIntPipe) mediaId: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.getNasSubtitlesForMedia(mediaId, req.user.sub, req.user.cineClubId);
+  }
+
   // ── Track probing ──────────────────────────────────────────────────────────
 
   @Get('tracks/episode/:episodeId')

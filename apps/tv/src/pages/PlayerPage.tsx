@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import VideoPlayer from '../components/VideoPlayer';
-import { getStreamUrl, getEpisodeStreamUrl, getMediaTracks, getEpisodeTracks } from '../lib/api';
+import { getStreamUrl, getEpisodeStreamUrl, getMediaTracks, getEpisodeTracks, getNasSubtitles, getNasEpisodeSubtitles } from '../lib/api';
 
 interface Props {
   mediaId: number;
@@ -26,6 +26,14 @@ export default function PlayerPage({ mediaId, episodeId, title, nextEpisodeId: _
   const { data: tracks } = useQuery({
     queryKey: ['tracks', mediaId, episodeId],
     queryFn: () => episodeId ? getEpisodeTracks(episodeId) : getMediaTracks(mediaId),
+    staleTime: Infinity,
+  });
+
+  // NAS subtitle cache — extraction FFmpeg backend, résultat mis en cache en DB
+  const { data: nasSubtitleCache } = useQuery({
+    queryKey: ['nas-subtitles', mediaId, episodeId],
+    queryFn: () => episodeId ? getNasEpisodeSubtitles(episodeId) : getNasSubtitles(mediaId),
+    enabled: data?.sourceType === 'NAS',
     staleTime: Infinity,
   });
 
@@ -110,6 +118,7 @@ export default function PlayerPage({ mediaId, episodeId, title, nextEpisodeId: _
       jellyfinItemId={data.jellyfinItemId}
       jellyfinBaseUrl={data.jellyfinBaseUrl}
       jellyfinApiToken={data.jellyfinApiToken}
+      nasSubtitleCache={nasSubtitleCache}
       videoQuality={videoQuality}
       hdr={hdr}
       onBack={onBack}

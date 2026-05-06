@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { MediaTracks } from '../lib/api';
+import type { MediaTracks, NasSubtitleTrack } from '../lib/api';
 import { watchProgress } from '../lib/progress';
 import { useVideoCore } from '../hooks/useVideoCore';
 import { useVideoTracks } from '../hooks/useVideoTracks';
@@ -19,6 +19,7 @@ interface Props {
   jellyfinItemId?: string;
   jellyfinBaseUrl?: string;
   jellyfinApiToken?: string;
+  nasSubtitleCache?: NasSubtitleTrack[];
   videoQuality?: string;
   hdr?: boolean;
   onBack: () => void;
@@ -27,7 +28,7 @@ interface Props {
 
 export default function VideoPlayer({
   url, isHls, durationSeconds, title, tracks, mediaId, episodeId,
-  sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
+  sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken, nasSubtitleCache,
   videoQuality, hdr, onBack, onNextEpisode,
 }: Props) {
   // savedProgress computed once (synchronous localStorage read)
@@ -51,7 +52,7 @@ export default function VideoPlayer({
   } = useVideoTracks({
     videoRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
     tracks, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
-    currentTime, mediaId, episodeId, urlChangeKey,
+    currentTime, mediaId, episodeId, urlChangeKey, nasSubtitleCache,
   });
 
   const nav = usePlayerNav({
@@ -71,18 +72,17 @@ export default function VideoPlayer({
         <div style={{
           position: 'absolute',
           bottom: nav.showControls ? '22%' : '6%',
-          left: '8%', right: '8%',
+          left: '10%', right: '10%',
           textAlign: 'center', pointerEvents: 'none', zIndex: 20,
           transition: 'bottom 0.3s ease',
         }}>
           <span
             style={{
               display: 'inline-block', color: '#fff',
-              fontSize: '2.7rem', fontFamily: 'Arial, Helvetica, sans-serif',
-              fontWeight: 600, lineHeight: 1.35,
-              backgroundColor: 'rgba(0,0,0,0.72)', padding: '0.2em 0.55em',
-              borderRadius: '5px', maxWidth: '100%',
-              textShadow: '1px 1px 3px rgba(0,0,0,0.9)',
+              fontSize: '0.875rem', fontFamily: 'Arial, Helvetica, sans-serif',
+              fontWeight: 500, lineHeight: 1.4,
+              background: "transparent",
+              maxWidth: '100%',
             }}
             // VTT may contain <b>/<i> — sourced from our own Jellyfin server
             // eslint-disable-next-line react/no-danger

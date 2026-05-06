@@ -68,5 +68,5 @@ export const HLS_CONFIG = {
 export type TrackSection = 'audio' | 'subtitle';
 
 export type AudioTrack = { index: number; title: string; language: string; codec: string; channels: number };
-export type SubtitleTrack = { index: number; title: string; language: string; codec: string; jellyfinIndex?: number };
-export type TrackItem = { index: number; title: string; language: string; codec: string; jellyfinIndex?: number; channels?: number };
+export type SubtitleTrack = { index: number; title: string; language: string; codec: string; jellyfinIndex?: number; nasTrackIdx?: number };
+export type TrackItem = { index: number; title: string; language: string; codec: string; jellyfinIndex?: number; nasTrackIdx?: number; channels?: number };

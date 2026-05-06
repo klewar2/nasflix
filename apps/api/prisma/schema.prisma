@@ -202,6 +202,21 @@ model Episode {
   @@unique([seasonId, episodeNumber])
 }
 
+model SubtitleCache {
+  id         Int      @id @default(autoincrement())
+  mediaId    Int?
+  episodeId  Int?
+  trackIdx   Int
+  language   String
+  title      String
+  codec      String
+  vttContent String   @db.Text
+  createdAt  DateTime @default(now())
+
+  @@index([mediaId])
+  @@index([episodeId])
+}
+
 model SyncLog {
   id             Int       @id @default(autoincrement())
   cineClubId     Int?
