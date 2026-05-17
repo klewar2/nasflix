@@ -205,13 +205,14 @@ export class JobsService {
 
   parseSonarrPayload(payload: SonarrWebhookPayload, cineClubId: number) {
     const eventType = payload.eventType?.toLowerCase();
-    if (eventType && !['download', 'import', 'episodefileimported'].some((e) => eventType.includes(e))) {
+    if (eventType && !['download', 'import', 'episodefileimported', 'importcomplete'].some((e) => eventType.includes(e))) {
       this.logger.log(`Sonarr webhook ignoré (eventType=${eventType})`);
       return null;
     }
-    const file = payload.episodeFile;
+    // Sonarr v3 = episodeFile (singular), v4 = episodeFiles (array)
+    const file = payload.episodeFile ?? payload.episodeFiles?.[0];
     if (!file?.path) {
-      this.logger.warn('Sonarr webhook reçu sans episodeFile.path — ignoré');
+      this.logger.warn(`Sonarr webhook reçu sans episodeFile.path (eventType=${eventType}) — ignoré`);
       return null;
     }
     const firstEp = payload.episodes?.[0];

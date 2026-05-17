@@ -27,6 +27,14 @@ export interface RadarrWebhookPayload {
   };
 }
 
+export interface SonarrEpisodeFile {
+  id?: number;
+  relativePath?: string;
+  path?: string;
+  quality?: string;
+  size?: number;
+}
+
 export interface SonarrWebhookPayload {
   eventType?: string;
   series?: {
@@ -44,13 +52,9 @@ export interface SonarrWebhookPayload {
     title?: string;
     tvdbId?: number;
   }>;
-  episodeFile?: {
-    id?: number;
-    relativePath?: string;
-    path?: string;
-    quality?: string;
-    size?: number;
-  };
+  // Sonarr v3 → singulier, v4 → pluriel
+  episodeFile?: SonarrEpisodeFile;
+  episodeFiles?: SonarrEpisodeFile[];
   release?: {
     quality?: string;
     size?: number;
