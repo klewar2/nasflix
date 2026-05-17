@@ -315,7 +315,7 @@ class ApiClient {
     return this.fetch<{ deleted: boolean }>(`/jobs/${id}`, { method: 'DELETE' });
   }
 
-  triggerManualTransfer(body: { mediaId?: number; jellyfinItemId?: string; tmdbId?: number; tmdbType?: 'movie' | 'tv'; sourcePath?: string }) {
+  triggerManualTransfer(body: { mediaId?: number; jellyfinItemId?: string; tmdbId?: number; tmdbType?: 'movie' | 'tv'; sourcePath?: string; fileName?: string; fileSize?: number; seasonNumber?: number; episodeNumber?: number }) {
     return this.fetch<{ jobId: number }>('/jobs/transfer/manual', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -324,6 +324,18 @@ class ApiClient {
 
   triggerJellyfinDelete(mediaId: number) {
     return this.fetch<{ jobId: number }>(`/jobs/delete-jellyfin/${mediaId}`, { method: 'POST' });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getRadarrLibrary(): Promise<{ items: any[] }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.fetch<{ items: any[] }>('/jobs/library/radarr');
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getSonarrLibrary(): Promise<{ items: any[] }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.fetch<{ items: any[] }>('/jobs/library/sonarr');
   }
 }
 

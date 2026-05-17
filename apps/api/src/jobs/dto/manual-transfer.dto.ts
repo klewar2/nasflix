@@ -20,4 +20,19 @@ export class ManualTransferDto {
   @IsOptional()
   @IsString()
   sourcePath?: string;
+
+  @IsOptional()
+  @IsString()
+  fileName?: string;
+
+  @IsOptional()
+  @IsInt()
+  seasonNumber?: number;
+
+  @IsOptional()
+  @IsInt()
+  episodeNumber?: number;
+
+  @IsOptional()
+  fileSize?: number;
 }

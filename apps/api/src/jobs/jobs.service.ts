@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Job as JobRow, JobKind, JobSource, JobStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
+import { CryptoService } from '../common/crypto.service';
 import { JOBS_QUEUE } from './jobs.constants';
 import { RadarrWebhookPayload, SonarrWebhookPayload } from './dto/webhook-radarr.dto';
 
@@ -12,6 +13,7 @@ export class JobsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly crypto: CryptoService,
     @InjectQueue(JOBS_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -237,6 +239,215 @@ export class JobsService {
         attempts: 1,
       },
     );
+  }
+
+  // ── Bibliothèque Radarr/Sonarr (pour backfill manuel) ────────────────────
+
+  async listRadarrLibrary(cineClubId: number): Promise<Array<{
+    radarrId: number;
+    title: string;
+    year: number | null;
+    tmdbId: number | null;
+    hasFile: boolean;
+    sourcePath: string | null;
+    fileName: string | null;
+    fileSize: number | null;
+    quality: string | null;
+    onNas: boolean;
+    nasDeletedAt: string | null;
+    activeJobId: number | null;
+  }>> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.radarrBaseUrl || !club.radarrApiKey) {
+      throw new BadRequestException('Radarr non configuré pour ce CineClub');
+    }
+    const apiKey = this.crypto.decrypt(club.radarrApiKey);
+    const url = `${club.radarrBaseUrl.replace(/\/$/, '')}/api/v3/movie`;
+    const res = await fetch(url, {
+      headers: { 'X-Api-Key': apiKey },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new BadRequestException(`Radarr HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const movies = (await res.json()) as any[];
+
+    // cross-check Media par tmdbId (NAS)
+    const tmdbIds = movies.map((m) => m.tmdbId).filter((id): id is number => typeof id === 'number');
+    const mediaByTmdb = new Map(
+      (
+        await this.prisma.media.findMany({
+          where: { cineClubId, tmdbId: { in: tmdbIds } },
+          select: { tmdbId: true, sourceType: true, nasDeletedAt: true },
+        })
+      ).map((m) => [m.tmdbId!, m]),
+    );
+
+    // jobs actifs (PENDING/AWAITING_*/IN_PROGRESS) DOWNLOAD_TO_NAS par tmdbId
+    const activeJobs = await this.prisma.job.findMany({
+      where: {
+        cineClubId,
+        kind: JobKind.DOWNLOAD_TO_NAS,
+        tmdbId: { in: tmdbIds },
+        status: { in: [JobStatus.PENDING, JobStatus.AWAITING_NAS, JobStatus.AWAITING_SEEDBOX, JobStatus.IN_PROGRESS] },
+      },
+      select: { id: true, tmdbId: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const activeJobByTmdb = new Map(activeJobs.map((j) => [j.tmdbId!, j.id]));
+
+    return movies.map((m) => {
+      const onDb = m.tmdbId ? mediaByTmdb.get(m.tmdbId) : null;
+      return {
+        radarrId: m.id,
+        title: m.title,
+        year: m.year ?? null,
+        tmdbId: m.tmdbId ?? null,
+        hasFile: !!m.hasFile,
+        sourcePath: m.movieFile?.path ?? null,
+        fileName: m.movieFile?.relativePath ?? null,
+        fileSize: m.movieFile?.size ?? null,
+        quality: m.movieFile?.quality?.quality?.name ?? null,
+        onNas: !!(onDb && onDb.sourceType === 'NAS' && !onDb.nasDeletedAt),
+        nasDeletedAt: onDb?.nasDeletedAt?.toISOString() ?? null,
+        activeJobId: m.tmdbId ? activeJobByTmdb.get(m.tmdbId) ?? null : null,
+      };
+    });
+  }
+
+  async listSonarrLibrary(cineClubId: number): Promise<Array<{
+    sonarrSeriesId: number;
+    sonarrEpisodeId: number;
+    sonarrEpisodeFileId: number | null;
+    seriesTitle: string;
+    seriesTmdbId: number | null;
+    seasonNumber: number;
+    episodeNumber: number;
+    episodeTitle: string | null;
+    hasFile: boolean;
+    sourcePath: string | null;
+    fileName: string | null;
+    fileSize: number | null;
+    quality: string | null;
+    onNas: boolean;
+    activeJobId: number | null;
+  }>> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.sonarrBaseUrl || !club.sonarrApiKey) {
+      throw new BadRequestException('Sonarr non configuré pour ce CineClub');
+    }
+    const apiKey = this.crypto.decrypt(club.sonarrApiKey);
+    const base = club.sonarrBaseUrl.replace(/\/$/, '');
+
+    // 1. Séries
+    const seriesRes = await fetch(`${base}/api/v3/series`, {
+      headers: { 'X-Api-Key': apiKey },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!seriesRes.ok) {
+      const body = await seriesRes.text().catch(() => '');
+      throw new BadRequestException(`Sonarr HTTP ${seriesRes.status}: ${body.slice(0, 200)}`);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allSeries = (await seriesRes.json()) as any[];
+
+    // 2. Episode files (tous d'un coup pour éviter N+1)
+    const filesRes = await fetch(`${base}/api/v3/episodefile`, {
+      headers: { 'X-Api-Key': apiKey },
+      signal: AbortSignal.timeout(60_000),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allFiles = filesRes.ok ? ((await filesRes.json()) as any[]) : [];
+    const filesById = new Map<number, (typeof allFiles)[number]>();
+    for (const f of allFiles) filesById.set(f.id, f);
+
+    // 3. Episodes per series (parallèle, batch)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allEpisodes: any[] = [];
+    for (const s of allSeries) {
+      try {
+        const epRes = await fetch(`${base}/api/v3/episode?seriesId=${s.id}`, {
+          headers: { 'X-Api-Key': apiKey },
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!epRes.ok) continue;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const eps = (await epRes.json()) as any[];
+        for (const ep of eps) allEpisodes.push({ ...ep, _series: s });
+      } catch (err) {
+        this.logger.warn(`Sonarr episodes fetch failed for series ${s.id}: ${err}`);
+      }
+    }
+
+    // cross-check NAS Episodes
+    const seriesTmdbIds = allSeries.map((s) => s.tmdbId).filter((id): id is number => typeof id === 'number');
+    const nasMediaByTmdb = new Map(
+      (
+        await this.prisma.media.findMany({
+          where: { cineClubId, tmdbId: { in: seriesTmdbIds }, type: 'SERIES' },
+          select: { id: true, tmdbId: true },
+        })
+      ).map((m) => [m.tmdbId!, m.id]),
+    );
+    const nasMediaIds = Array.from(nasMediaByTmdb.values());
+    const nasEpisodes = await this.prisma.episode.findMany({
+      where: {
+        season: { mediaId: { in: nasMediaIds } },
+        nasPath: { not: null },
+        nasDeletedAt: null,
+      },
+      select: {
+        episodeNumber: true,
+        season: { select: { seasonNumber: true, mediaId: true } },
+      },
+    });
+    const onNasKey = new Set(
+      nasEpisodes.map((e) => `${e.season.mediaId}|${e.season.seasonNumber}|${e.episodeNumber}`),
+    );
+
+    const activeJobs = await this.prisma.job.findMany({
+      where: {
+        cineClubId,
+        kind: JobKind.DOWNLOAD_TO_NAS,
+        tmdbId: { in: seriesTmdbIds },
+        seasonNumber: { not: null },
+        episodeNumber: { not: null },
+        status: { in: [JobStatus.PENDING, JobStatus.AWAITING_NAS, JobStatus.AWAITING_SEEDBOX, JobStatus.IN_PROGRESS] },
+      },
+      select: { id: true, tmdbId: true, seasonNumber: true, episodeNumber: true },
+    });
+    const activeJobKey = new Map(
+      activeJobs.map((j) => [`${j.tmdbId}|${j.seasonNumber}|${j.episodeNumber}`, j.id]),
+    );
+
+    return allEpisodes.map((ep) => {
+      const series = ep._series;
+      const file = ep.episodeFileId ? filesById.get(ep.episodeFileId) : null;
+      const mediaId = series.tmdbId ? nasMediaByTmdb.get(series.tmdbId) : undefined;
+      const onNas = mediaId
+        ? onNasKey.has(`${mediaId}|${ep.seasonNumber}|${ep.episodeNumber}`)
+        : false;
+      const activeKey = `${series.tmdbId}|${ep.seasonNumber}|${ep.episodeNumber}`;
+      return {
+        sonarrSeriesId: series.id,
+        sonarrEpisodeId: ep.id,
+        sonarrEpisodeFileId: ep.episodeFileId ?? null,
+        seriesTitle: series.title,
+        seriesTmdbId: series.tmdbId ?? null,
+        seasonNumber: ep.seasonNumber,
+        episodeNumber: ep.episodeNumber,
+        episodeTitle: ep.title ?? null,
+        hasFile: !!ep.hasFile,
+        sourcePath: file?.path ?? null,
+        fileName: file?.relativePath ?? null,
+        fileSize: file?.size ?? null,
+        quality: file?.quality?.quality?.name ?? null,
+        onNas,
+        activeJobId: activeJobKey.get(activeKey) ?? null,
+      };
+    });
   }
 }
 

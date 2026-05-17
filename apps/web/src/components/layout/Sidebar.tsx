@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
-import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users, UserCircle, Menu, X, ListTodo } from 'lucide-react';
+import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users, UserCircle, Menu, X, ListTodo, Library } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
@@ -11,6 +11,7 @@ const navItems = [
   { to: '/admin/media', icon: Film, label: 'Médias', adminOnly: false, superAdminOnly: false },
   { to: '/admin/sync', icon: RefreshCw, label: 'Synchronisation', adminOnly: true, superAdminOnly: false },
   { to: '/admin/jobs', icon: ListTodo, label: 'Jobs', adminOnly: false, superAdminOnly: true },
+  { to: '/admin/library', icon: Library, label: 'Bibliothèque Arr', adminOnly: false, superAdminOnly: true },
   { to: '/admin/settings', icon: Settings, label: 'Paramètres', adminOnly: true, superAdminOnly: false },
   { to: '/admin/users', icon: Users, label: 'Utilisateurs', adminOnly: true, superAdminOnly: false },
   { to: '/admin/profile', icon: UserCircle, label: 'Mon profil', adminOnly: false, superAdminOnly: false },

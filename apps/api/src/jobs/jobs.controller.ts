@@ -65,7 +65,7 @@ export class JobsController {
     const cineClubId = this.requireCineClub(req.user);
 
     let sourcePath = dto.sourcePath ?? null;
-    let fileName: string | null = null;
+    let fileName: string | null = dto.fileName ?? null;
     let tmdbId = dto.tmdbId ?? null;
     let tmdbType = dto.tmdbType ?? null;
     let mediaId: number | null = dto.mediaId ?? null;
@@ -76,7 +76,7 @@ export class JobsController {
       tmdbId = media.tmdbId ?? tmdbId;
       tmdbType = media.type === 'SERIES' ? 'tv' : 'movie';
       mediaId = media.id;
-      fileName = media.nasFilename || media.titleOriginal;
+      fileName = fileName ?? media.nasFilename ?? media.titleOriginal;
     }
 
     if (!sourcePath) {
@@ -91,8 +91,11 @@ export class JobsController {
       source: JobSource.MANUAL,
       sourcePath,
       fileName,
+      fileSize: dto.fileSize ?? null,
       tmdbId,
       tmdbType: tmdbType ?? undefined,
+      seasonNumber: dto.seasonNumber ?? null,
+      episodeNumber: dto.episodeNumber ?? null,
       mediaId,
       triggeredBy: `user:${req.user.sub}`,
     });
@@ -136,6 +139,20 @@ export class JobsController {
   async listActive(@Req() req: { user: JwtPayload }) {
     const cineClubId = this.requireCineClub(req.user);
     return { items: await this.jobsService.listActive(cineClubId) };
+  }
+
+  @Get('library/radarr')
+  @UseGuards(SuperAdminGuard)
+  async libraryRadarr(@Req() req: { user: JwtPayload }) {
+    const cineClubId = this.requireCineClub(req.user);
+    return { items: await this.jobsService.listRadarrLibrary(cineClubId) };
+  }
+
+  @Get('library/sonarr')
+  @UseGuards(SuperAdminGuard)
+  async librarySonarr(@Req() req: { user: JwtPayload }) {
+    const cineClubId = this.requireCineClub(req.user);
+    return { items: await this.jobsService.listSonarrLibrary(cineClubId) };
   }
 
   @Get(':id')
