@@ -1,11 +1,15 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../common/prisma.service';
-import { MemberRole } from '@prisma/client';
+import { CryptoService } from '../common/crypto.service';
+import { MemberRole, Prisma } from '@prisma/client';
 
 @Injectable()
 export class CineClubsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly crypto: CryptoService,
+  ) {}
 
   async findAll(userId: number, isSuperAdmin: boolean) {
     if (isSuperAdmin) {
@@ -27,9 +31,30 @@ export class CineClubsService {
   }
 
   /** Masque les secrets sensibles — jamais exposés côté API */
-  private sanitize(club: Parameters<typeof Object.assign>[0] & { webhookSecret?: string | null; freeboxAppToken?: string | null; jellyfinApiToken?: string | null }) {
-    const { webhookSecret, freeboxAppToken, jellyfinApiToken, ...rest } = club;
-    return { ...rest, webhookSecretSet: !!webhookSecret, freeboxAppTokenSet: !!freeboxAppToken, jellyfinApiTokenSet: !!jellyfinApiToken };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private sanitize(club: any) {
+    const {
+      webhookSecret,
+      freeboxAppToken,
+      jellyfinApiToken,
+      radarrApiKey,
+      sonarrApiKey,
+      seedboxSshPrivateKey,
+      seedboxSshPassphrase,
+      gmailAppPassword,
+      ...rest
+    } = club;
+    return {
+      ...rest,
+      webhookSecretSet: !!webhookSecret,
+      freeboxAppTokenSet: !!freeboxAppToken,
+      jellyfinApiTokenSet: !!jellyfinApiToken,
+      radarrApiKeySet: !!radarrApiKey,
+      sonarrApiKeySet: !!sonarrApiKey,
+      seedboxSshPrivateKeySet: !!seedboxSshPrivateKey,
+      seedboxSshPassphraseSet: !!seedboxSshPassphrase,
+      gmailAppPasswordSet: !!gmailAppPassword,
+    };
   }
 
   async create(data: { name: string; slug: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {
@@ -47,9 +72,48 @@ export class CineClubsService {
     nasWolHost?: string | null;
     nasWolPort?: number | null;
     freeboxApiUrl?: string | null;
+    // Radarr / Sonarr
+    radarrBaseUrl?: string | null;
+    radarrApiKey?: string | null;
+    sonarrBaseUrl?: string | null;
+    sonarrApiKey?: string | null;
+    // SSH seedbox
+    seedboxSshHost?: string | null;
+    seedboxSshPort?: number;
+    seedboxSshUser?: string | null;
+    seedboxSshPrivateKey?: string | null;
+    seedboxSshPassphrase?: string | null;
+    // SSH NAS
+    nasSshHost?: string | null;
+    nasSshPort?: number;
+    nasSshUser?: string | null;
+    nasTargetMovieDir?: string | null;
+    nasTargetSeriesDir?: string | null;
+    nasWolWaitSeconds?: number;
+    seedboxDeleteGraceHours?: number;
+    // Gmail
+    gmailFrom?: string | null;
+    gmailAppPassword?: string | null;
+    gmailEnabled?: boolean;
   }) {
     await this.findOne(id);
-    return this.sanitize(await this.prisma.cineClub.update({ where: { id }, data }));
+    const patch: Prisma.CineClubUpdateInput = {};
+    for (const k of Object.keys(data) as Array<keyof typeof data>) {
+      const v = data[k];
+      if (v === undefined) continue;
+      // Chiffrement des secrets
+      if (
+        (k === 'radarrApiKey' || k === 'sonarrApiKey' || k === 'seedboxSshPrivateKey' || k === 'seedboxSshPassphrase' || k === 'gmailAppPassword') &&
+        typeof v === 'string'
+      ) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (patch as any)[k] = this.crypto.encrypt(v);
+        continue;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (patch as any)[k] = v;
+    }
+    return this.sanitize(await this.prisma.cineClub.update({ where: { id }, data: patch }));
   }
 
   /** Génère un nouveau webhookSecret et le retourne en clair (une seule fois). */

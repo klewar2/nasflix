@@ -8,6 +8,7 @@ import { NasModule } from '../nas/nas.module';
 import { MetadataModule } from '../metadata/metadata.module';
 import { MediaModule } from '../media/media.module';
 import { PrismaModule } from '../common/prisma.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { METADATA_SYNC_QUEUE } from './sync.constants';
 
 @Module({
@@ -16,6 +17,7 @@ import { METADATA_SYNC_QUEUE } from './sync.constants';
     MetadataModule,
     MediaModule,
     PrismaModule,
+    JobsModule,
     BullModule.registerQueue({
       name: METADATA_SYNC_QUEUE,
       defaultJobOptions: {

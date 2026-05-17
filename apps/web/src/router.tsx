@@ -14,6 +14,7 @@ import SyncPage from './pages/backoffice/SyncPage';
 import SettingsPage from './pages/backoffice/SettingsPage';
 import UsersPage from './pages/backoffice/UsersPage';
 import MyProfilePage from './pages/backoffice/MyProfilePage';
+import JobsPage from './pages/backoffice/JobsPage';
 import { WebappLayout } from './components/layout/WebappLayout';
 import { BackofficeLayout } from './components/layout/BackofficeLayout';
 
@@ -44,6 +45,7 @@ export const router = createBrowserRouter([
               { path: 'media', element: <MediaListPage /> },
               { path: 'media/:id', element: <MediaEditPage /> },
               { path: 'sync', element: <SyncPage /> },
+              { path: 'jobs', element: <JobsPage /> },
               { path: 'settings', element: <SettingsPage /> },
               { path: 'users', element: <UsersPage /> },
               { path: 'profile', element: <MyProfilePage /> },

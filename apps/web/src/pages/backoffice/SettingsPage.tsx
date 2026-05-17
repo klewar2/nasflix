@@ -407,7 +407,6 @@ function JellyfinCard() {
   const queryClient = useQueryClient();
   const [jellyfinUrl, setJellyfinUrl] = useState(cineClub?.jellyfinBaseUrl ?? '');
   const [jellyfinToken, setJellyfinToken] = useState('');
-  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   // Fetch fresh cineclub data so the form is pre-filled even after stale localStorage
   const { data: freshClub } = useQuery({
@@ -439,13 +438,6 @@ function JellyfinCard() {
     queryKey: ['jellyfin-status'],
     queryFn: () => api.getJellyfinStatus(),
     enabled: false,
-  });
-
-  const syncMutation = useMutation({
-    mutationFn: () => api.syncFromJellyfin(),
-    onSuccess: (data) => {
-      setSyncResult(`${data.message} — ${data.processed} traités, ${data.metadataQueued} métadonnées en queue`);
-    },
   });
 
   return (
@@ -497,15 +489,6 @@ function JellyfinCard() {
             <Wifi className="w-4 h-4 mr-2" />
             {isCheckingStatus ? 'Test...' : 'Tester la connexion'}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-          >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            {syncMutation.isPending ? 'Synchronisation...' : 'Synchroniser depuis Jellyfin'}
-          </Button>
         </div>
 
         {status && (
@@ -519,10 +502,79 @@ function JellyfinCard() {
             {saveMutation.error instanceof Error ? saveMutation.error.message : 'Erreur'}
           </p>
         )}
-        {syncResult && <p className="text-sm text-green-400">{syncResult}</p>}
-        {syncMutation.isError && (
-          <p className="text-sm text-destructive">
-            {syncMutation.error instanceof Error ? syncMutation.error.message : 'Erreur de sync'}
+        <p className="text-xs text-zinc-500 italic">Le catalogue est désormais alimenté uniquement par le NAS. L'ID Jellyfin est rempli automatiquement lors d'un transfert.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Radarr / Sonarr ────────────────────────────────────────────────────────────
+function RadarrSonarrCard() {
+  const { cineClub } = useAuth();
+  const queryClient = useQueryClient();
+  const { data: club } = useQuery({
+    queryKey: ['cineclub-fresh', cineClub?.id],
+    queryFn: () => api.getCineClub(cineClub!.id),
+    enabled: !!cineClub?.id,
+  });
+  const [radarrUrl, setRadarrUrl] = useState('');
+  const [radarrKey, setRadarrKey] = useState('');
+  const [sonarrUrl, setSonarrUrl] = useState('');
+  const [sonarrKey, setSonarrKey] = useState('');
+
+  useEffect(() => {
+    if (club) {
+      setRadarrUrl(club.radarrBaseUrl ?? '');
+      setSonarrUrl(club.sonarrBaseUrl ?? '');
+    }
+  }, [club]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateCineClub(cineClub!.id, {
+        radarrBaseUrl: radarrUrl || null,
+        ...(radarrKey ? { radarrApiKey: radarrKey } : {}),
+        sonarrBaseUrl: sonarrUrl || null,
+        ...(sonarrKey ? { sonarrApiKey: sonarrKey } : {}),
+      }),
+    onSuccess: () => {
+      setRadarrKey('');
+      setSonarrKey('');
+      queryClient.invalidateQueries({ queryKey: ['cineclub-fresh', cineClub?.id] });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Radarr / Sonarr</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-zinc-500">URL et clé API de tes instances Radarr/Sonarr sur la seedbox. Utilisées pour le webhook d'import.</p>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">URL Radarr</label>
+          <Input placeholder="https://host.seedbox.com/user/radarr" value={radarrUrl} onChange={(e) => setRadarrUrl(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">Clé API Radarr</label>
+          <p className="text-xs text-zinc-500 mb-1">{club?.radarrApiKeySet ? 'Clé configurée (masquée)' : 'Non configurée'}</p>
+          <Input type="password" placeholder={club?.radarrApiKeySet ? '••••••••' : 'Clé API Radarr'} value={radarrKey} onChange={(e) => setRadarrKey(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">URL Sonarr</label>
+          <Input placeholder="https://host.seedbox.com/user/sonarr" value={sonarrUrl} onChange={(e) => setSonarrUrl(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">Clé API Sonarr</label>
+          <p className="text-xs text-zinc-500 mb-1">{club?.sonarrApiKeySet ? 'Clé configurée (masquée)' : 'Non configurée'}</p>
+          <Input type="password" placeholder={club?.sonarrApiKeySet ? '••••••••' : 'Clé API Sonarr'} value={sonarrKey} onChange={(e) => setSonarrKey(e.target.value)} />
+        </div>
+        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+          <Save className="w-4 h-4 mr-2" />{save.isPending ? 'Sauvegarde...' : 'Sauvegarder'}
+        </Button>
+        {club?.webhookSecretSet && (
+          <p className="text-xs text-zinc-500">
+            URL webhook : <code className="text-zinc-300">/api/jobs/webhook/radarr</code> et <code className="text-zinc-300">/api/jobs/webhook/sonarr</code> (header <code>X-Webhook-Secret</code> = secret du CineClub)
           </p>
         )}
       </CardContent>
@@ -530,10 +582,220 @@ function JellyfinCard() {
   );
 }
 
+// ── SSH seedbox + NAS targets + grâce ──────────────────────────────────────────
+function TransferCard() {
+  const { cineClub } = useAuth();
+  const queryClient = useQueryClient();
+  const { data: club } = useQuery({
+    queryKey: ['cineclub-fresh', cineClub?.id],
+    queryFn: () => api.getCineClub(cineClub!.id),
+    enabled: !!cineClub?.id,
+  });
+  const [sshHost, setSshHost] = useState('');
+  const [sshPort, setSshPort] = useState<string>('22');
+  const [sshUser, setSshUser] = useState('');
+  const [sshKey, setSshKey] = useState('');
+  const [sshPass, setSshPass] = useState('');
+  const [nasHost, setNasHost] = useState('');
+  const [nasPort, setNasPort] = useState<string>('22');
+  const [nasUser, setNasUser] = useState('');
+  const [movieDir, setMovieDir] = useState('');
+  const [seriesDir, setSeriesDir] = useState('');
+  const [wolWait, setWolWait] = useState<string>('300');
+  const [grace, setGrace] = useState<string>('24');
+
+  useEffect(() => {
+    if (club) {
+      setSshHost(club.seedboxSshHost ?? '');
+      setSshPort(String(club.seedboxSshPort ?? 22));
+      setSshUser(club.seedboxSshUser ?? '');
+      setNasHost(club.nasSshHost ?? '');
+      setNasPort(String(club.nasSshPort ?? 22));
+      setNasUser(club.nasSshUser ?? '');
+      setMovieDir(club.nasTargetMovieDir ?? '');
+      setSeriesDir(club.nasTargetSeriesDir ?? '');
+      setWolWait(String(club.nasWolWaitSeconds ?? 300));
+      setGrace(String(club.seedboxDeleteGraceHours ?? 24));
+    }
+  }, [club]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateCineClub(cineClub!.id, {
+        seedboxSshHost: sshHost || null,
+        seedboxSshPort: Number(sshPort) || 22,
+        seedboxSshUser: sshUser || null,
+        ...(sshKey ? { seedboxSshPrivateKey: sshKey } : {}),
+        ...(sshPass ? { seedboxSshPassphrase: sshPass } : {}),
+        nasSshHost: nasHost || null,
+        nasSshPort: Number(nasPort) || 22,
+        nasSshUser: nasUser || null,
+        nasTargetMovieDir: movieDir || null,
+        nasTargetSeriesDir: seriesDir || null,
+        nasWolWaitSeconds: Number(wolWait) || 300,
+        seedboxDeleteGraceHours: Number(grace) || 24,
+      }),
+    onSuccess: () => {
+      setSshKey('');
+      setSshPass('');
+      queryClient.invalidateQueries({ queryKey: ['cineclub-fresh', cineClub?.id] });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Transfert seedbox → NAS</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <h3 className="text-sm font-semibold text-zinc-300">SSH seedbox (Nasflix → seedbox)</h3>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2">
+            <label className="text-xs text-zinc-400 mb-1 block">Hôte</label>
+            <Input placeholder="host.seedbox.com" value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Port</label>
+            <Input value={sshPort} onChange={(e) => setSshPort(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Utilisateur SSH</label>
+          <Input placeholder="username" value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Clé privée SSH (PEM)</label>
+          <p className="text-xs text-zinc-500 mb-1">{club?.seedboxSshPrivateKeySet ? 'Clé configurée (masquée)' : 'Non configurée'}</p>
+          <textarea
+            placeholder={club?.seedboxSshPrivateKeySet ? '••••••••' : '-----BEGIN OPENSSH PRIVATE KEY-----\n...'}
+            value={sshKey}
+            onChange={(e) => setSshKey(e.target.value)}
+            className="w-full min-h-[100px] p-2 text-xs bg-zinc-950 border border-zinc-800 rounded font-mono"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Passphrase clé (optionnel)</label>
+          <Input type="password" placeholder={club?.seedboxSshPassphraseSet ? '••••••••' : 'Passphrase'} value={sshPass} onChange={(e) => setSshPass(e.target.value)} />
+        </div>
+
+        <h3 className="text-sm font-semibold text-zinc-300 pt-2">SSH NAS (cible rsync)</h3>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2">
+            <label className="text-xs text-zinc-400 mb-1 block">Hôte</label>
+            <Input placeholder="mon-nas.synology.me" value={nasHost} onChange={(e) => setNasHost(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Port</label>
+            <Input value={nasPort} onChange={(e) => setNasPort(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Utilisateur NAS (user technique nasflix-receive)</label>
+          <Input placeholder="nasflix-receive" value={nasUser} onChange={(e) => setNasUser(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Dossier films</label>
+          <Input placeholder="/volume1/movies" value={movieDir} onChange={(e) => setMovieDir(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Dossier séries</label>
+          <Input placeholder="/volume1/series" value={seriesDir} onChange={(e) => setSeriesDir(e.target.value)} />
+        </div>
+
+        <h3 className="text-sm font-semibold text-zinc-300 pt-2">Timings</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Attente max NAS WoL (s)</label>
+            <Input value={wolWait} onChange={(e) => setWolWait(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 mb-1 block">Grâce suppression seedbox (heures)</label>
+            <Input value={grace} onChange={(e) => setGrace(e.target.value)} />
+          </div>
+        </div>
+
+        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+          <Save className="w-4 h-4 mr-2" />{save.isPending ? 'Sauvegarde...' : 'Sauvegarder'}
+        </Button>
+        {save.isError && (
+          <p className="text-sm text-destructive">{save.error instanceof Error ? save.error.message : 'Erreur'}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Gmail (notifications super admin) ──────────────────────────────────────────
+function GmailCard() {
+  const { cineClub } = useAuth();
+  const queryClient = useQueryClient();
+  const { data: club } = useQuery({
+    queryKey: ['cineclub-fresh', cineClub?.id],
+    queryFn: () => api.getCineClub(cineClub!.id),
+    enabled: !!cineClub?.id,
+  });
+  const [from, setFrom] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    if (club) {
+      setFrom(club.gmailFrom ?? '');
+      setEnabled(!!club.gmailEnabled);
+    }
+  }, [club]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateCineClub(cineClub!.id, {
+        gmailFrom: from || null,
+        ...(pwd ? { gmailAppPassword: pwd } : {}),
+        gmailEnabled: enabled,
+      }),
+    onSuccess: () => {
+      setPwd('');
+      queryClient.invalidateQueries({ queryKey: ['cineclub-fresh', cineClub?.id] });
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Notifications Gmail</CardTitle>
+          <Badge variant={enabled && club?.gmailAppPasswordSet ? 'success' : 'secondary'}>
+            {enabled && club?.gmailAppPasswordSet ? 'Activé' : 'Désactivé'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-zinc-500">Envoi d'alertes aux super admins (WoL échoué, job en échec). Activer le 2FA Google et générer un mot de passe d'application.</p>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">Adresse Gmail expéditrice</label>
+          <Input placeholder="nasflix@gmail.com" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">App Password Gmail</label>
+          <p className="text-xs text-zinc-500 mb-1">{club?.gmailAppPasswordSet ? 'Mot de passe configuré (masqué)' : 'Non configuré'}</p>
+          <Input type="password" placeholder={club?.gmailAppPasswordSet ? '••••••••' : 'xxxx xxxx xxxx xxxx'} value={pwd} onChange={(e) => setPwd(e.target.value)} />
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Activer l'envoi de mails
+        </label>
+        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+          <Save className="w-4 h-4 mr-2" />{save.isPending ? 'Sauvegarde...' : 'Sauvegarder'}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Page principale ────────────────────────────────────────────────────────────
 export default function SettingsPage() {
-  const { cineClub } = useAuth();
+  const { cineClub, user } = useAuth();
   const isAdmin = cineClub?.role === 'ADMIN';
+  const isSuperAdmin = !!user?.isSuperAdmin;
 
   return (
     <div>
@@ -545,6 +807,9 @@ export default function SettingsPage() {
           {isAdmin && <WolCard />}
           {isAdmin && <FreeboxCard />}
           {isAdmin && <JellyfinCard />}
+          {isSuperAdmin && <RadarrSonarrCard />}
+          {isSuperAdmin && <TransferCard />}
+          {isSuperAdmin && <GmailCard />}
           {isAdmin && <WebhookSecretCard />}
           <StreamingQualityCard />
         </div>

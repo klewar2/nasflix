@@ -364,6 +364,15 @@ export class NasService {
 
     const durationSeconds = (media.runtime ?? 0) * 60;
 
+    // Streaming TV : OBLIGATOIREMENT depuis le NAS (cf. exigence produit).
+    // Si le média n'est pas sur le NAS, on refuse explicitement plutôt que de tomber
+    // sur Jellyfin (qui ne stream pas HDR/DV de manière fiable côté TV).
+    if (mode === 'stream' && clientType === 'tv' && media.sourceType !== 'NAS') {
+      throw new BadRequestException(
+        'Streaming TV requiert le NAS — ce média doit d\'abord être transféré sur le NAS',
+      );
+    }
+
     // ── Source SEEDBOX → Jellyfin ─────────────────────────────────────────────
     if (media.sourceType === 'SEEDBOX') {
       if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) {
@@ -467,6 +476,13 @@ export class NasService {
     if (!club) throw new BadRequestException('CineClub introuvable');
 
     const durationSeconds = (episode.runtime ?? 0) * 60;
+
+    // Streaming TV : OBLIGATOIREMENT depuis le NAS.
+    if (mode === 'stream' && clientType === 'tv' && episode.sourceType !== 'NAS') {
+      throw new BadRequestException(
+        'Streaming TV requiert le NAS — cet épisode doit d\'abord être transféré sur le NAS',
+      );
+    }
 
     // ── Source SEEDBOX → Jellyfin ─────────────────────────────────────────────
     if (episode.sourceType === 'SEEDBOX') {

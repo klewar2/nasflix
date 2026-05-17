@@ -53,6 +53,7 @@ export interface CineClubResponse {
   nasSharedFolders: string[];
   tmdbApiKey: string | null;
   webhookSecretSet: boolean;
+  webhookSecret?: string | null;
   nasWolMac: string | null;
   nasWolHost: string | null;
   nasWolPort: number | null;
@@ -60,6 +61,29 @@ export interface CineClubResponse {
   freeboxAppTokenSet: boolean;
   jellyfinBaseUrl: string | null;
   jellyfinApiTokenSet: boolean;
+  // Radarr / Sonarr
+  radarrBaseUrl?: string | null;
+  radarrApiKeySet?: boolean;
+  sonarrBaseUrl?: string | null;
+  sonarrApiKeySet?: boolean;
+  // SSH seedbox
+  seedboxSshHost?: string | null;
+  seedboxSshPort?: number;
+  seedboxSshUser?: string | null;
+  seedboxSshPrivateKeySet?: boolean;
+  seedboxSshPassphraseSet?: boolean;
+  // SSH NAS
+  nasSshHost?: string | null;
+  nasSshPort?: number;
+  nasSshUser?: string | null;
+  nasTargetMovieDir?: string | null;
+  nasTargetSeriesDir?: string | null;
+  nasWolWaitSeconds?: number;
+  seedboxDeleteGraceHours?: number;
+  // Gmail
+  gmailFrom?: string | null;
+  gmailAppPasswordSet?: boolean;
+  gmailEnabled?: boolean;
   lastOnlineAt: string | null;
   lastSyncAt: string | null;
   role?: 'ADMIN' | 'VIEWER';

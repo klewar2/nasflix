@@ -35,9 +35,33 @@ enum StreamingQuality {
   DIRECT
 }
 
+enum JobKind {
+  DOWNLOAD_TO_NAS
+  DELETE_FROM_SEEDBOX
+  DELETE_FROM_JELLYFIN
+}
+
+enum JobSource {
+  RADARR
+  SONARR
+  MANUAL
+  NAS_SYNC
+}
+
+enum JobStatus {
+  PENDING
+  AWAITING_NAS
+  AWAITING_SEEDBOX
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
 model User {
   id           Int              @id @default(autoincrement())
   username     String           @unique
+  email        String?
   firstName    String
   lastName     String
   passwordHash String
@@ -64,6 +88,31 @@ model CineClub {
   freeboxAppToken  String?
   jellyfinBaseUrl  String?
   jellyfinApiToken String?
+  // Radarr / Sonarr
+  radarrBaseUrl    String?
+  radarrApiKey     String?
+  sonarrBaseUrl    String?
+  sonarrApiKey     String?
+  // SSH seedbox (Nasflix → seedbox)
+  seedboxSshHost       String?
+  seedboxSshPort       Int      @default(22)
+  seedboxSshUser       String?
+  seedboxSshPrivateKey String?
+  seedboxSshPassphrase String?
+  // SSH NAS (rsync target depuis seedbox)
+  nasSshHost           String?
+  nasSshPort           Int      @default(22)
+  nasSshUser           String?
+  nasTargetMovieDir    String?
+  nasTargetSeriesDir   String?
+  // Wake-on-LAN
+  nasWolWaitSeconds    Int      @default(300)
+  // Grâce suppression seedbox
+  seedboxDeleteGraceHours Int   @default(24)
+  // Gmail (notifications super admin)
+  gmailFrom            String?
+  gmailAppPassword     String?
+  gmailEnabled         Boolean  @default(false)
   lastOnlineAt     DateTime?
   lastSyncAt       DateTime?
   createdAt        DateTime         @default(now())
@@ -71,6 +120,7 @@ model CineClub {
   members          CineClubMember[]
   media            Media[]
   syncLogs         SyncLog[]
+  jobs             Job[]
 }
 
 model CineClubMember {
@@ -115,12 +165,14 @@ model Media {
   syncStatus    SyncStatus    @default(PENDING)
   lastSyncedAt  DateTime?
   syncError     String?
+  nasDeletedAt  DateTime?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   cineClub      CineClub      @relation(fields: [cineClubId], references: [id], onDelete: Cascade)
   genres        MediaGenre[]
   cast          MediaPerson[]
   seasons       Season[]
+  jobs          Job[]
 
   @@unique([cineClubId, nasPath])
   @@index([cineClubId, type])
@@ -196,8 +248,10 @@ model Episode {
   nasSize       BigInt?
   sourceType    SourceType @default(NAS)
   jellyfinItemId String?
+  nasDeletedAt  DateTime?
   seasonId      Int
   season        Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  jobs          Job[]
 
   @@unique([seasonId, episodeNumber])
 }
@@ -230,4 +284,47 @@ model SyncLog {
   completedAt    DateTime?
   triggeredBy    String?
   cineClub       CineClub? @relation(fields: [cineClubId], references: [id], onDelete: SetNull)
+}
+
+model Job {
+  id               Int        @id @default(autoincrement())
+  cineClubId       Int
+  cineClub         CineClub   @relation(fields: [cineClubId], references: [id], onDelete: Cascade)
+
+  kind             JobKind
+  source           JobSource
+  status           JobStatus  @default(PENDING)
+
+  tmdbId           Int?
+  tmdbType         String?
+  mediaId          Int?
+  media            Media?     @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  episodeId        Int?
+  episode          Episode?   @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  seasonNumber     Int?
+  episodeNumber    Int?
+
+  sourcePath       String?
+  fileName         String?
+  fileSize         BigInt?
+  targetPath       String?
+
+  jellyfinItemId   String?
+
+  scheduledFor     DateTime?
+
+  attempts         Int        @default(0)
+  errorMessage     String?
+  errorDetails     Json?
+  progressPercent  Int?
+  triggeredBy      String?
+
+  createdAt        DateTime   @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+
+  @@index([cineClubId, kind, status])
+  @@index([status, scheduledFor])
+  @@index([createdAt])
 }

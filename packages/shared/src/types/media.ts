@@ -27,6 +27,9 @@ export interface MediaResponse {
   runtime: number | null;
   voteAverage: number | null;
   syncStatus: SyncStatus;
+  sourceType?: 'NAS' | 'SEEDBOX';
+  jellyfinItemId?: string | null;
+  nasDeletedAt?: string | null;
   genres: GenreResponse[];
   cast: PersonResponse[];
   createdAt: string;
@@ -70,4 +73,7 @@ export interface EpisodeResponse {
   runtime: number | null;
   stillUrl: string | null;
   nasPath: string | null;
+  sourceType?: 'NAS' | 'SEEDBOX';
+  jellyfinItemId?: string | null;
+  nasDeletedAt?: string | null;
 }

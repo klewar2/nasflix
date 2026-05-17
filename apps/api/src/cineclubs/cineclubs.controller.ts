@@ -39,6 +39,25 @@ export class CineClubsController {
       nasWolHost?: string | null;
       nasWolPort?: number | null;
       freeboxApiUrl?: string | null;
+      radarrBaseUrl?: string | null;
+      radarrApiKey?: string | null;
+      sonarrBaseUrl?: string | null;
+      sonarrApiKey?: string | null;
+      seedboxSshHost?: string | null;
+      seedboxSshPort?: number;
+      seedboxSshUser?: string | null;
+      seedboxSshPrivateKey?: string | null;
+      seedboxSshPassphrase?: string | null;
+      nasSshHost?: string | null;
+      nasSshPort?: number;
+      nasSshUser?: string | null;
+      nasTargetMovieDir?: string | null;
+      nasTargetSeriesDir?: string | null;
+      nasWolWaitSeconds?: number;
+      seedboxDeleteGraceHours?: number;
+      gmailFrom?: string | null;
+      gmailAppPassword?: string | null;
+      gmailEnabled?: boolean;
     },
   ) {
     return this.cineClubsService.update(id, body);

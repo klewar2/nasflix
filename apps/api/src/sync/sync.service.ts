@@ -6,10 +6,11 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../common/prisma.service';
 import { NasService } from '../nas/nas.service';
 import { MetadataService, TmdbSearchResult } from '../metadata/metadata.service';
-import { MediaType, SourceType, SyncStatus } from '@prisma/client';
+import { JobKind, JobStatus, MediaType, SourceType, SyncStatus } from '@prisma/client';
 import { parseMediaFilename, ParsedMediaInfo } from '../common/media-parser';
 import { METADATA_SYNC_QUEUE } from './sync.constants';
 import { SyncGateway } from './sync.gateway';
+import { JobsService } from '../jobs/jobs.service';
 
 @Injectable()
 export class SyncService {
@@ -22,6 +23,7 @@ export class SyncService {
     private readonly metadataService: MetadataService,
     @InjectQueue(METADATA_SYNC_QUEUE) private readonly metadataQueue: Queue,
     @Inject(forwardRef(() => SyncGateway)) private readonly syncGateway: SyncGateway,
+    private readonly jobsService: JobsService,
   ) {}
 
   async fullSync(cineClubId: number, nasUsername: string, nasPassword: string, triggeredBy = 'manual') {
@@ -44,41 +46,15 @@ export class SyncService {
       const nasFiles = await this.nasService.listAllVideoFiles(session, club.nasSharedFolders);
       this.logger.log(`Found ${nasFiles.length} video files on NAS`);
 
-      // Step 2: Reconcile Media records
-      const existingMedia = await this.prisma.media.findMany({ where: { cineClubId }, select: { id: true, nasPath: true } });
-      const nasPaths = new Set(nasFiles.map((f) => f.path));
-
-      // Safety guard: if the NAS returned 0 files but we have existing records, the scan
-      // likely failed (network error, NAS offline). Skip orphan cleanup to avoid wiping the DB.
-      const nasMediaCount = existingMedia.filter((m) => !m.nasPath.startsWith('jellyfin://')).length;
-      let orphanedCount = 0;
-      if (nasFiles.length === 0 && nasMediaCount > 0) {
-        this.logger.warn(`NAS returned 0 files but ${nasMediaCount} media records exist — skipping orphan cleanup (NAS may be offline)`);
+      // Step 2: Reconcile Media records — détection move (filename+size) puis delete avec grâce
+      const reconcile = await this.reconcileNasFiles(cineClubId, nasFiles, club.seedboxDeleteGraceHours);
+      const orphanedCount = reconcile.deletedDetected;
+      if (reconcile.skippedDueToEmptyNas) {
+        this.logger.warn(`NAS returned 0 files mais des Media existent — skip réconciliation (NAS peut-être offline)`);
       } else {
-        // Only NAS-sourced records (not synthetic Jellyfin paths) can be orphaned by a NAS scan.
-        const orphaned = existingMedia.filter((m) => !m.nasPath.startsWith('jellyfin://') && !nasPaths.has(m.nasPath));
-        orphanedCount = orphaned.length;
-        if (orphaned.length > 0) {
-          this.logger.log(`Removing ${orphaned.length} orphaned Media entries`);
-          await this.prisma.media.deleteMany({ where: { id: { in: orphaned.map((o) => o.id) } } });
-        }
-
-        // Step 2b: Reconcile Episode nasPath (episode files removed from NAS)
-        const existingEpisodes = await this.prisma.episode.findMany({
-          where: {
-            nasPath: { not: null },
-            season: { media: { cineClubId } },
-          },
-          select: { id: true, nasPath: true },
-        });
-        const orphanedEpisodes = existingEpisodes.filter((e) => e.nasPath && !nasPaths.has(e.nasPath));
-        if (orphanedEpisodes.length > 0) {
-          this.logger.log(`Clearing nasPath for ${orphanedEpisodes.length} orphaned episode(s)`);
-          await this.prisma.episode.updateMany({
-            where: { id: { in: orphanedEpisodes.map((e) => e.id) } },
-            data: { nasPath: null, nasFilename: null, nasSize: null },
-          });
-        }
+        this.logger.log(
+          `Réconciliation NAS : ${reconcile.moved} déplacement(s), ${reconcile.deletedDetected} suppression(s) détectée(s)`,
+        );
       }
 
       // Step 3: Add new files to DB with parsed quality info
@@ -173,26 +149,13 @@ export class SyncService {
         data: { lastSyncAt: new Date() },
       });
 
-      // Chain Jellyfin sync automatically if configured
-      let jellyfinResult: object | null = null;
-      if (club.jellyfinBaseUrl && club.jellyfinApiToken) {
-        try {
-          this.logger.log('[Full sync] Chaining Jellyfin sync...');
-          jellyfinResult = await this.syncFromJellyfin(cineClubId);
-        } catch (jellyfinErr) {
-          const msg = jellyfinErr instanceof Error ? jellyfinErr.message : String(jellyfinErr);
-          this.logger.warn(`[Full sync] Jellyfin sync failed: ${msg}`);
-        }
-      }
-
       return {
         message: 'Sync completed, metadata jobs enqueued',
         totalFiles: nasFiles.length,
         processed: processedItems,
-        orphanedRemoved: orphanedCount,
+        deletionsDetected: orphanedCount,
         errors: errorCount,
         metadataQueued: queued,
-        jellyfin: jellyfinResult,
       };
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -210,11 +173,13 @@ export class SyncService {
     const { added = [], removed = [], moved = [] } = changes;
     this.logger.log(`DiffSync [club ${cineClubId}]: +${added.length} added, -${removed.length} removed, ~${moved.length} moved`);
 
-    // Suppressions
+    // Suppressions : ne supprime PAS la Media, on marque nasDeletedAt
+    // et on planifie une suppression seedbox avec grâce (annulable par super admin).
     if (removed.length > 0) {
-      await this.prisma.media.deleteMany({ where: { cineClubId, nasPath: { in: removed } } });
-      await this.prisma.episode.deleteMany({ where: { nasPath: { in: removed } } });
-      this.logger.log(`Removed ${removed.length} file(s) from DB`);
+      const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+      const graceMs = (club?.seedboxDeleteGraceHours ?? 24) * 60 * 60 * 1000;
+      await this.markDeletedAndQueueCleanup(cineClubId, removed, graceMs);
+      this.logger.log(`Marked ${removed.length} file(s) deleted (grâce ${graceMs / 3600_000}h)`);
     }
 
     // Déplacements / renommages
@@ -871,360 +836,170 @@ export class SyncService {
     }
   }
 
-  async syncFromJellyfin(cineClubId: number): Promise<object> {
-    const club = await this.prisma.cineClub.findUniqueOrThrow({ where: { id: cineClubId } });
-    if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) {
-      throw new BadRequestException('Jellyfin non configuré pour ce CineClub');
-    }
 
-    const syncLog = await this.prisma.syncLog.create({
-      data: { cineClubId, type: 'jellyfin_sync', status: 'running', triggeredBy: 'manual' },
+  // ── Réconciliation NAS (move + delete avec grâce) ─────────────────────────
+
+  private async reconcileNasFiles(
+    cineClubId: number,
+    nasFiles: Array<{ path: string; name: string; additional?: { size?: string | number } }>,
+    graceHours: number,
+  ): Promise<{ moved: number; deletedDetected: number; skippedDueToEmptyNas: boolean }> {
+    const existingMedia = await this.prisma.media.findMany({
+      where: { cineClubId },
+      select: { id: true, nasPath: true, nasFilename: true, nasSize: true },
     });
+    const nasMediaCount = existingMedia.filter((m) => !m.nasPath.startsWith('jellyfin://')).length;
 
-    let processedItems = 0;
-    let errorCount = 0;
-    const errors: string[] = [];
-
-    try {
-      const [movies, episodes] = await Promise.all([
-        this.nasService.getJellyfinItems(club.jellyfinBaseUrl, club.jellyfinApiToken, 'Movie'),
-        this.nasService.getJellyfinItems(club.jellyfinBaseUrl, club.jellyfinApiToken, 'Episode'),
-      ]);
-
-      this.logger.log(`[Jellyfin sync] ${movies.length} films, ${episodes.length} épisodes`);
-
-      for (const item of movies) {
-        try {
-          const filePath = item.Path;
-          const filename = basename(filePath);
-          const runtime = item.RunTimeTicks ? Math.round(item.RunTimeTicks / 600_000_000) : null;
-
-          const existing = await this.prisma.media.findUnique({
-            where: { cineClubId_nasPath: { cineClubId, nasPath: filePath } },
-          });
-
-          if (existing) {
-            await this.prisma.media.update({
-              where: { id: existing.id },
-              data: { jellyfinItemId: item.Id, sourceType: SourceType.SEEDBOX, ...(runtime ? { runtime } : {}) },
-            });
-          } else {
-            const parsed = parseMediaFilename(filename);
-            await this.prisma.media.create({
-              data: {
-                cineClubId,
-                type: MediaType.MOVIE,
-                titleOriginal: item.Name || parsed.title || filename,
-                nasPath: filePath,
-                nasFilename: filename,
-                sourceType: SourceType.SEEDBOX,
-                jellyfinItemId: item.Id,
-                runtime,
-                syncStatus: SyncStatus.PENDING,
-                nasAddedAt: new Date(),
-              },
-            });
-          }
-          processedItems++;
-        } catch (err) {
-          errorCount++;
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`${item.Name}: ${msg}`);
-          this.logger.error(`[Jellyfin sync] Error processing movie "${item.Name}": ${msg}`);
-        }
-      }
-
-      // ── Series / Episodes ─────────────────────────────────────────────
-      // Group episodes by SeriesId to upsert one Media(SERIES) per show
-      const seriesMap = new Map<string, Array<{ Id: string; Name: string; Path: string; RunTimeTicks?: number; SeriesName?: string; SeriesId?: string; IndexNumber?: number; ParentIndexNumber?: number }>>();
-      for (const ep of episodes) {
-        if (!ep.SeriesId) continue;
-        if (!seriesMap.has(ep.SeriesId)) seriesMap.set(ep.SeriesId, []);
-        seriesMap.get(ep.SeriesId)!.push(ep);
-      }
-
-      for (const [seriesId, seriesEpisodes] of seriesMap) {
-        const seriesName = seriesEpisodes[0].SeriesName ?? 'Unknown';
-        // Stable synthetic path so we can find/update across syncs
-        const syntheticPath = `jellyfin://${seriesId}`;
-
-        try {
-          // Prefer an existing Media linked to this Jellyfin series (it may have been merged
-          // into a NAS-sourced series Media with a different nasPath).
-          let seriesMedia = await this.prisma.media.findFirst({
-            where: { cineClubId, jellyfinItemId: seriesId, type: MediaType.SERIES },
-          });
-          if (!seriesMedia) {
-            seriesMedia = await this.prisma.media.findUnique({
-              where: { cineClubId_nasPath: { cineClubId, nasPath: syntheticPath } },
-            });
-          }
-
-          if (!seriesMedia) {
-            seriesMedia = await this.prisma.media.create({
-              data: {
-                cineClubId,
-                type: MediaType.SERIES,
-                titleOriginal: seriesName,
-                nasPath: syntheticPath,
-                nasFilename: seriesName,
-                sourceType: SourceType.SEEDBOX,
-                jellyfinItemId: seriesId,
-                syncStatus: SyncStatus.PENDING,
-                nasAddedAt: new Date(),
-              },
-            });
-          } else {
-            await this.prisma.media.update({
-              where: { id: seriesMedia.id },
-              data: { jellyfinItemId: seriesId },
-            });
-          }
-
-          let hadNewEpisode = false;
-          for (const ep of seriesEpisodes) {
-            try {
-              const seasonNumber = ep.ParentIndexNumber ?? 1;
-              const episodeNumber = ep.IndexNumber ?? 1;
-              const runtime = ep.RunTimeTicks ? Math.round(ep.RunTimeTicks / 600_000_000) : null;
-              const epFilename = ep.Path ? basename(ep.Path) : ep.Name;
-
-              // Find or create season
-              let season = await this.prisma.season.findUnique({
-                where: { mediaId_seasonNumber: { mediaId: seriesMedia.id, seasonNumber } },
-              });
-              if (!season) {
-                season = await this.prisma.season.create({
-                  data: { mediaId: seriesMedia.id, seasonNumber, name: `Saison ${seasonNumber}` },
-                });
-              }
-
-              // Preserve an existing NAS source on the episode — Jellyfin should layer on top,
-              // not overwrite. We still record the Jellyfin id so the file can be streamed.
-              const existingEp = await this.prisma.episode.findUnique({
-                where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber } },
-              });
-              if (!existingEp) {
-                hadNewEpisode = true;
-                await this.prisma.episode.create({
-                  data: {
-                    seasonId: season.id,
-                    episodeNumber,
-                    name: ep.Name,
-                    nasPath: ep.Path || null,
-                    nasFilename: epFilename,
-                    sourceType: SourceType.SEEDBOX,
-                    jellyfinItemId: ep.Id,
-                    runtime,
-                  },
-                });
-              } else {
-                const hasNas = existingEp.sourceType === SourceType.NAS && !!existingEp.nasPath;
-                if (!existingEp.jellyfinItemId) hadNewEpisode = true;
-                await this.prisma.episode.update({
-                  where: { id: existingEp.id },
-                  data: hasNas
-                    ? {
-                        // Épisode NAS existant : garde le nasPath mais bascule en SEEDBOX
-                        // (Jellyfin a la priorité de streaming quand il est disponible).
-                        jellyfinItemId: ep.Id,
-                        sourceType: SourceType.SEEDBOX,
-                        ...(runtime && !existingEp.runtime ? { runtime } : {}),
-                      }
-                    : {
-                        nasPath: ep.Path || undefined,
-                        nasFilename: epFilename,
-                        sourceType: SourceType.SEEDBOX,
-                        jellyfinItemId: ep.Id,
-                        ...(runtime ? { runtime } : {}),
-                      },
-                });
-              }
-              processedItems++;
-            } catch (epErr) {
-              errorCount++;
-              const msg = epErr instanceof Error ? epErr.message : String(epErr);
-              errors.push(`${seriesName} S${ep.ParentIndexNumber ?? 1}E${ep.IndexNumber ?? 1}: ${msg}`);
-            }
-          }
-
-          if (hadNewEpisode) {
-            await this.prisma.media.update({
-              where: { id: seriesMedia.id },
-              data: { nasAddedAt: new Date() },
-            });
-
-            // If this is a synthetic Jellyfin record (nasPath = jellyfin://) with a known
-            // tmdbId, eagerly merge it into the real NAS series — bypassing the async
-            // metadata queue which would otherwise skip an already-SYNCED synthetic record.
-            if (seriesMedia.nasPath.startsWith('jellyfin://') && seriesMedia.tmdbId) {
-              const mainSeries = await this.prisma.media.findFirst({
-                where: {
-                  cineClubId,
-                  tmdbId: seriesMedia.tmdbId,
-                  type: MediaType.SERIES,
-                  id: { not: seriesMedia.id },
-                  syncStatus: SyncStatus.SYNCED,
-                },
-              });
-              if (mainSeries) {
-                await this.mergeSeriesInto(seriesMedia.id, mainSeries.id);
-                this.logger.log(`[Jellyfin sync] Eagerly merged Jellyfin series #${seriesMedia.id} → #${mainSeries.id}`);
-              }
-            }
-          }
-        } catch (seriesErr) {
-          errorCount++;
-          const msg = seriesErr instanceof Error ? seriesErr.message : String(seriesErr);
-          errors.push(`Series "${seriesName}": ${msg}`);
-          this.logger.error(`[Jellyfin sync] Error processing series "${seriesName}": ${msg}`);
-        }
-      }
-
-      // ── Jellyfin orphan cleanup ─────────────────────────────────────────────
-      // Only run if Jellyfin returned data — skip if the API may be offline.
-      const activeMovieIds = new Set(movies.map((m) => m.Id));
-      const activeEpisodeIds = new Set(episodes.map((e) => e.Id));
-      const activeSeriesIds = new Set(seriesMap.keys());
-
-      const hasJellyfinDbData = await this.prisma.media.count({
-        where: { cineClubId, jellyfinItemId: { not: null } },
-      });
-      const jellyfinReturnedData = movies.length > 0 || episodes.length > 0;
-
-      if (!jellyfinReturnedData && hasJellyfinDbData > 0) {
-        this.logger.warn(`[Jellyfin sync] Jellyfin returned 0 items but ${hasJellyfinDbData} records exist — skipping orphan cleanup`);
-      } else {
-        // 1. Movie orphans
-        const dbJellyfinMovies = await this.prisma.media.findMany({
-          where: { cineClubId, type: MediaType.MOVIE, jellyfinItemId: { not: null } },
-          select: { id: true, sourceType: true, jellyfinItemId: true },
-        });
-        for (const m of dbJellyfinMovies) {
-          if (m.jellyfinItemId && !activeMovieIds.has(m.jellyfinItemId)) {
-            if (m.sourceType === SourceType.NAS) {
-              // NAS movie that was also on Jellyfin — just remove the Jellyfin link
-              await this.prisma.media.update({ where: { id: m.id }, data: { jellyfinItemId: null } });
-              this.logger.log(`[Jellyfin sync] Cleared jellyfinItemId from NAS movie #${m.id}`);
-            } else {
-              // Seedbox-only movie removed from Jellyfin — delete it (NAS copy is a separate record)
-              await this.prisma.media.delete({ where: { id: m.id } });
-              this.logger.log(`[Jellyfin sync] Deleted Jellyfin-only movie #${m.id}`);
-            }
-          }
-        }
-
-        // 2. Episode orphans
-        const dbJellyfinEpisodes = await this.prisma.episode.findMany({
-          where: { jellyfinItemId: { not: null }, season: { media: { cineClubId } } },
-          select: { id: true, nasPath: true, jellyfinItemId: true },
-        });
-        for (const ep of dbJellyfinEpisodes) {
-          if (ep.jellyfinItemId && !activeEpisodeIds.has(ep.jellyfinItemId)) {
-            if (ep.nasPath) {
-              // Episode still on NAS — just clear Jellyfin link
-              await this.prisma.episode.update({
-                where: { id: ep.id },
-                data: { jellyfinItemId: null, sourceType: SourceType.NAS },
-              });
-            } else {
-              // Jellyfin-only episode — clear all file info (becomes metadata-only / unavailable)
-              await this.prisma.episode.update({
-                where: { id: ep.id },
-                data: { jellyfinItemId: null, nasFilename: null, nasSize: null },
-              });
-            }
-          }
-        }
-
-        // 3. Series orphans (jellyfinItemId on the series Media record)
-        const dbJellyfinSeries = await this.prisma.media.findMany({
-          where: { cineClubId, type: MediaType.SERIES, jellyfinItemId: { not: null } },
-          select: { id: true, nasPath: true, jellyfinItemId: true },
-        });
-        for (const s of dbJellyfinSeries) {
-          if (s.jellyfinItemId && !activeSeriesIds.has(s.jellyfinItemId)) {
-            if (s.nasPath.startsWith('jellyfin://')) {
-              // Synthetic Jellyfin-only record — delete it
-              await this.prisma.media.delete({ where: { id: s.id } });
-              this.logger.log(`[Jellyfin sync] Deleted synthetic Jellyfin series #${s.id}`);
-            } else {
-              // NAS series that had Jellyfin linked — just clear the link
-              await this.prisma.media.update({ where: { id: s.id }, data: { jellyfinItemId: null } });
-              this.logger.log(`[Jellyfin sync] Cleared jellyfinItemId from NAS series #${s.id}`);
-            }
-          }
-        }
-      }
-
-      // Re-queue SYNCED series whose Jellyfin episodes are missing TMDB overview/stillUrl.
-      // syncTvDetails (now update-only) will fill in the metadata without creating ghost episodes.
-      const seriesWithMissingMeta = await this.prisma.media.findMany({
-        where: {
-          cineClubId,
-          type: MediaType.SERIES,
-          tmdbId: { not: null },
-          syncStatus: SyncStatus.SYNCED,
-          seasons: { some: { episodes: { some: { jellyfinItemId: { not: null }, overview: null } } } },
-        },
-        select: { id: true },
-      });
-      if (seriesWithMissingMeta.length > 0) {
-        await this.prisma.media.updateMany({
-          where: { id: { in: seriesWithMissingMeta.map((s) => s.id) } },
-          data: { syncStatus: SyncStatus.PENDING },
-        });
-        this.logger.log(`[Jellyfin sync] Re-queuing ${seriesWithMissingMeta.length} series with Jellyfin episodes missing TMDB metadata`);
-      }
-
-      // Enqueue metadata sync for new PENDING items
-      const queued = await this.enqueuePendingMetadata(cineClubId);
-
-      await this.prisma.syncLog.update({
-        where: { id: syncLog.id },
-        data: {
-          status: 'completed',
-          totalItems: movies.length + episodes.length,
-          processedItems,
-          errorCount,
-          errorDetails: errors.length > 0 ? JSON.stringify(errors) : null,
-          completedAt: new Date(),
-        },
-      });
-
-      return {
-        message: 'Sync Jellyfin terminée',
-        movies: movies.length,
-        episodes: episodes.length,
-        processed: processedItems,
-        errors: errorCount,
-        metadataQueued: queued,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await this.prisma.syncLog.update({
-        where: { id: syncLog.id },
-        data: { status: 'failed', errorDetails: msg, completedAt: new Date() },
-      });
-      throw err;
+    if (nasFiles.length === 0 && nasMediaCount > 0) {
+      return { moved: 0, deletedDetected: 0, skippedDueToEmptyNas: true };
     }
+
+    const nasPaths = new Set(nasFiles.map((f) => f.path));
+    // Index NAS par (filename, size) pour détection move
+    const nasIndexBySig = new Map<string, { path: string; name: string }>();
+    for (const f of nasFiles) {
+      const size = f.additional?.size != null ? String(f.additional.size) : '?';
+      const sig = `${f.name}|${size}`;
+      if (!nasIndexBySig.has(sig)) nasIndexBySig.set(sig, { path: f.path, name: f.name });
+    }
+
+    // Media manquantes côté NAS : tenter move puis fallback delete
+    const missingMedia = existingMedia.filter(
+      (m) => !m.nasPath.startsWith('jellyfin://') && !nasPaths.has(m.nasPath),
+    );
+
+    let moved = 0;
+    const toDelete: string[] = [];
+    for (const m of missingMedia) {
+      const sig = `${m.nasFilename}|${m.nasSize != null ? String(m.nasSize) : '?'}`;
+      const hit = nasIndexBySig.get(sig);
+      if (hit && hit.path !== m.nasPath) {
+        await this.prisma.media.update({
+          where: { id: m.id },
+          data: { nasPath: hit.path, nasFilename: hit.name, nasDeletedAt: null },
+        });
+        moved++;
+      } else {
+        toDelete.push(m.nasPath);
+      }
+    }
+
+    // Episodes (par nasPath unique sur Episode)
+    const existingEpisodes = await this.prisma.episode.findMany({
+      where: { nasPath: { not: null }, season: { media: { cineClubId } } },
+      select: { id: true, nasPath: true, nasFilename: true, nasSize: true },
+    });
+    const missingEpisodes = existingEpisodes.filter((e) => e.nasPath && !nasPaths.has(e.nasPath));
+    const episodesToDelete: string[] = [];
+    for (const e of missingEpisodes) {
+      const sig = `${e.nasFilename}|${e.nasSize != null ? String(e.nasSize) : '?'}`;
+      const hit = nasIndexBySig.get(sig);
+      if (hit && hit.path !== e.nasPath) {
+        await this.prisma.episode.update({
+          where: { id: e.id },
+          data: { nasPath: hit.path, nasFilename: hit.name, nasDeletedAt: null },
+        });
+        moved++;
+      } else if (e.nasPath) {
+        episodesToDelete.push(e.nasPath);
+      }
+    }
+
+    const allToDelete = [...toDelete, ...episodesToDelete];
+    if (allToDelete.length > 0) {
+      await this.markDeletedAndQueueCleanup(cineClubId, allToDelete, graceHours * 60 * 60 * 1000);
+    }
+
+    return { moved, deletedDetected: allToDelete.length, skippedDueToEmptyNas: false };
   }
 
-  @Cron(CronExpression.EVERY_30_MINUTES)
-  async autoSyncJellyfin() {
-    const clubs = await this.prisma.cineClub.findMany({
-      where: { jellyfinBaseUrl: { not: null }, jellyfinApiToken: { not: null } },
-      select: { id: true, name: true },
-    });
+  // Marque les Media/Episode comme supprimés sur le NAS (nasDeletedAt) et planifie
+  // une suppression seedbox (DELETE_FROM_SEEDBOX, grâce 24h par défaut, annulable).
+  private async markDeletedAndQueueCleanup(
+    cineClubId: number,
+    nasPaths: string[],
+    delayMs: number,
+  ): Promise<void> {
+    if (nasPaths.length === 0) return;
+    const now = new Date();
 
-    for (const club of clubs) {
-      try {
-        this.logger.log(`[Auto-sync Jellyfin] Démarrage pour "${club.name}" (id=${club.id})`);
-        await this.syncFromJellyfin(club.id);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(`[Auto-sync Jellyfin] Erreur pour "${club.name}": ${msg}`);
+    const mediasToMark = await this.prisma.media.findMany({
+      where: { cineClubId, nasPath: { in: nasPaths }, nasDeletedAt: null },
+      select: { id: true, nasPath: true, nasFilename: true },
+    });
+    if (mediasToMark.length > 0) {
+      await this.prisma.media.updateMany({
+        where: { id: { in: mediasToMark.map((m) => m.id) } },
+        data: { nasDeletedAt: now },
+      });
+    }
+
+    const episodesToMark = await this.prisma.episode.findMany({
+      where: { nasPath: { in: nasPaths }, nasDeletedAt: null, season: { media: { cineClubId } } },
+      select: { id: true, nasPath: true, nasFilename: true },
+    });
+    if (episodesToMark.length > 0) {
+      await this.prisma.episode.updateMany({
+        where: { id: { in: episodesToMark.map((e) => e.id) } },
+        data: { nasDeletedAt: now },
+      });
+    }
+
+    // Pour chaque Media/Episode, on tente de retrouver le chemin seedbox via le Job d'origine
+    for (const m of mediasToMark) {
+      const lastTransfer = await this.prisma.job.findFirst({
+        where: { mediaId: m.id, kind: JobKind.DOWNLOAD_TO_NAS, status: JobStatus.COMPLETED, sourcePath: { not: null } },
+        orderBy: { completedAt: 'desc' },
+      });
+      if (!lastTransfer?.sourcePath) {
+        this.logger.warn(`Media ${m.id} supprimée du NAS mais aucun Job d'origine — pas de nettoyage seedbox automatique`);
+        continue;
       }
+      // Skip si déjà un job de cleanup actif/planifié pour ce path
+      const existing = await this.prisma.job.findFirst({
+        where: {
+          cineClubId,
+          kind: JobKind.DELETE_FROM_SEEDBOX,
+          sourcePath: lastTransfer.sourcePath,
+          status: { in: [JobStatus.PENDING, JobStatus.AWAITING_NAS, JobStatus.AWAITING_SEEDBOX, JobStatus.IN_PROGRESS] },
+        },
+      });
+      if (existing) continue;
+      await this.jobsService.createSeedboxDeletionJob({
+        cineClubId,
+        sourcePath: lastTransfer.sourcePath,
+        fileName: m.nasFilename,
+        mediaId: m.id,
+        delayMs,
+        triggeredBy: 'nas-sync',
+      });
+    }
+    for (const e of episodesToMark) {
+      const lastTransfer = await this.prisma.job.findFirst({
+        where: { episodeId: e.id, kind: JobKind.DOWNLOAD_TO_NAS, status: JobStatus.COMPLETED, sourcePath: { not: null } },
+        orderBy: { completedAt: 'desc' },
+      });
+      if (!lastTransfer?.sourcePath) {
+        this.logger.warn(`Episode ${e.id} supprimé du NAS mais aucun Job d'origine — pas de nettoyage seedbox automatique`);
+        continue;
+      }
+      const existing = await this.prisma.job.findFirst({
+        where: {
+          cineClubId,
+          kind: JobKind.DELETE_FROM_SEEDBOX,
+          sourcePath: lastTransfer.sourcePath,
+          status: { in: [JobStatus.PENDING, JobStatus.AWAITING_NAS, JobStatus.AWAITING_SEEDBOX, JobStatus.IN_PROGRESS] },
+        },
+      });
+      if (existing) continue;
+      await this.jobsService.createSeedboxDeletionJob({
+        cineClubId,
+        sourcePath: lastTransfer.sourcePath,
+        fileName: e.nasFilename ?? lastTransfer.sourcePath.split('/').pop() ?? 'episode.mkv',
+        episodeId: e.id,
+        delayMs,
+        triggeredBy: 'nas-sync',
+      });
     }
   }
 

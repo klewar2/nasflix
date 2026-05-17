@@ -5,8 +5,10 @@ import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { VideoPlayerModal } from '@/components/media/VideoPlayerModal';
-import { ArrowLeft, Copy, Download, ExternalLink, HardDrive, Loader2, Pencil, Play, WifiOff } from 'lucide-react';
+import { ArrowLeft, Copy, Download, ExternalLink, HardDrive, Loader2, Pencil, Play, Trash2, Upload, WifiOff } from 'lucide-react';
 import { useState } from 'react';
+import { NasBadge } from '@/components/badges/NasBadge';
+import { JellyfinBadge } from '@/components/badges/JellyfinBadge';
 
 type SeasonsSectionProps = {
   media: any;
@@ -154,6 +156,7 @@ export default function MediaDetailPage() {
   const [copied, setCopied] = useState(false);
   const [player, setPlayer] = useState<{ url: string; title: string; isHls: boolean; durationSeconds: number; mediaId?: number; episodeId?: number; sourceType?: 'NAS' | 'SEEDBOX'; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   const { data: media, isLoading } = useQuery({
     queryKey: ['media', id],
@@ -181,11 +184,12 @@ export default function MediaDetailPage() {
 
   const openPlayer = async (fetchUrl: () => Promise<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>, title: string, key: string, ids?: { mediaId?: number; episodeId?: number }) => {
     setLoadingId(key);
+    setStreamError(null);
     try {
       const { url, isHls, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await fetchUrl();
       setPlayer({ url, title, isHls, durationSeconds, sourceType: sourceType as 'NAS' | 'SEEDBOX' | undefined, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken, ...ids });
-    } catch {
-      // silently fail — NAS may have gone offline between status check and request
+    } catch (e) {
+      setStreamError(e instanceof Error ? e.message : 'Lecture impossible');
     } finally {
       setLoadingId(null);
     }
@@ -352,6 +356,16 @@ export default function MediaDetailPage() {
                 </div>
               )}
 
+              {streamError && (
+                <div className="mb-3 p-3 rounded border border-amber-700/40 bg-amber-900/20 text-amber-200 text-sm flex items-start gap-2">
+                  <span className="flex-1">{streamError}</span>
+                  <button onClick={() => setStreamError(null)} className="text-amber-300 hover:text-white text-xs">×</button>
+                </div>
+              )}
+
+              {/* Bloc Sources : badges NAS / Jellyfin + chemins + actions super admin */}
+              <SourcesBlock media={media} onAction={() => { /* refetch handled by parent useQuery on focus */ }} />
+
               <div className="flex items-center gap-2 mt-4 p-3 bg-zinc-900 rounded-md border border-zinc-800">
                 <code className="text-xs text-zinc-400 flex-1 truncate">{media.nasPath}</code>
                 <button onClick={copyPath} className="text-zinc-500 hover:text-white flex-shrink-0">
@@ -420,5 +434,89 @@ export default function MediaDetailPage() {
         </div>
       </div>
     </>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function SourcesBlock({ media, onAction }: { media: any; onAction: () => void }) {
+  const { user } = useAuth();
+  const isSuperAdmin = !!user?.isSuperAdmin;
+  const onNas = media.sourceType === 'NAS' && !media.nasDeletedAt;
+  const onJellyfin = !!media.jellyfinItemId;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const triggerTransfer = async () => {
+    if (!confirm('Lancer le transfert de ce média vers le NAS ?')) return;
+    setBusy('transfer');
+    setMsg(null);
+    try {
+      const r = await api.triggerManualTransfer({ mediaId: media.id });
+      setMsg(`Transfert lancé (job #${r.jobId})`);
+      onAction();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Erreur');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const triggerJellyfinDelete = async () => {
+    if (!confirm('Supprimer ce média de Jellyfin ? (NAS et seedbox ne sont pas affectés)')) return;
+    setBusy('del-jf');
+    setMsg(null);
+    try {
+      const r = await api.triggerJellyfinDelete(media.id);
+      setMsg(`Suppression Jellyfin programmée (job #${r.jobId})`);
+      onAction();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Erreur');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mt-4 p-3 bg-zinc-900 rounded-md border border-zinc-800 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-zinc-500">Sources :</span>
+        {onNas && <NasBadge nasPath={media.nasPath} />}
+        {media.nasDeletedAt && !onNas && <NasBadge nasPath={media.nasPath} deleted />}
+        {onJellyfin && <JellyfinBadge jellyfinItemId={media.jellyfinItemId} />}
+        {!onNas && !onJellyfin && !media.nasDeletedAt && (
+          <span className="text-xs text-zinc-500">Aucune source connue</span>
+        )}
+      </div>
+      {media.nasDeletedAt && (
+        <p className="text-xs text-amber-500">
+          ⚠️ Fichier supprimé du NAS le {new Date(media.nasDeletedAt).toLocaleString('fr-FR')} — nettoyage seedbox planifié
+        </p>
+      )}
+      {isSuperAdmin && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {!onNas && (
+            <button
+              disabled={busy === 'transfer'}
+              onClick={triggerTransfer}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-xs text-white"
+            >
+              {busy === 'transfer' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+              Télécharger sur le NAS
+            </button>
+          )}
+          {onJellyfin && (
+            <button
+              disabled={busy === 'del-jf'}
+              onClick={triggerJellyfinDelete}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-violet-800 hover:bg-violet-700 disabled:opacity-40 text-xs text-white"
+            >
+              {busy === 'del-jf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Supprimer de Jellyfin
+            </button>
+          )}
+        </div>
+      )}
+      {msg && <p className="text-xs text-zinc-300">{msg}</p>}
+    </div>
   );
 }

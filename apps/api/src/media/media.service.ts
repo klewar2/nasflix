@@ -1,9 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
-import { MediaType, SyncStatus } from '@prisma/client';
+import { Media, MediaType, SyncStatus } from '@prisma/client';
 
 @Injectable()
 export class MediaService {
+  private readonly logger = new Logger(MediaService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   private readonly includeRelations = {
@@ -242,5 +244,53 @@ export class MediaService {
       },
       orderBy: { name: 'asc' },
     });
+  }
+
+  // Cherche l'ID Jellyfin correspondant au TMDB ID et l'écrit sur le Media.
+  // Appelé à la complétion d'un transfert. Pas d'effet si Jellyfin pas configuré
+  // ou si le média n'a pas de tmdbId.
+  async populateJellyfinId(media: Media, type: 'movie' | 'tv'): Promise<string | null> {
+    if (!media.tmdbId) return null;
+    const club = await this.prisma.cineClub.findUnique({ where: { id: media.cineClubId } });
+    if (!club?.jellyfinBaseUrl || !club.jellyfinApiToken) return null;
+
+    const itemType = type === 'tv' ? 'Series' : 'Movie';
+    const base = club.jellyfinBaseUrl.replace(/\/$/, '');
+    const url = new URL(`${base}/Items`);
+    url.searchParams.set('Recursive', 'true');
+    url.searchParams.set('IncludeItemTypes', itemType);
+    url.searchParams.set('AnyProviderIdEquals', `tmdb.${media.tmdbId}`);
+    url.searchParams.set('Limit', '1');
+    url.searchParams.set('Fields', 'ProviderIds');
+
+    let itemId: string | null = null;
+    try {
+      const res = await fetch(url.toString(), {
+        headers: { 'X-Emby-Token': club.jellyfinApiToken },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        this.logger.warn(`Jellyfin /Items HTTP ${res.status} pour tmdbId=${media.tmdbId}`);
+        return null;
+      }
+      const data = (await res.json()) as { Items?: Array<{ Id?: string; ProviderIds?: Record<string, string> }> };
+      const found = data.Items?.find((item) => {
+        const tmdbProv = item.ProviderIds?.Tmdb ?? item.ProviderIds?.tmdb;
+        return tmdbProv && parseInt(tmdbProv, 10) === media.tmdbId;
+      });
+      itemId = found?.Id ?? null;
+    } catch (err) {
+      this.logger.warn(`populateJellyfinId fetch error: ${err}`);
+      return null;
+    }
+
+    if (itemId && itemId !== media.jellyfinItemId) {
+      await this.prisma.media.update({
+        where: { id: media.id },
+        data: { jellyfinItemId: itemId },
+      });
+      this.logger.log(`Media ${media.id} → jellyfinItemId=${itemId}`);
+    }
+    return itemId;
   }
 }

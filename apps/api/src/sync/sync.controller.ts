@@ -55,12 +55,6 @@ export class SyncController {
     return this.syncService.drainQueue();
   }
 
-  @Post('jellyfin')
-  async syncJellyfin(@Req() req: { user: JwtPayload }) {
-    const cineClubId = this.requireCineClub(req.user);
-    return this.syncService.syncFromJellyfin(cineClubId);
-  }
-
   @Post('media/:id')
   async syncSingleMedia(@Param('id', ParseIntPipe) id: number, @Req() req: { user: JwtPayload }) {
     const cineClubId = this.requireCineClub(req.user);

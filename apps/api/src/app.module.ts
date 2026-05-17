@@ -11,6 +11,8 @@ import { SyncModule } from './sync/sync.module';
 import { HealthModule } from './health/health.module';
 import { CineClubsModule } from './cineclubs/cineclubs.module';
 import { UsersModule } from './users/users.module';
+import { JobsModule } from './jobs/jobs.module';
+import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { UsersModule } from './users/users.module';
     HealthModule,
     CineClubsModule,
     UsersModule,
+    MailModule,
+    JobsModule,
   ],
 })
 export class AppModule {}

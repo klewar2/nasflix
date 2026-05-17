@@ -1,6 +1,8 @@
 import { Link } from 'react-router';
 import { cn } from '@/lib/utils';
 import type { MediaResponse } from '@nasflix/shared';
+import { NasBadge } from '@/components/badges/NasBadge';
+import { JellyfinBadge } from '@/components/badges/JellyfinBadge';
 
 interface MediaCardProps {
   media: MediaResponse;
@@ -8,6 +10,10 @@ interface MediaCardProps {
 }
 
 export function MediaCard({ media, className }: MediaCardProps) {
+  const onNas = media.sourceType === 'NAS' && !media.nasDeletedAt;
+  const onJellyfin = !!media.jellyfinItemId;
+  const showBadges = onNas || onJellyfin || media.nasDeletedAt;
+
   return (
     <Link
       to={`/media/${media.id}`}
@@ -30,6 +36,13 @@ export function MediaCard({ media, className }: MediaCardProps) {
           </div>
         )}
       </div>
+      {showBadges && (
+        <div className="absolute left-1.5 top-1.5 flex flex-col gap-1">
+          {onNas && <NasBadge nasPath={media.nasPath} />}
+          {media.nasDeletedAt && !onNas && <NasBadge nasPath={media.nasPath} deleted />}
+          {onJellyfin && <JellyfinBadge jellyfinItemId={media.jellyfinItemId} />}
+        </div>
+      )}
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100">
         <div className="absolute bottom-0 w-full p-3">
           <p className="text-sm font-semibold truncate">{media.titleVf || media.titleOriginal}</p>

@@ -1,18 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
-import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users, UserCircle, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Film, RefreshCw, Settings, LogOut, Users, UserCircle, Menu, X, ListTodo } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 
 const navItems = [
-  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard', adminOnly: false },
-  { to: '/admin/media', icon: Film, label: 'Médias', adminOnly: false },
-  { to: '/admin/sync', icon: RefreshCw, label: 'Synchronisation', adminOnly: true },
-  { to: '/admin/settings', icon: Settings, label: 'Paramètres', adminOnly: true },
-  { to: '/admin/users', icon: Users, label: 'Utilisateurs', adminOnly: true },
-  { to: '/admin/profile', icon: UserCircle, label: 'Mon profil', adminOnly: false },
+  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard', adminOnly: false, superAdminOnly: false },
+  { to: '/admin/media', icon: Film, label: 'Médias', adminOnly: false, superAdminOnly: false },
+  { to: '/admin/sync', icon: RefreshCw, label: 'Synchronisation', adminOnly: true, superAdminOnly: false },
+  { to: '/admin/jobs', icon: ListTodo, label: 'Jobs', adminOnly: false, superAdminOnly: true },
+  { to: '/admin/settings', icon: Settings, label: 'Paramètres', adminOnly: true, superAdminOnly: false },
+  { to: '/admin/users', icon: Users, label: 'Utilisateurs', adminOnly: true, superAdminOnly: false },
+  { to: '/admin/profile', icon: UserCircle, label: 'Mon profil', adminOnly: false, superAdminOnly: false },
 ];
 
 function JellyfinStatusBadge() {
@@ -56,13 +57,16 @@ function JellyfinStatusBadge() {
 
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation();
-  const { logout, cineClub } = useAuth();
+  const { logout, cineClub, user } = useAuth();
   const isAdmin = cineClub?.role === 'ADMIN';
+  const isSuperAdmin = !!user?.isSuperAdmin;
 
   return (
     <>
       <nav className="flex-1 p-3 space-y-1">
-        {navItems.filter(item => !item.adminOnly || isAdmin).map((item) => (
+        {navItems
+          .filter((item) => (!item.adminOnly || isAdmin) && (!item.superAdminOnly || isSuperAdmin))
+          .map((item) => (
           <Link
             key={item.to}
             to={item.to}

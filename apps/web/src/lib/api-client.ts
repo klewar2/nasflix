@@ -2,6 +2,12 @@ import type { PaginatedResponse, AuthTokens, HealthResponse, LoginResponse, User
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
+function detectClient(): 'web' | 'tv' {
+  if (typeof navigator === 'undefined') return 'web';
+  const ua = navigator.userAgent ?? '';
+  return /SmartTV|SMART-TV|Tizen|Web0S|WebOS|GoogleTV|AndroidTV|HbbTV|AppleTV|CrKey|Roku/i.test(ua) ? 'tv' : 'web';
+}
+
 export function resolveApiUrl(url: string): string {
   if (url.startsWith('http')) return url;
   return `${API_BASE}${url}`;
@@ -98,7 +104,7 @@ class ApiClient {
     return this.fetch<CineClubResponse>(`/cineclubs/${id}`);
   }
 
-  updateCineClub(id: number, data: Partial<Pick<CineClubResponse, 'name' | 'nasBaseUrl' | 'nasSharedFolders' | 'tmdbApiKey' | 'nasWolMac' | 'nasWolHost' | 'nasWolPort' | 'freeboxApiUrl'>>) {
+  updateCineClub(id: number, data: Record<string, unknown>) {
     return this.fetch<CineClubResponse>(`/cineclubs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
@@ -124,10 +130,6 @@ class ApiClient {
 
   getJellyfinStatus() {
     return this.fetch<{ online: boolean; version?: string; serverName?: string }>('/nas/jellyfin/status');
-  }
-
-  syncFromJellyfin() {
-    return this.fetch<{ message: string; movies: number; episodes: number; processed: number; errors: number; metadataQueued: number }>('/sync/jellyfin', { method: 'POST' });
   }
 
   getMediaTracks(mediaId: number) {
@@ -263,16 +265,65 @@ class ApiClient {
   }
 
   getStreamUrl(mediaId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=${mode}&client=web`);
+    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=${mode}&client=${detectClient()}`);
   }
 
   getEpisodeStreamUrl(episodeId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}&client=web`);
+    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}&client=${detectClient()}`);
   }
 
   // Health
   getHealth() {
     return this.fetch<HealthResponse>('/health');
+  }
+
+  // Jobs (super admin)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  listJobs(params: { kind?: string; status?: string; source?: string; page?: number; limit?: number } = {}): Promise<{ items: any[]; total: number; page: number; limit: number }> {
+    const qs = new URLSearchParams();
+    if (params.kind) qs.set('kind', params.kind);
+    if (params.status) qs.set('status', params.status);
+    if (params.source) qs.set('source', params.source);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.limit) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.fetch<{ items: any[]; total: number; page: number; limit: number }>(`/jobs${query ? `?${query}` : ''}`);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getJob(id: number): Promise<any> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.fetch<any>(`/jobs/${id}`);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  listActiveJobs(): Promise<{ items: any[] }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.fetch<{ items: any[] }>('/jobs/active');
+  }
+
+  cancelJob(id: number) {
+    return this.fetch<{ id: number }>(`/jobs/${id}/cancel`, { method: 'POST' });
+  }
+
+  retryJob(id: number) {
+    return this.fetch<{ id: number }>(`/jobs/${id}/retry`, { method: 'POST' });
+  }
+
+  deleteJob(id: number) {
+    return this.fetch<{ deleted: boolean }>(`/jobs/${id}`, { method: 'DELETE' });
+  }
+
+  triggerManualTransfer(body: { mediaId?: number; jellyfinItemId?: string; tmdbId?: number; tmdbType?: 'movie' | 'tv'; sourcePath?: string }) {
+    return this.fetch<{ jobId: number }>('/jobs/transfer/manual', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  triggerJellyfinDelete(mediaId: number) {
+    return this.fetch<{ jobId: number }>(`/jobs/delete-jellyfin/${mediaId}`, { method: 'POST' });
   }
 }
 

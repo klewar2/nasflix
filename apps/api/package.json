@@ -31,13 +31,15 @@
     "class-transformer": "^0.5",
     "class-validator": "^0.14",
     "ffmpeg-static": "^5.3.0",
+    "nodemailer": "^8.0.7",
     "parse-torrent-title": "^2",
     "passport": "^0.7",
     "passport-jwt": "^4",
     "passport-local": "^1",
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11",
@@ -45,8 +47,10 @@
     "@types/bcryptjs": "^2",
     "@types/express": "^5",
     "@types/node": "^22",
+    "@types/nodemailer": "^8.0.0",
     "@types/passport-jwt": "^4",
     "@types/passport-local": "^1",
+    "@types/ssh2": "^1.15.5",
     "@typescript-eslint/eslint-plugin": "^8",
     "@typescript-eslint/parser": "^8",
     "eslint": "^9",
