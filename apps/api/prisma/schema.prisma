@@ -103,6 +103,9 @@ model CineClub {
   nasSshHost           String?
   nasSshPort           Int      @default(22)
   nasSshUser           String?
+  // Chemin absolu sur la seedbox vers la clé privée SSH autorisée sur le NAS
+  // (ex. /home/klewar/.ssh/nas_receive). Si vide, rsync utilise ~/.ssh/config seedbox.
+  seedboxToNasKeyPath  String?
   nasTargetMovieDir    String?
   nasTargetSeriesDir   String?
   // Wake-on-LAN

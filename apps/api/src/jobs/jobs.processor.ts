@@ -101,6 +101,7 @@ export class JobsProcessor extends WorkerHost {
       nasHost: club.nasSshHost,
       nasPort: club.nasSshPort,
       targetDir,
+      keyPath: club.seedboxToNasKeyPath ?? null,
     });
     this.logger.log(`Job ${job.id} — rsync seedbox→NAS : ${rsyncCmd}`);
 
@@ -221,15 +222,21 @@ export class JobsProcessor extends WorkerHost {
     nasHost: string;
     nasPort: number;
     targetDir: string;
+    keyPath: string | null;
   }): string {
-    const sshArgs = `-o StrictHostKeyChecking=accept-new -p ${p.nasPort}`;
+    const sshOpts = ['-o StrictHostKeyChecking=accept-new', `-p ${p.nasPort}`];
+    if (p.keyPath) {
+      // -i et IdentitiesOnly évitent de dépendre de ~/.ssh/config (non lu dans certains contextes non-interactifs)
+      sshOpts.push(`-o IdentityFile=${shellEscape(p.keyPath)}`, '-o IdentitiesOnly=yes');
+    }
+    const sshCmd = `ssh ${sshOpts.join(' ')}`;
     const target = `${p.nasUser}@${p.nasHost}:${p.targetDir.replace(/\/$/, '')}/`;
     return [
       'rsync',
       '-av',
       '--partial',
       '--info=progress2',
-      `-e ${shellEscape(`ssh ${sshArgs}`)}`,
+      `-e ${shellEscape(sshCmd)}`,
       shellEscape(p.sourcePath),
       shellEscape(target),
     ].join(' ');

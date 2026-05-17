@@ -599,6 +599,7 @@ function TransferCard() {
   const [nasHost, setNasHost] = useState('');
   const [nasPort, setNasPort] = useState<string>('22');
   const [nasUser, setNasUser] = useState('');
+  const [keyPath, setKeyPath] = useState('');
   const [movieDir, setMovieDir] = useState('');
   const [seriesDir, setSeriesDir] = useState('');
   const [wolWait, setWolWait] = useState<string>('300');
@@ -612,6 +613,7 @@ function TransferCard() {
       setNasHost(club.nasSshHost ?? '');
       setNasPort(String(club.nasSshPort ?? 22));
       setNasUser(club.nasSshUser ?? '');
+      setKeyPath(club.seedboxToNasKeyPath ?? '');
       setMovieDir(club.nasTargetMovieDir ?? '');
       setSeriesDir(club.nasTargetSeriesDir ?? '');
       setWolWait(String(club.nasWolWaitSeconds ?? 300));
@@ -630,6 +632,7 @@ function TransferCard() {
         nasSshHost: nasHost || null,
         nasSshPort: Number(nasPort) || 22,
         nasSshUser: nasUser || null,
+        seedboxToNasKeyPath: keyPath || null,
         nasTargetMovieDir: movieDir || null,
         nasTargetSeriesDir: seriesDir || null,
         nasWolWaitSeconds: Number(wolWait) || 300,
@@ -692,6 +695,11 @@ function TransferCard() {
         <div>
           <label className="text-xs text-zinc-400 mb-1 block">Utilisateur NAS (user technique nasflix-receive)</label>
           <Input placeholder="nasflix-receive" value={nasUser} onChange={(e) => setNasUser(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">Chemin clé SSH NAS sur la seedbox (optionnel)</label>
+          <p className="text-xs text-zinc-500 mb-1">Chemin absolu sur la seedbox vers la clé privée autorisée sur le NAS (ex. <code>/home/klewar/.ssh/nas_receive</code>). Si vide, rsync utilise <code>~/.ssh/config</code> (peut ne pas marcher en non-interactif).</p>
+          <Input placeholder="/home/klewar/.ssh/nas_receive" value={keyPath} onChange={(e) => setKeyPath(e.target.value)} />
         </div>
         <div>
           <label className="text-xs text-zinc-400 mb-1 block">Dossier films</label>

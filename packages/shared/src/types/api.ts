@@ -76,6 +76,7 @@ export interface CineClubResponse {
   nasSshHost?: string | null;
   nasSshPort?: number;
   nasSshUser?: string | null;
+  seedboxToNasKeyPath?: string | null;
   nasTargetMovieDir?: string | null;
   nasTargetSeriesDir?: string | null;
   nasWolWaitSeconds?: number;
