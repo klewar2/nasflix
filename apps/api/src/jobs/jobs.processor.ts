@@ -119,7 +119,9 @@ export class JobsProcessor extends WorkerHost {
     });
 
     if (result.code !== 0) {
-      throw new Error(`rsync exit code ${result.code}\nstderr:\n${result.stderr.slice(-8000)}`);
+      // Log la stderr complète côté Railway pour le diag, on tronque juste pour la DB
+      this.logger.error(`Job ${job.id} rsync exit ${result.code} — FULL stderr:\n${result.stderr}\n--- FULL stdout:\n${result.stdout}`);
+      throw new Error(`rsync exit code ${result.code}\nstderr (last 8000):\n${result.stderr.slice(-8000)}`);
     }
 
     // 3. Catalog upsert + jellyfinId
