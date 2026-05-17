@@ -354,33 +354,37 @@ export class JobsService {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allSeries = (await seriesRes.json()) as any[];
 
-    // 2. Episode files (tous d'un coup pour éviter N+1)
-    const filesRes = await fetch(`${base}/api/v3/episodefile`, {
-      headers: { 'X-Api-Key': apiKey },
-      signal: AbortSignal.timeout(60_000),
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const allFiles = filesRes.ok ? ((await filesRes.json()) as any[]) : [];
-    const filesById = new Map<number, (typeof allFiles)[number]>();
-    for (const f of allFiles) filesById.set(f.id, f);
+    // 2. Episodes + files par série en parallèle.
+    // /api/v3/episodefile EXIGE un seriesId (sans, Sonarr renvoie 400 → tableau vide → tous les sourcePath null → liste UI vide).
+    const fetchHeaders = { 'X-Api-Key': apiKey };
+    const seriesData = await Promise.all(
+      allSeries.map(async (s) => {
+        try {
+          const [epsRes, filesRes] = await Promise.all([
+            fetch(`${base}/api/v3/episode?seriesId=${s.id}`, { headers: fetchHeaders, signal: AbortSignal.timeout(30_000) }),
+            fetch(`${base}/api/v3/episodefile?seriesId=${s.id}`, { headers: fetchHeaders, signal: AbortSignal.timeout(30_000) }),
+          ]);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const eps = epsRes.ok ? ((await epsRes.json()) as any[]) : [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const files = filesRes.ok ? ((await filesRes.json()) as any[]) : [];
+          return { series: s, episodes: eps, files };
+        } catch (err) {
+          this.logger.warn(`Sonarr fetch failed for series ${s.id}: ${err}`);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return { series: s, episodes: [] as any[], files: [] as any[] };
+        }
+      }),
+    );
 
-    // 3. Episodes per series (parallèle, batch)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const allEpisodes: any[] = [];
-    for (const s of allSeries) {
-      try {
-        const epRes = await fetch(`${base}/api/v3/episode?seriesId=${s.id}`, {
-          headers: { 'X-Api-Key': apiKey },
-          signal: AbortSignal.timeout(30_000),
-        });
-        if (!epRes.ok) continue;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const eps = (await epRes.json()) as any[];
-        for (const ep of eps) allEpisodes.push({ ...ep, _series: s });
-      } catch (err) {
-        this.logger.warn(`Sonarr episodes fetch failed for series ${s.id}: ${err}`);
-      }
+    const filesById = new Map<number, (typeof seriesData)[number]['files'][number]>();
+    for (const { files } of seriesData) {
+      for (const f of files) filesById.set(f.id, f);
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allEpisodes: any[] = seriesData.flatMap(({ series, episodes }) =>
+      episodes.map((ep) => ({ ...ep, _series: series })),
+    );
 
     // cross-check NAS Episodes
     const seriesTmdbIds = allSeries.map((s) => s.tmdbId).filter((id): id is number => typeof id === 'number');
