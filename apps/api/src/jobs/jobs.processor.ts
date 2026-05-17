@@ -119,7 +119,7 @@ export class JobsProcessor extends WorkerHost {
     });
 
     if (result.code !== 0) {
-      throw new Error(`rsync exit code ${result.code}\nstderr:\n${result.stderr.slice(-2000)}`);
+      throw new Error(`rsync exit code ${result.code}\nstderr:\n${result.stderr.slice(-8000)}`);
     }
 
     // 3. Catalog upsert + jellyfinId
@@ -155,7 +155,7 @@ export class JobsProcessor extends WorkerHost {
     });
 
     if (result.code !== 0) {
-      throw new Error(`rm exit code ${result.code}\nstderr:\n${result.stderr.slice(-2000)}`);
+      throw new Error(`rm exit code ${result.code}\nstderr:\n${result.stderr.slice(-8000)}`);
     }
     await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
   }
@@ -224,7 +224,10 @@ export class JobsProcessor extends WorkerHost {
     targetDir: string;
     keyPath: string | null;
   }): string {
-    const sshOpts = ['-o StrictHostKeyChecking=accept-new', `-p ${p.nasPort}`];
+    const verbose = process.env.SSH_VERBOSE === '1';
+    const sshOpts: string[] = [];
+    if (verbose) sshOpts.push('-vvv');
+    sshOpts.push('-o StrictHostKeyChecking=accept-new', `-p ${p.nasPort}`);
     if (p.keyPath) {
       // -i et IdentitiesOnly évitent de dépendre de ~/.ssh/config (non lu dans certains contextes non-interactifs)
       sshOpts.push(`-o IdentityFile=${shellEscape(p.keyPath)}`, '-o IdentitiesOnly=yes');
