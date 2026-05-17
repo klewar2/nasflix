@@ -299,15 +299,16 @@ export class JobsService {
     });
     const activeJobByTmdb = new Map(activeJobs.map((j) => [j.tmdbId!, j.id]));
 
-    return movies.map((m) => {
+    // Filtre côté serveur : seuls les films avec fichier importé.
+    return movies.filter((m) => !!m.hasFile && !!m.movieFile?.path).map((m) => {
       const onDb = m.tmdbId ? mediaByTmdb.get(m.tmdbId) : null;
       return {
         radarrId: m.id,
         title: m.title,
         year: m.year ?? null,
         tmdbId: m.tmdbId ?? null,
-        hasFile: !!m.hasFile,
-        sourcePath: m.movieFile?.path ?? null,
+        hasFile: true,
+        sourcePath: m.movieFile.path,
         fileName: m.movieFile?.relativePath ?? null,
         fileSize: m.movieFile?.size ?? null,
         quality: m.movieFile?.quality?.quality?.name ?? null,
@@ -427,32 +428,37 @@ export class JobsService {
       activeJobs.map((j) => [`${j.tmdbId}|${j.seasonNumber}|${j.episodeNumber}`, j.id]),
     );
 
-    return allEpisodes.map((ep) => {
-      const series = ep._series;
-      const file = ep.episodeFileId ? filesById.get(ep.episodeFileId) : null;
-      const mediaId = series.tmdbId ? nasMediaByTmdb.get(series.tmdbId) : undefined;
-      const onNas = mediaId
-        ? onNasKey.has(`${mediaId}|${ep.seasonNumber}|${ep.episodeNumber}`)
-        : false;
-      const activeKey = `${series.tmdbId}|${ep.seasonNumber}|${ep.episodeNumber}`;
-      return {
-        sonarrSeriesId: series.id,
-        sonarrEpisodeId: ep.id,
-        sonarrEpisodeFileId: ep.episodeFileId ?? null,
-        seriesTitle: series.title,
-        seriesTmdbId: series.tmdbId ?? null,
-        seasonNumber: ep.seasonNumber,
-        episodeNumber: ep.episodeNumber,
-        episodeTitle: ep.title ?? null,
-        hasFile: !!ep.hasFile,
-        sourcePath: file?.path ?? null,
-        fileName: file?.relativePath ?? null,
-        fileSize: file?.size ?? null,
-        quality: file?.quality?.quality?.name ?? null,
-        onNas,
-        activeJobId: activeJobKey.get(activeKey) ?? null,
-      };
-    });
+    // On ne retourne que les épisodes avec un fichier — pas la peine de
+    // remonter au front les centaines d'épisodes que Sonarr "tracke"
+    // mais qui n'ont jamais été téléchargés.
+    return allEpisodes
+      .filter((ep) => !!ep.hasFile && !!(ep.episodeFileId && filesById.get(ep.episodeFileId)?.path))
+      .map((ep) => {
+        const series = ep._series;
+        const file = filesById.get(ep.episodeFileId)!;
+        const mediaId = series.tmdbId ? nasMediaByTmdb.get(series.tmdbId) : undefined;
+        const onNas = mediaId
+          ? onNasKey.has(`${mediaId}|${ep.seasonNumber}|${ep.episodeNumber}`)
+          : false;
+        const activeKey = `${series.tmdbId}|${ep.seasonNumber}|${ep.episodeNumber}`;
+        return {
+          sonarrSeriesId: series.id,
+          sonarrEpisodeId: ep.id,
+          sonarrEpisodeFileId: ep.episodeFileId ?? null,
+          seriesTitle: series.title,
+          seriesTmdbId: series.tmdbId ?? null,
+          seasonNumber: ep.seasonNumber,
+          episodeNumber: ep.episodeNumber,
+          episodeTitle: ep.title ?? null,
+          hasFile: true,
+          sourcePath: file.path,
+          fileName: file.relativePath ?? null,
+          fileSize: file.size ?? null,
+          quality: file.quality?.quality?.name ?? null,
+          onNas,
+          activeJobId: activeJobKey.get(activeKey) ?? null,
+        };
+      });
   }
 }
 

@@ -73,6 +73,7 @@ function RadarrTab() {
     },
   });
 
+  const totalWithFile = (query.data?.items ?? []).filter((i) => i.hasFile && i.sourcePath).length;
   const filtered: RadarrItem[] = useMemo(() => {
     const items = (query.data?.items ?? []).filter((i) => i.hasFile && i.sourcePath);
     return items
@@ -80,6 +81,11 @@ function RadarrTab() {
       .filter((i) => (search ? i.title.toLowerCase().includes(search.toLowerCase()) : true))
       .sort((a, b) => a.title.localeCompare(b.title));
   }, [query.data, filter, search]);
+  const emptyMessage = totalWithFile === 0
+    ? 'Aucun film importé sur Radarr.'
+    : filter === 'not_on_nas'
+      ? `Tous les films Radarr (${totalWithFile}) sont déjà sur le NAS.`
+      : 'Aucun film correspondant.';
 
   return (
     <Card>
@@ -174,7 +180,7 @@ function RadarrTab() {
               </tbody>
             </table>
             {filtered.length === 0 && !query.isLoading && (
-              <p className="text-sm text-zinc-500 py-4">Aucun film correspondant.</p>
+              <p className="text-sm text-zinc-500 py-4">{emptyMessage}</p>
             )}
           </div>
         )}
@@ -211,6 +217,7 @@ function SonarrTab() {
     },
   });
 
+  const totalWithFile = (query.data?.items ?? []).filter((i) => i.hasFile && i.sourcePath).length;
   const filtered: SonarrItem[] = useMemo(() => {
     const items = (query.data?.items ?? []).filter((i) => i.hasFile && i.sourcePath);
     return items
@@ -228,6 +235,11 @@ function SonarrTab() {
         return a.episodeNumber - b.episodeNumber;
       });
   }, [query.data, filter, search]);
+  const emptyMessage = totalWithFile === 0
+    ? 'Aucun épisode téléchargé sur Sonarr (seuls ceux avec fichier sur la seedbox apparaissent ici).'
+    : filter === 'not_on_nas'
+      ? `Tous les épisodes Sonarr (${totalWithFile}) sont déjà sur le NAS.`
+      : 'Aucun épisode correspondant.';
 
   return (
     <Card>
@@ -322,7 +334,7 @@ function SonarrTab() {
               </tbody>
             </table>
             {filtered.length === 0 && !query.isLoading && (
-              <p className="text-sm text-zinc-500 py-4">Aucun épisode correspondant.</p>
+              <p className="text-sm text-zinc-500 py-4">{emptyMessage}</p>
             )}
           </div>
         )}
