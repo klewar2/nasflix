@@ -119,8 +119,19 @@ export class JobsProcessor extends WorkerHost {
     });
 
     if (result.code !== 0) {
-      // Log la stderr complète côté Railway pour le diag, on tronque juste pour la DB
-      this.logger.error(`Job ${job.id} rsync exit ${result.code} — FULL stderr:\n${result.stderr}\n--- FULL stdout:\n${result.stdout}`);
+      // Découpe en chunks pour contourner la troncature ligne-par-ligne de Railway
+      const lines = result.stderr.split('\n');
+      const chunkSize = 40;
+      this.logger.error(`Job ${job.id} rsync EXIT=${result.code} — ${lines.length} lignes stderr suivent :`);
+      for (let i = 0; i < lines.length; i += chunkSize) {
+        const chunk = lines.slice(i, i + chunkSize).join('\n');
+        this.logger.error(`[Job ${job.id} stderr ${i + 1}-${Math.min(i + chunkSize, lines.length)}/${lines.length}]\n${chunk}`);
+      }
+      // Forcément les dernières lignes (où le vrai motif d'erreur est)
+      this.logger.error(`[Job ${job.id} stderr TAIL]\n${result.stderr.slice(-3500)}`);
+      if (result.stdout.trim()) {
+        this.logger.error(`[Job ${job.id} stdout TAIL]\n${result.stdout.slice(-2000)}`);
+      }
       throw new Error(`rsync exit code ${result.code}\nstderr (last 8000):\n${result.stderr.slice(-8000)}`);
     }
 
