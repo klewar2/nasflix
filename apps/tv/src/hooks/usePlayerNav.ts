@@ -21,6 +21,7 @@ interface Params {
   applySubtitle: (index: number) => Promise<void>;
   onBack: () => void;
   onNextEpisode: (() => void) | undefined;
+  onPrevEpisode: (() => void) | undefined;
   mediaId: number;
   episodeId: number | undefined;
   showResume: boolean;
@@ -46,6 +47,8 @@ interface Return {
   subSummary: string;
   hasTracks: boolean;
   hasMenu: boolean;
+  hasPrevEpisode: boolean;
+  hasNextEpisode: boolean;
   clockTime: string;
   doResume: () => void;
   doStartOver: () => void;
@@ -56,7 +59,7 @@ interface Return {
 export function usePlayerNav({
   videoRef, playing, currentTime, durationSeconds, effectiveAudioTracks, effectiveSubtitles,
   activeAudio, activeSubtitle, applyAudioTrack, applySubtitle,
-  onBack, onNextEpisode, mediaId, episodeId, showResume, setShowResume, savedProgress,
+  onBack, onNextEpisode, onPrevEpisode, mediaId, episodeId, showResume, setShowResume, savedProgress,
 }: Params): Return {
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const seekHintTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -120,8 +123,12 @@ export function usePlayerNav({
     if (!video) return;
     switch (idx) {
       case 0:
-        video.currentTime = 0;
-        showSeekHint('|◀');
+        if (onPrevEpisode) {
+          onPrevEpisode();
+        } else {
+          video.currentTime = 0;
+          showSeekHint('|◀');
+        }
         break;
       case 1: {
         const t = Math.max(video.currentTime - 10, 0);
@@ -142,7 +149,11 @@ export function usePlayerNav({
         onNextEpisode?.();
         break;
     }
-  }, [videoRef, showSeekHint, onNextEpisode]);
+  }, [videoRef, showSeekHint, onNextEpisode, onPrevEpisode]);
+
+  const hasPrevEpisode = !!onPrevEpisode;
+  const hasNextEpisode = !!onNextEpisode;
+  const maxTransportIdx = hasNextEpisode ? 4 : 3;
 
   const hasTracks = effectiveAudioTracks.length > 0;
   const hasMenu = effectiveAudioTracks.length > 1 || effectiveSubtitles.length > 0;
@@ -162,6 +173,7 @@ export function usePlayerNav({
     activeAudio: 0,
     hasTracks: false,
     hasMenu: false,
+    maxTransportIdx: 4,
     durationSeconds: 0,
     mediaId: 0,
     episodeId: undefined as number | undefined,
@@ -175,7 +187,7 @@ export function usePlayerNav({
   // Update synchronously every render (safe: events fire after render)
   stateRef.current = {
     navMode, transportFocus, menuSection, menuIndex, currentItems,
-    pendingSeekTime, showResume, activeAudio, hasTracks, hasMenu,
+    pendingSeekTime, showResume, activeAudio, hasTracks, hasMenu, maxTransportIdx,
     durationSeconds, mediaId, episodeId,
     onBack, applyAudioTrack, applySubtitle, doResume, doStartOver, activateTransportBtn,
   };
@@ -245,7 +257,7 @@ export function usePlayerNav({
       if (e.keyCode === KEY.LEFT) {
         setTransportFocus(f => Math.max(0, f - 1)); showControlsFor();
       } else if (e.keyCode === KEY.RIGHT) {
-        setTransportFocus(f => Math.min(4, f + 1)); showControlsFor();
+        setTransportFocus(f => Math.min(s.maxTransportIdx, f + 1)); showControlsFor();
       } else if (e.keyCode === KEY.OK) {
         s.activateTransportBtn(s.transportFocus); showControlsFor();
       } else if (e.keyCode === KEY.UP) {
@@ -320,7 +332,7 @@ export function usePlayerNav({
     menuOpen: navMode === 'menu',
     menuSection, menuIndex, currentItems, seekHint, pendingSeekTime,
     displayTime, progress, duration, audioSummary, subSummary,
-    hasTracks, hasMenu, clockTime,
+    hasTracks, hasMenu, hasPrevEpisode, hasNextEpisode, clockTime,
     doResume, doStartOver, showControlsFor, activateTransportBtn,
   };
 }

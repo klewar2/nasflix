@@ -214,9 +214,6 @@ importers:
       embla-carousel-react:
         specifier: ^8
         version: 8.6.0(react@19.2.4)
-      hls.js:
-        specifier: ^1.6.15
-        version: 1.6.15
       lucide-react:
         specifier: ^0.500
         version: 0.500.0(react@19.2.4)

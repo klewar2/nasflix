@@ -4,31 +4,24 @@ import { api, resolveApiUrl } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { VideoPlayerModal } from '@/components/media/VideoPlayerModal';
-import { ArrowLeft, Copy, Download, ExternalLink, HardDrive, Loader2, Pencil, Play, Trash2, Upload, WifiOff } from 'lucide-react';
+import { ArrowLeft, Copy, Download, ExternalLink, HardDrive, Loader2, Pencil, Trash2, Upload, WifiOff } from 'lucide-react';
 import { useState } from 'react';
 import { NasBadge } from '@/components/badges/NasBadge';
 import { JellyfinBadge } from '@/components/badges/JellyfinBadge';
 
 type SeasonsSectionProps = {
   media: any;
-  mediaId: number;
   mediaTitle: string;
   isMember: boolean;
   nasOnline: boolean;
   loadingId: string | null;
-  openPlayer: (
-    fetchUrl: () => Promise<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>,
-    title: string,
-    key: string,
-    ids?: { mediaId?: number; episodeId?: number },
-  ) => void;
   handleDownload: (fetchUrl: () => Promise<{ url: string }>, filename: string, key: string) => void;
 };
 
-const isEpAvailable = (ep: any) => !!ep.nasPath || !!ep.jellyfinItemId;
+const isEpOnNas = (ep: any) => !!ep.nasPath && !ep.nasDeletedAt;
+const isEpAvailable = (ep: any) => isEpOnNas(ep) || !!ep.jellyfinItemId;
 
-function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadingId, openPlayer, handleDownload }: SeasonsSectionProps) {
+function SeasonsSection({ media, mediaTitle, isMember, nasOnline, loadingId, handleDownload }: SeasonsSectionProps) {
   // Sort seasons descending, keep only seasons that have at least one available episode
   const sortedSeasons = [...media.seasons]
     .sort((a: any, b: any) => b.seasonNumber - a.seasonNumber)
@@ -94,14 +87,16 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
               .map((ep: any) => {
                 const epKey = `ep-${ep.id}`;
                 const epTitle = `${mediaTitle} — S${String(activeSeason.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')} ${ep.name ? `— ${ep.name}` : ''}`;
-                const isSeedbox = ep.sourceType === 'SEEDBOX';
+                const epOnNas = isEpOnNas(ep);
+                const epOnJellyfin = !!ep.jellyfinItemId;
+                const usesSeedbox = !epOnNas && epOnJellyfin;
                 return (
                   <div
                     key={ep.id}
                     className="flex justify-between items-center text-sm py-2 px-2 rounded border-t border-zinc-800 hover:bg-zinc-800/50"
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <HardDrive className={`w-3.5 h-3.5 flex-shrink-0 ${isSeedbox ? 'text-blue-400' : 'text-emerald-400'}`} aria-label={isSeedbox ? 'Disponible sur Jellyfin' : 'Disponible sur le NAS'} />
+                      <HardDrive className={`w-3.5 h-3.5 flex-shrink-0 ${usesSeedbox ? 'text-blue-400' : 'text-emerald-400'}`} aria-label={usesSeedbox ? 'Disponible sur Jellyfin' : 'Disponible sur le NAS'} />
                       <span className="text-zinc-500 flex-shrink-0">E{String(ep.episodeNumber).padStart(2, '0')}</span>
                       <span className="truncate text-white">{ep.name || `Épisode ${ep.episodeNumber}`}</span>
                     </div>
@@ -112,27 +107,15 @@ function SeasonsSection({ media, mediaId, mediaTitle, isMember, nasOnline, loadi
                           {ep.nasFilename}
                         </span>
                       )}
-                      {isMember && (
-                        <>
-                          {!isSeedbox && (
-                            <button
-                              disabled={!nasOnline || loadingId === `play-${epKey}`}
-                              onClick={() => openPlayer(() => api.getEpisodeStreamUrl(ep.id), epTitle, `play-${epKey}`, { mediaId, episodeId: ep.id })}
-                              className="p-1.5 rounded bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white transition-colors"
-                              title="Lire"
-                            >
-                              {loadingId === `play-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white" />}
-                            </button>
-                          )}
-                          <button
-                            disabled={(!isSeedbox && !nasOnline) || loadingId === `dl-${epKey}`}
-                            onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
-                            className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-white transition-colors border border-zinc-700"
-                            title="Télécharger"
-                          >
-                            {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                          </button>
-                        </>
+                      {isMember && (epOnNas || epOnJellyfin) && (
+                        <button
+                          disabled={(epOnNas && !nasOnline) || loadingId === `dl-${epKey}`}
+                          onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
+                          className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-white transition-colors border border-zinc-700"
+                          title="Télécharger"
+                        >
+                          {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                        </button>
                       )}
                     </div>
                   </div>
@@ -154,9 +137,7 @@ export default function MediaDetailPage() {
   const isMember = !!cineClub;
 
   const [copied, setCopied] = useState(false);
-  const [player, setPlayer] = useState<{ url: string; title: string; isHls: boolean; durationSeconds: number; mediaId?: number; episodeId?: number; sourceType?: 'NAS' | 'SEEDBOX'; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [streamError, setStreamError] = useState<string | null>(null);
 
   const { data: media, isLoading } = useQuery({
     queryKey: ['media', id],
@@ -179,19 +160,6 @@ export default function MediaDetailPage() {
       navigator.clipboard.writeText(media.nasPath);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const openPlayer = async (fetchUrl: () => Promise<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>, title: string, key: string, ids?: { mediaId?: number; episodeId?: number }) => {
-    setLoadingId(key);
-    setStreamError(null);
-    try {
-      const { url, isHls, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await fetchUrl();
-      setPlayer({ url, title, isHls, durationSeconds, sourceType: sourceType as 'NAS' | 'SEEDBOX' | undefined, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken, ...ids });
-    } catch (e) {
-      setStreamError(e instanceof Error ? e.message : 'Lecture impossible');
-    } finally {
-      setLoadingId(null);
     }
   };
 
@@ -235,22 +203,6 @@ export default function MediaDetailPage() {
 
   return (
     <>
-      {player && (
-        <VideoPlayerModal
-          url={player.url}
-          title={player.title}
-          isHls={player.isHls}
-          durationSeconds={player.durationSeconds}
-          mediaId={player.mediaId}
-          episodeId={player.episodeId}
-          sourceType={player.sourceType}
-          jellyfinItemId={player.jellyfinItemId}
-          jellyfinBaseUrl={player.jellyfinBaseUrl}
-          jellyfinApiToken={player.jellyfinApiToken}
-          onClose={() => setPlayer(null)}
-        />
-      )}
-
       <div className="pb-10">
         <div className="relative h-[50vh] md:h-[60vh]">
           <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${media.backdropUrl || ''})` }}>
@@ -323,45 +275,33 @@ export default function MediaDetailPage() {
                 </p>
               )}
 
-              {/* Play / Download buttons — Movies only (series handled per-episode) */}
-              {isMember && media.type === 'MOVIE' && media.nasPath && (
-                <div className="flex items-center gap-3 mb-4 flex-wrap">
-                  {/* Offline indicator */}
-                  {!nasOnline && media.sourceType !== 'SEEDBOX' && (
-                    <span className="flex items-center gap-1.5 text-xs text-zinc-500">
-                      <WifiOff className="w-3.5 h-3.5" />
-                      NAS hors ligne
-                    </span>
-                  )}
+              {/* Download button — Movies only (series handled per-episode) */}
+              {(() => {
+                if (!isMember || media.type !== 'MOVIE') return null;
+                const movieOnNas = media.sourceType === 'NAS' && !!media.nasPath && !media.nasDeletedAt;
+                const movieOnJellyfin = !!media.jellyfinItemId;
+                if (!movieOnNas && !movieOnJellyfin) return null;
+                return (
+                  <div className="flex items-center gap-3 mb-4 flex-wrap">
+                    {/* Offline indicator */}
+                    {!nasOnline && movieOnNas && (
+                      <span className="flex items-center gap-1.5 text-xs text-zinc-500">
+                        <WifiOff className="w-3.5 h-3.5" />
+                        NAS hors ligne
+                      </span>
+                    )}
 
-                  {media.sourceType !== 'SEEDBOX' && (
                     <button
-                      disabled={!nasOnline || loadingId === `play-${id}`}
-                      onClick={() => openPlayer(() => api.getStreamUrl(Number(id)), mediaTitle, `play-${id}`, { mediaId: Number(id) })}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm font-semibold transition-colors"
+                      disabled={(movieOnNas && !nasOnline) || loadingId === `dl-${id}`}
+                      onClick={() => handleDownload(() => api.getStreamUrl(Number(id), 'download'), media.nasFilename || mediaTitle, `dl-${id}`)}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm transition-colors border border-zinc-700"
                     >
-                      {loadingId === `play-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-white" />}
-                      Lire
+                      {loadingId === `dl-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                      Télécharger
                     </button>
-                  )}
-
-                  <button
-                    disabled={(media.sourceType !== 'SEEDBOX' && !nasOnline) || loadingId === `dl-${id}`}
-                    onClick={() => handleDownload(() => api.getStreamUrl(Number(id), 'download'), media.nasFilename || mediaTitle, `dl-${id}`)}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm transition-colors border border-zinc-700"
-                  >
-                    {loadingId === `dl-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    Télécharger
-                  </button>
-                </div>
-              )}
-
-              {streamError && (
-                <div className="mb-3 p-3 rounded border border-amber-700/40 bg-amber-900/20 text-amber-200 text-sm flex items-start gap-2">
-                  <span className="flex-1">{streamError}</span>
-                  <button onClick={() => setStreamError(null)} className="text-amber-300 hover:text-white text-xs">×</button>
-                </div>
-              )}
+                  </div>
+                );
+              })()}
 
               {/* Bloc Sources : badges NAS / Jellyfin + chemins + actions super admin */}
               <SourcesBlock media={media} onAction={() => { /* refetch handled by parent useQuery on focus */ }} />
@@ -422,12 +362,10 @@ export default function MediaDetailPage() {
           {media.seasons && media.seasons.length > 0 && (
             <SeasonsSection
               media={media}
-              mediaId={Number(id)}
               mediaTitle={mediaTitle}
               isMember={isMember}
               nasOnline={nasOnline}
               loadingId={loadingId}
-              openPlayer={openPlayer}
               handleDownload={handleDownload}
             />
           )}
@@ -494,7 +432,7 @@ function SourcesBlock({ media, onAction }: { media: any; onAction: () => void })
       )}
       {isSuperAdmin && (
         <div className="flex flex-wrap gap-2 pt-1">
-          {!onNas && (
+          {!onNas && onJellyfin && (
             <button
               disabled={busy === 'transfer'}
               onClick={triggerTransfer}

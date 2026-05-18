@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import MediaCard from './MediaCard';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 
@@ -90,16 +90,33 @@ export default function MediaRow({ title, items, rowFocused, onSelect, onPreview
         }}
       >
         {items.map((media, idx) => (
-          <div key={media.id} data-card>
-            <MediaCard
-              media={media}
-              focused={rowFocused && focusedIdx === idx}
-              onFocus={() => setFocusedIdx(idx)}
-              onSelect={() => onSelect(media)}
-            />
-          </div>
+          <CardWrap
+            key={media.id}
+            media={media}
+            idx={idx}
+            focused={rowFocused && focusedIdx === idx}
+            setFocusedIdx={setFocusedIdx}
+            onSelect={onSelect}
+          />
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Wrapper qui isole les callbacks par carte → permet à MediaCard.memo() de skipper les re-renders. */
+function CardWrap({ media, idx, focused, setFocusedIdx, onSelect }: {
+  media: Media;
+  idx: number;
+  focused: boolean;
+  setFocusedIdx: (idx: number) => void;
+  onSelect: (media: Media) => void;
+}) {
+  const handleFocus = useCallback(() => setFocusedIdx(idx), [setFocusedIdx, idx]);
+  const handleSelect = useCallback(() => onSelect(media), [onSelect, media]);
+  return (
+    <div data-card>
+      <MediaCard media={media} focused={focused} onFocus={handleFocus} onSelect={handleSelect} />
     </div>
   );
 }

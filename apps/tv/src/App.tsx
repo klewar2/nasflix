@@ -25,7 +25,7 @@ export type Screen =
   | { name: 'series' }
   | { name: 'search' }
   | { name: 'detail'; mediaId: number; mediaType: 'movie' | 'series' }
-  | { name: 'player'; mediaId: number; episodeId?: number; title?: string; nextEpisodeId?: number; nextEpisodeTitle?: string; videoQuality?: string; hdr?: boolean }
+  | { name: 'player'; mediaId: number; episodeId?: number; title?: string; seriesTitle?: string; videoQuality?: string; hdr?: boolean }
   | { name: 'settings' };
 
 export default function App() {
@@ -104,19 +104,11 @@ export default function App() {
         mediaId={screen.mediaId}
         episodeId={screen.episodeId}
         title={screen.title}
-        nextEpisodeId={screen.nextEpisodeId}
-        nextEpisodeTitle={screen.nextEpisodeTitle}
+        seriesTitle={screen.seriesTitle}
         videoQuality={screen.videoQuality}
         hdr={screen.hdr}
         onBack={() => { setPrevScreen({ name: 'home' }); setScreen(backTarget); }}
-        onNextEpisode={screen.nextEpisodeId !== undefined ? () => {
-          navigate({
-            name: 'player',
-            mediaId: screen.mediaId,
-            episodeId: screen.nextEpisodeId,
-            title: screen.nextEpisodeTitle,
-          });
-        } : undefined}
+        navigate={navigate}
       />
     );
   }

@@ -184,10 +184,16 @@ export class SyncService {
 
     // Déplacements / renommages
     let movedCount = 0;
+    const movedMediaIds: number[] = [];
+    const movedEpisodeIds: number[] = [];
     for (const { from, to } of moved) {
       const filename = to.split('/').pop() || '';
-      const mediaUpdated = await this.prisma.media.updateMany({ where: { cineClubId, nasPath: from }, data: { nasPath: to, nasFilename: filename } });
-      const episodeUpdated = await this.prisma.episode.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename } });
+      const mediaBefore = await this.prisma.media.findMany({ where: { cineClubId, nasPath: from }, select: { id: true, nasDeletedAt: true } });
+      const episodeBefore = await this.prisma.episode.findMany({ where: { nasPath: from }, select: { id: true, nasDeletedAt: true } });
+      const mediaUpdated = await this.prisma.media.updateMany({ where: { cineClubId, nasPath: from }, data: { nasPath: to, nasFilename: filename, nasDeletedAt: null } });
+      const episodeUpdated = await this.prisma.episode.updateMany({ where: { nasPath: from }, data: { nasPath: to, nasFilename: filename, nasDeletedAt: null } });
+      mediaBefore.filter((m) => m.nasDeletedAt).forEach((m) => movedMediaIds.push(m.id));
+      episodeBefore.filter((e) => e.nasDeletedAt).forEach((e) => movedEpisodeIds.push(e.id));
 
       if (mediaUpdated.count === 0 && episodeUpdated.count === 0) {
         // Fallback: the NAS sent a folder path — find all files whose path starts with this prefix
@@ -197,7 +203,8 @@ export class SyncService {
         const mediaInFolder = await this.prisma.media.findMany({ where: { cineClubId, nasPath: { startsWith: fromPrefix } } });
         for (const m of mediaInFolder) {
           const newPath = toPrefix + m.nasPath.slice(fromPrefix.length);
-          await this.prisma.media.update({ where: { id: m.id }, data: { nasPath: newPath } });
+          await this.prisma.media.update({ where: { id: m.id }, data: { nasPath: newPath, nasDeletedAt: null } });
+          if (m.nasDeletedAt) movedMediaIds.push(m.id);
           movedCount++;
         }
 
@@ -205,12 +212,16 @@ export class SyncService {
         for (const e of episodesInFolder) {
           const newPath = toPrefix + e.nasPath!.slice(fromPrefix.length);
           const newFilename = newPath.split('/').pop() || '';
-          await this.prisma.episode.update({ where: { id: e.id }, data: { nasPath: newPath, nasFilename: newFilename } });
+          await this.prisma.episode.update({ where: { id: e.id }, data: { nasPath: newPath, nasFilename: newFilename, nasDeletedAt: null } });
+          if (e.nasDeletedAt) movedEpisodeIds.push(e.id);
           movedCount++;
         }
       } else {
         movedCount += mediaUpdated.count + episodeUpdated.count;
       }
+    }
+    if (movedMediaIds.length > 0 || movedEpisodeIds.length > 0) {
+      await this.restoreFromDeletion(cineClubId, { mediaIds: movedMediaIds, episodeIds: movedEpisodeIds });
     }
     if (moved.length > 0) {
       this.logger.log(`Updated ${movedCount} moved file(s) in DB`);
@@ -221,9 +232,21 @@ export class SyncService {
       const filename = filePath.split('/').pop() || '';
 
       const episodeExists = await this.prisma.episode.findUnique({ where: { nasPath: filePath } });
-      if (episodeExists) continue;
+      if (episodeExists) {
+        if (episodeExists.nasDeletedAt) {
+          await this.restoreFromDeletion(cineClubId, { episodeIds: [episodeExists.id] });
+          this.logger.log(`Restored episode #${episodeExists.id} (file reappeared at ${filePath})`);
+        }
+        continue;
+      }
       const existing = await this.prisma.media.findUnique({ where: { cineClubId_nasPath: { cineClubId, nasPath: filePath } } });
-      if (existing) continue;
+      if (existing) {
+        if (existing.nasDeletedAt) {
+          await this.restoreFromDeletion(cineClubId, { mediaIds: [existing.id] });
+          this.logger.log(`Restored media #${existing.id} (file reappeared at ${filePath})`);
+        }
+        continue;
+      }
 
       // Fallback: NAS sent file as "added" but it was actually moved (not detected as move)
       // If a SYNCED Media with the same filename exists at a different path, just update the path
@@ -231,7 +254,13 @@ export class SyncService {
         where: { cineClubId, nasFilename: filename, syncStatus: SyncStatus.SYNCED, nasPath: { not: filePath } },
       });
       if (sameFilename) {
-        await this.prisma.media.update({ where: { id: sameFilename.id }, data: { nasPath: filePath } });
+        await this.prisma.media.update({
+          where: { id: sameFilename.id },
+          data: { nasPath: filePath, nasDeletedAt: null },
+        });
+        if (sameFilename.nasDeletedAt) {
+          await this.restoreFromDeletion(cineClubId, { mediaIds: [sameFilename.id] });
+        }
         this.logger.log(`Moved (via added fallback): updated nasPath for media #${sameFilename.id} "${filename}"`);
         continue;
       }
@@ -846,7 +875,7 @@ export class SyncService {
   ): Promise<{ moved: number; deletedDetected: number; skippedDueToEmptyNas: boolean }> {
     const existingMedia = await this.prisma.media.findMany({
       where: { cineClubId },
-      select: { id: true, nasPath: true, nasFilename: true, nasSize: true },
+      select: { id: true, nasPath: true, nasFilename: true, nasSize: true, nasDeletedAt: true },
     });
     const nasMediaCount = existingMedia.filter((m) => !m.nasPath.startsWith('jellyfin://')).length;
 
@@ -863,6 +892,15 @@ export class SyncService {
       if (!nasIndexBySig.has(sig)) nasIndexBySig.set(sig, { path: f.path, name: f.name });
     }
 
+    // « Fantômes » : media marquée supprimée alors que le fichier est toujours présent au même path
+    const ghostDeletedMediaIds = existingMedia
+      .filter((m) => m.nasDeletedAt != null && nasPaths.has(m.nasPath))
+      .map((m) => m.id);
+    if (ghostDeletedMediaIds.length > 0) {
+      await this.restoreFromDeletion(cineClubId, { mediaIds: ghostDeletedMediaIds });
+      this.logger.log(`Restored ${ghostDeletedMediaIds.length} media still present on NAS`);
+    }
+
     // Media manquantes côté NAS : tenter move puis fallback delete
     const missingMedia = existingMedia.filter(
       (m) => !m.nasPath.startsWith('jellyfin://') && !nasPaths.has(m.nasPath),
@@ -870,6 +908,7 @@ export class SyncService {
 
     let moved = 0;
     const toDelete: string[] = [];
+    const movedMediaIds: number[] = [];
     for (const m of missingMedia) {
       const sig = `${m.nasFilename}|${m.nasSize != null ? String(m.nasSize) : '?'}`;
       const hit = nasIndexBySig.get(sig);
@@ -878,19 +917,34 @@ export class SyncService {
           where: { id: m.id },
           data: { nasPath: hit.path, nasFilename: hit.name, nasDeletedAt: null },
         });
+        if (m.nasDeletedAt) movedMediaIds.push(m.id);
         moved++;
       } else {
         toDelete.push(m.nasPath);
       }
     }
+    if (movedMediaIds.length > 0) {
+      await this.restoreFromDeletion(cineClubId, { mediaIds: movedMediaIds });
+    }
 
     // Episodes (par nasPath unique sur Episode)
     const existingEpisodes = await this.prisma.episode.findMany({
       where: { nasPath: { not: null }, season: { media: { cineClubId } } },
-      select: { id: true, nasPath: true, nasFilename: true, nasSize: true },
+      select: { id: true, nasPath: true, nasFilename: true, nasSize: true, nasDeletedAt: true },
     });
+
+    // « Fantômes » épisodes : présents sur NAS mais flagués supprimés
+    const ghostDeletedEpisodeIds = existingEpisodes
+      .filter((e) => e.nasDeletedAt != null && e.nasPath && nasPaths.has(e.nasPath))
+      .map((e) => e.id);
+    if (ghostDeletedEpisodeIds.length > 0) {
+      await this.restoreFromDeletion(cineClubId, { episodeIds: ghostDeletedEpisodeIds });
+      this.logger.log(`Restored ${ghostDeletedEpisodeIds.length} episode(s) still present on NAS`);
+    }
+
     const missingEpisodes = existingEpisodes.filter((e) => e.nasPath && !nasPaths.has(e.nasPath));
     const episodesToDelete: string[] = [];
+    const movedEpisodeIds: number[] = [];
     for (const e of missingEpisodes) {
       const sig = `${e.nasFilename}|${e.nasSize != null ? String(e.nasSize) : '?'}`;
       const hit = nasIndexBySig.get(sig);
@@ -899,10 +953,14 @@ export class SyncService {
           where: { id: e.id },
           data: { nasPath: hit.path, nasFilename: hit.name, nasDeletedAt: null },
         });
+        if (e.nasDeletedAt) movedEpisodeIds.push(e.id);
         moved++;
       } else if (e.nasPath) {
         episodesToDelete.push(e.nasPath);
       }
+    }
+    if (movedEpisodeIds.length > 0) {
+      await this.restoreFromDeletion(cineClubId, { episodeIds: movedEpisodeIds });
     }
 
     const allToDelete = [...toDelete, ...episodesToDelete];
@@ -911,6 +969,64 @@ export class SyncService {
     }
 
     return { moved, deletedDetected: allToDelete.length, skippedDueToEmptyNas: false };
+  }
+
+  /**
+   * Le fichier est réapparu sur le NAS : on lève le flag `nasDeletedAt` et on
+   * annule les jobs de nettoyage seedbox encore en attente (PENDING / AWAITING_*).
+   * Idempotent : safe à appeler même si le flag n'est pas posé.
+   */
+  private async restoreFromDeletion(
+    cineClubId: number,
+    target: { mediaIds?: number[]; episodeIds?: number[] },
+  ): Promise<void> {
+    const mediaIds = target.mediaIds ?? [];
+    const episodeIds = target.episodeIds ?? [];
+    if (mediaIds.length === 0 && episodeIds.length === 0) return;
+
+    if (mediaIds.length > 0) {
+      await this.prisma.media.updateMany({
+        where: { id: { in: mediaIds }, nasDeletedAt: { not: null } },
+        data: { nasDeletedAt: null },
+      });
+    }
+    if (episodeIds.length > 0) {
+      await this.prisma.episode.updateMany({
+        where: { id: { in: episodeIds }, nasDeletedAt: { not: null } },
+        data: { nasDeletedAt: null },
+      });
+    }
+
+    const pendingStatuses: JobStatus[] = [
+      JobStatus.PENDING,
+      JobStatus.AWAITING_NAS,
+      JobStatus.AWAITING_SEEDBOX,
+    ];
+    const pendingJobs = await this.prisma.job.findMany({
+      where: {
+        cineClubId,
+        kind: JobKind.DELETE_FROM_SEEDBOX,
+        status: { in: pendingStatuses },
+        OR: [
+          ...(mediaIds.length > 0 ? [{ mediaId: { in: mediaIds } }] : []),
+          ...(episodeIds.length > 0 ? [{ episodeId: { in: episodeIds } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    for (const j of pendingJobs) {
+      try {
+        await this.jobsService.cancel(j.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Restore: cancel job ${j.id} failed: ${msg}`);
+      }
+    }
+    if (pendingJobs.length > 0) {
+      this.logger.log(
+        `Restore: cancelled ${pendingJobs.length} pending DELETE_FROM_SEEDBOX job(s)`,
+      );
+    }
   }
 
   // Marque les Media/Episode comme supprimés sur le NAS (nasDeletedAt) et planifie

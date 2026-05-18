@@ -30,7 +30,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
 
   // Sort seasons descending, keep only episodes available on NAS or Jellyfin
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const isEpAvailable = (ep: any) => !!ep.nasPath || !!ep.jellyfinItemId;
+  const isEpAvailable = (ep: any) => (!!ep.nasPath && !ep.nasDeletedAt) || !!ep.jellyfinItemId;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seasonGroups: Array<{ seasonNumber: number; episodes: any[] }> = [...(media?.seasons || [])]
     .sort((a: any, b: any) => b.seasonNumber - a.seasonNumber)
@@ -96,12 +96,10 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
         if (episodes.length > 0) setFocused({ zone: 'episode', idx: 0 });
       } else if (typeof focused === 'object' && focused.zone === 'episode') {
         const ep = episodes[focused.idx];
-        const nextEp = episodes[focused.idx + 1];
         if (ep) navigate({
           name: 'player', mediaId, episodeId: ep.id,
           title: `${title} · S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
-          nextEpisodeId: nextEp?.id,
-          nextEpisodeTitle: nextEp ? `${title} · S${String(nextEp.seasonNumber).padStart(2, '0')}E${String(nextEp.episodeNumber).padStart(2, '0')}` : undefined,
+          seriesTitle: title,
           videoQuality: media?.videoQuality, hdr: media?.hdr,
         });
       }
@@ -401,6 +399,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
                       onClick={() => navigate({
                         name: 'player', mediaId, episodeId: ep.id,
                         title: `${title} · S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
+                        seriesTitle: title,
                         videoQuality: media?.videoQuality, hdr: media?.hdr,
                       })}
                       style={{

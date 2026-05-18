@@ -24,12 +24,13 @@ interface Props {
   hdr?: boolean;
   onBack: () => void;
   onNextEpisode?: () => void;
+  onPrevEpisode?: () => void;
 }
 
 export default function VideoPlayer({
   url, isHls, durationSeconds, title, tracks, mediaId, episodeId,
   sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken, nasSubtitleCache,
-  videoQuality, hdr, onBack, onNextEpisode,
+  videoQuality, hdr, onBack, onNextEpisode, onPrevEpisode,
 }: Props) {
   // savedProgress computed once (synchronous localStorage read)
   const savedProgressRef = useRef(watchProgress.get(mediaId, episodeId));
@@ -58,7 +59,7 @@ export default function VideoPlayer({
   const nav = usePlayerNav({
     videoRef, playing, currentTime, durationSeconds, effectiveAudioTracks, effectiveSubtitles,
     activeAudio, activeSubtitle, applyAudioTrack, applySubtitle,
-    onBack, onNextEpisode, mediaId, episodeId, showResume, setShowResume, savedProgress,
+    onBack, onNextEpisode, onPrevEpisode, mediaId, episodeId, showResume, setShowResume, savedProgress,
   });
 
   const DEBUG = import.meta.env.VITE_DEBUG === 'true';
@@ -405,10 +406,14 @@ export default function VideoPlayer({
           {/* Transport row */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4375rem' }}>
-              {/* Prev (restart) */}
+              {/* Prev episode (SkipBack) si dispo, sinon Restart */}
               <RoundBtn size={46} focused={nav.navMode === 'transport' && nav.transportFocus === 0}
                 onClick={() => nav.activateTransportBtn(0)}>
-                <svg width="13" height="13" viewBox="0 0 13 13"><path d="M10 1.5v10l-8-5z M2 1.5v10" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+                {nav.hasPrevEpisode ? (
+                  <svg width="13" height="13" viewBox="0 0 13 13"><path d="M10 1.5v10l-8-5z M2 1.5v10" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 13 13"><path d="M11 1.5L2 6.5l9 5z" fill="currentColor"/><rect x="1" y="1.5" width="1.5" height="10" fill="currentColor"/></svg>
+                )}
               </RoundBtn>
               {/* −10s */}
               <RoundBtn size={46} sub="−10" focused={nav.navMode === 'transport' && nav.transportFocus === 1}
@@ -428,11 +433,13 @@ export default function VideoPlayer({
                 onClick={() => nav.activateTransportBtn(3)}>
                 <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 7a5 5 0 1 0 5-5V0L10.5 3.5 7 7" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </RoundBtn>
-              {/* Next episode */}
-              <RoundBtn size={46} focused={nav.navMode === 'transport' && nav.transportFocus === 4}
-                onClick={() => nav.activateTransportBtn(4)}>
-                <svg width="13" height="13" viewBox="0 0 13 13"><path d="M3 1.5v10l8-5z M11 1.5v10" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
-              </RoundBtn>
+              {/* Next episode — affiché uniquement si dispo */}
+              {nav.hasNextEpisode && (
+                <RoundBtn size={46} focused={nav.navMode === 'transport' && nav.transportFocus === 4}
+                  onClick={() => nav.activateTransportBtn(4)}>
+                  <svg width="13" height="13" viewBox="0 0 13 13"><path d="M3 1.5v10l8-5z M11 1.5v10" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+                </RoundBtn>
+              )}
             </div>
 
             <div style={{ flex: 1 }} />
@@ -447,7 +454,18 @@ export default function VideoPlayer({
               </div>
             )}
 
-            {/* Next episode text button */}
+            {/* Prev / Next episode text buttons */}
+            {onPrevEpisode && (
+              <button onClick={onPrevEpisode} style={{
+                background: 'rgba(255,255,255,0.06)', color: '#fff',
+                border: '1px solid var(--line-strong)', borderRadius: '4px',
+                padding: '0.3125rem 0.5625rem', fontSize: '0.41rem', fontWeight: 500,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem',
+              }}>
+                <svg width="13" height="13" viewBox="0 0 13 13"><path d="M10 1v11l-8-5.5z M2 1v11" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round"/></svg>
+                Épisode précédent
+              </button>
+            )}
             {onNextEpisode && (
               <button onClick={onNextEpisode} style={{
                 background: 'rgba(255,255,255,0.06)', color: '#fff',

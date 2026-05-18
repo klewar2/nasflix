@@ -1,8 +1,90 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, memo, forwardRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getMedia } from '../lib/api';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 import type { Screen } from '../App';
+
+interface GridCardProps {
+  media: {
+    id: number;
+    title: string;
+    posterUrl?: string;
+    type: 'movie' | 'series';
+    releaseYear?: number;
+    voteAverage?: number;
+    videoQuality?: string;
+  };
+  isFocused: boolean;
+  onSelect: (id: number, type: 'movie' | 'series') => void;
+}
+
+const GridCard = memo(forwardRef<HTMLDivElement, GridCardProps>(function GridCard({ media, isFocused, onSelect }, ref) {
+  return (
+    <div
+      ref={ref}
+      data-focused={isFocused}
+      onClick={() => onSelect(media.id, media.type)}
+      style={{
+        borderRadius: '5px', overflow: 'hidden', cursor: 'pointer',
+        outline: isFocused ? '2px solid var(--accent)' : '2px solid transparent',
+        outlineOffset: '5px',
+        boxShadow: isFocused
+          ? '0 0 0 7px rgba(177,58,48,0.12), 0 20px 60px rgba(0,0,0,0.7)'
+          : '0 2px 8px rgba(0,0,0,0.5)',
+        transition: 'outline-color 0.15s ease, box-shadow 0.15s ease',
+        background: 'var(--bg-card)',
+        zIndex: isFocused ? 10 : 1,
+      }}
+    >
+      <div style={{ aspectRatio: '2/3', position: 'relative' }}>
+        {media.posterUrl ? (
+          <img
+            src={media.posterUrl}
+            alt={media.title}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            loading="lazy"
+          />
+        ) : (
+          <div style={{
+            width: '100%', height: '100%', display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            background: 'linear-gradient(135deg, #27272a, #18181b)',
+            color: 'var(--text-dim)', fontSize: '0.38rem',
+            padding: '0.4rem', textAlign: 'center',
+          }}>
+            {media.title}
+          </div>
+        )}
+        {media.videoQuality === '4K' && (
+          <span className="quality uhd" style={{
+            position: 'absolute', top: '0.2rem', right: '0.2rem',
+          }}>4K</span>
+        )}
+      </div>
+      <div style={{ padding: '0.25rem 0.3rem 0.3rem' }}>
+        <div style={{
+          fontFamily: 'var(--serif)',
+          fontSize: '0.5rem', fontWeight: 400,
+          color: isFocused ? '#fff' : 'var(--text)',
+          lineHeight: 1.2,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}>
+          {media.title}
+        </div>
+        <div style={{
+          fontFamily: 'var(--mono)',
+          fontSize: '0.34rem', color: 'var(--text-dim)', marginTop: '0.1rem',
+        }}>
+          {media.releaseYear}
+          {media.voteAverage && media.voteAverage > 0 && ` · ★ ${media.voteAverage.toFixed(1)}`}
+        </div>
+      </div>
+    </div>
+  );
+}));
 
 const ALPHABET = ['#', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
 const COLS = 6;
@@ -51,26 +133,36 @@ export default function ListPage({ kind, navigate, navFocused, onFocusNav }: Pro
   const focusedLetterRef = useRef<HTMLDivElement>(null);
   const azRailRef = useRef<HTMLDivElement>(null);
 
+  const handleCardSelect = useCallback((mediaId: number, mediaType: 'movie' | 'series') => {
+    navigate({ name: 'detail', mediaId, mediaType });
+  }, [navigate]);
+
   const { data, isLoading } = useQuery({
     queryKey: ['media', kind, 'all'],
     queryFn: () => getMedia({ type: kind === 'movies' ? 'movie' : 'series', limit: 300 }),
     staleTime: 5 * 60 * 1000,
   });
 
-  const rawItems = (data?.data || []).map(normalizeMedia);
+  // Mémoïsation : sans ça, le `.map(normalizeMedia)` crée de nouvelles refs à chaque
+  // render et casse le memo() de GridCard (re-render des 300 cartes au moindre changement de focus).
+  const rawItems = useMemo(() => (data?.data || []).map(normalizeMedia), [data]);
 
-  const genreList = ['Tous', ...Array.from(new Set(rawItems.flatMap((m) => m.genres))).sort((a, b) => a.localeCompare(b, 'fr'))];
+  const genreList = useMemo(
+    () => ['Tous', ...Array.from(new Set(rawItems.flatMap((m) => m.genres))).sort((a, b) => a.localeCompare(b, 'fr'))],
+    [rawItems],
+  );
 
-  const filteredItems = selectedGenre === 'Tous'
-    ? rawItems
-    : rawItems.filter((m) => m.genres.includes(selectedGenre));
+  const filteredItems = useMemo(
+    () => selectedGenre === 'Tous' ? rawItems : rawItems.filter((m) => m.genres.includes(selectedGenre)),
+    [rawItems, selectedGenre],
+  );
 
-  const sortedItems = [...filteredItems].sort((a, b) => {
+  const sortedItems = useMemo(() => [...filteredItems].sort((a, b) => {
     if (sort === 'alpha') return a.title.localeCompare(b.title, 'fr');
     if (sort === 'rating') return (b.voteAverage ?? 0) - (a.voteAverage ?? 0);
     if (sort === 'year') return (b.releaseYear ?? 0) - (a.releaseYear ?? 0);
     return 0;
-  });
+  }), [filteredItems, sort]);
 
   const jumpToLetter = (letter: string) => {
     const idx = sortedItems.findIndex((m) => {
@@ -337,72 +429,13 @@ export default function ListPage({ kind, navigate, navFocused, onFocusNav }: Pro
               {sortedItems.map((media, idx) => {
                 const isFocused = zone === 'grid' && focusedIdx === idx;
                 return (
-                  <div
+                  <GridCard
                     key={media.id}
-                    ref={isFocused ? focusedCardRef : undefined}
-                    data-focused={isFocused}
-                    onClick={() => navigate({ name: 'detail', mediaId: media.id, mediaType: media.type })}
-                    style={{
-                      borderRadius: '5px', overflow: 'hidden', cursor: 'pointer',
-                      outline: isFocused ? '2px solid var(--accent)' : '2px solid transparent',
-                      outlineOffset: '5px',
-                      boxShadow: isFocused
-                        ? '0 0 0 7px rgba(177,58,48,0.12), 0 20px 60px rgba(0,0,0,0.7)'
-                        : '0 2px 8px rgba(0,0,0,0.5)',
-                      transition: 'outline-color 0.15s ease, box-shadow 0.15s ease',
-                      background: 'var(--bg-card)',
-                      zIndex: isFocused ? 10 : 1,
-                    }}
-                  >
-                    {/* Poster */}
-                    <div style={{ aspectRatio: '2/3', position: 'relative' }}>
-                      {media.posterUrl ? (
-                        <img
-                          src={media.posterUrl}
-                          alt={media.title}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div style={{
-                          width: '100%', height: '100%', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center',
-                          background: 'linear-gradient(135deg, #27272a, #18181b)',
-                          color: 'var(--text-dim)', fontSize: '0.38rem',
-                          padding: '0.4rem', textAlign: 'center',
-                        }}>
-                          {media.title}
-                        </div>
-                      )}
-                      {media.videoQuality === '4K' && (
-                        <span className="quality uhd" style={{
-                          position: 'absolute', top: '0.2rem', right: '0.2rem',
-                        }}>4K</span>
-                      )}
-                    </div>
-                    {/* Label */}
-                    <div style={{ padding: '0.25rem 0.3rem 0.3rem' }}>
-                      <div style={{
-                        fontFamily: 'var(--serif)',
-                        fontSize: '0.5rem', fontWeight: 400,
-                        color: isFocused ? '#fff' : 'var(--text)',
-                        lineHeight: 1.2,
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                      }}>
-                        {media.title}
-                      </div>
-                      <div style={{
-                        fontFamily: 'var(--mono)',
-                        fontSize: '0.34rem', color: 'var(--text-dim)', marginTop: '0.1rem',
-                      }}>
-                        {media.releaseYear}
-                        {media.voteAverage && media.voteAverage > 0 && ` · ★ ${media.voteAverage.toFixed(1)}`}
-                      </div>
-                    </div>
-                  </div>
+                    ref={isFocused ? focusedCardRef : null}
+                    media={media}
+                    isFocused={isFocused}
+                    onSelect={handleCardSelect}
+                  />
                 );
               })}
             </div>

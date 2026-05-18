@@ -1,10 +1,15 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import MediaRow from '../components/MediaRow';
+import LazyMount from '../components/LazyMount';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 import { getRecentMedia, getMedia, getGenres, getQualityMedia, getMediaById } from '../lib/api';
 import { watchProgress } from '../lib/progress';
 import type { Screen } from '../App';
+
+// Hauteur approximative d'une MediaRow (poster 2:3 + titre + marges).
+// Sert de placeholder à LazyMount pour préserver le scroll position.
+const ROW_PLACEHOLDER_HEIGHT = 200;
 
 interface Props {
   navigate: (s: Screen) => void;
@@ -215,22 +220,27 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
     })),
   });
 
-  const staticRows = [
-    { title: 'Récemment ajoutés', subtitle: 'Dernières sorties', items: recent.map(normalizeMedia) },
-    { title: '4K Ultra HD', subtitle: 'Qualité maximale', items: uhdMedia.map(normalizeMedia) },
-    { title: 'Films', subtitle: 'Catalogue complet', items: (moviesResult?.data || []).map(normalizeMedia) },
-    { title: 'Séries', subtitle: 'Toutes les saisons', items: (seriesResult?.data || []).map(normalizeMedia) },
-  ].filter((r) => r.items.length > 0);
+  // Mémoïsation : sans ça, .map(normalizeMedia) recrée des refs à chaque render
+  // → MediaCard.memo() devient inutile → re-render de toutes les cartes au moindre focus change.
+  const allRows = useMemo(() => {
+    const staticRows = [
+      { title: 'Récemment ajoutés', subtitle: 'Dernières sorties', items: recent.map(normalizeMedia) },
+      { title: '4K Ultra HD', subtitle: 'Qualité maximale', items: uhdMedia.map(normalizeMedia) },
+      { title: 'Films', subtitle: 'Catalogue complet', items: (moviesResult?.data || []).map(normalizeMedia) },
+      { title: 'Séries', subtitle: 'Toutes les saisons', items: (seriesResult?.data || []).map(normalizeMedia) },
+    ].filter((r) => r.items.length > 0);
 
-  const genreRows = topGenres
-    .map((genre, idx) => ({
-      title: genre.name,
-      subtitle: 'Genre',
-      items: (genreMediaResults[idx]?.data?.data || []).map(normalizeMedia),
-    }))
-    .filter((r) => r.items.length > 0);
+    const genreRows = topGenres
+      .map((genre, idx) => ({
+        title: genre.name,
+        subtitle: 'Genre',
+        items: (genreMediaResults[idx]?.data?.data || []).map(normalizeMedia),
+      }))
+      .filter((r) => r.items.length > 0);
 
-  const allRows = [...staticRows, ...genreRows];
+    return [...staticRows, ...genreRows];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recent, uhdMedia, moviesResult, seriesResult, topGenres, ...genreMediaResults.map((r) => r.data)]);
 
   // Update backdrop with smooth crossfade
   const updateBackdrop = (media: NormalizedMedia) => {
@@ -459,18 +469,29 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
 
         {allRows.map((row, idx) => {
           const zone = hasResume ? idx + 1 : idx;
-          return (
-            <div key={row.title} ref={(el) => { rowSectionRefs.current[idx] = el; }}>
+          const isFocusedRow = active && !navFocused && focusedZone === zone;
+          // Les 2 premières rangées montent tout de suite (au-dessus de la ligne de flottaison),
+          // les suivantes utilisent LazyMount. Une rangée focusée force le mount immédiat.
+          const eagerMount = idx < 2 || isFocusedRow;
+          const rowContent = (
+            <div ref={(el) => { rowSectionRefs.current[idx] = el; }}>
               <MediaRow
                 title={row.title}
                 items={row.items}
-                rowFocused={active && !navFocused && focusedZone === zone}
+                rowFocused={isFocusedRow}
                 onSelect={(media) => navigate({ name: 'detail', mediaId: media.id, mediaType: media.type })}
                 onPreview={updateBackdrop}
                 onUp={() => { setFocusedZone(zone - 1); }}
                 onDown={() => { if (zone + 1 < totalZones) setFocusedZone(zone + 1); }}
               />
             </div>
+          );
+          return eagerMount ? (
+            <div key={row.title}>{rowContent}</div>
+          ) : (
+            <LazyMount key={row.title} placeholderHeight={ROW_PLACEHOLDER_HEIGHT} rootRef={scrollContainerRef}>
+              {rowContent}
+            </LazyMount>
           );
         })}
       </div>

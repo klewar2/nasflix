@@ -1,9 +1,12 @@
 /**
  * Watch progress persistence via localStorage.
- * Saves position every ~15s during playback; clears when >95% watched.
+ * Saves position every ~15s during playback; considère le média comme vu
+ * (et le retire du panel Reprendre) quand il reste ≤ 5 min de lecture
+ * (ou 95 % visionné pour les contenus < 100 min de durée).
  */
 
 const PREFIX = 'nf_prog_';
+const END_THRESHOLD_SECONDS = 300; // 5 min
 
 function key(mediaId: number, episodeId?: number): string {
   return `${PREFIX}${mediaId}_${episodeId ?? 'm'}`;
@@ -34,8 +37,8 @@ export const watchProgress = {
     if (!duration || duration <= 0) return;
     const pct = currentTime / duration;
     if (pct < 0.01) return; // barely started — don't save
-    if (pct > 0.95) {
-      // Finished — clear
+    if (duration - currentTime <= END_THRESHOLD_SECONDS || pct > 0.95) {
+      // Considéré vu — retirer du panel Reprendre
       localStorage.removeItem(key(mediaId, episodeId));
       return;
     }
@@ -69,7 +72,11 @@ export const watchProgress = {
       const episodeId = parts[1] && parts[1] !== 'm' ? Number(parts[1]) : undefined;
       if (!isFinite(mediaId)) continue;
       const p = watchProgress.get(mediaId, episodeId);
-      if (p) result.push({ mediaId, episodeId, progress: p });
+      if (!p) continue;
+      // Filtre défensif : un media saved avec l'ancienne règle peut être au-delà du seuil
+      // 5 min de la fin — on l'écarte du panel Reprendre.
+      if (p.duration > 0 && p.duration - p.currentTime <= END_THRESHOLD_SECONDS) continue;
+      result.push({ mediaId, episodeId, progress: p });
     }
     return result.sort((a, b) => b.progress.savedAt - a.progress.savedAt);
   },
