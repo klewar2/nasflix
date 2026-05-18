@@ -1,6 +1,6 @@
-import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { Processor, WorkerHost, OnWorkerEvent, InjectQueue } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { Job as BullJob } from 'bullmq';
+import { Job as BullJob, Queue } from 'bullmq';
 import { Client as SshClient } from 'ssh2';
 import { Job as JobRow, JobKind, JobStatus, MediaType, SourceType, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
@@ -8,8 +8,10 @@ import { CryptoService } from '../common/crypto.service';
 import { NasService } from '../nas/nas.service';
 import { MediaService } from '../media/media.service';
 import { MailService } from '../mail/mail.service';
+import { MetadataService } from '../metadata/metadata.service';
 import { JobsGateway } from './jobs.gateway';
 import { JOBS_QUEUE } from './jobs.constants';
+import { METADATA_SYNC_QUEUE } from '../sync/sync.constants';
 
 interface JobRunData {
   jobId: number;
@@ -25,9 +27,25 @@ export class JobsProcessor extends WorkerHost {
     private readonly nasService: NasService,
     private readonly mediaService: MediaService,
     private readonly mailService: MailService,
+    private readonly metadataService: MetadataService,
     private readonly gateway: JobsGateway,
+    @InjectQueue(METADATA_SYNC_QUEUE) private readonly metadataQueue: Queue,
   ) {
     super();
+  }
+
+  private async enqueueMetadataSync(mediaId: number, cineClubId: number) {
+    await this.metadataQueue.add(
+      'sync-metadata',
+      { mediaId, cineClubId },
+      {
+        jobId: `media-${mediaId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    ).catch((e) => this.logger.warn(`Enqueue metadata sync échoué pour Media ${mediaId}: ${e}`));
   }
 
   async process(bullJob: BullJob<JobRunData>): Promise<void> {
@@ -387,6 +405,7 @@ export class JobsProcessor extends WorkerHost {
         tmdbId: job.tmdbId,
       },
     });
+    await this.enqueueMetadataSync(created.id, created.cineClubId);
     await this.mediaService.populateJellyfinId(created, 'movie').catch((e) =>
       this.logger.warn(`populateJellyfinId échoué pour Media ${created.id}: ${e}`),
     );
@@ -420,7 +439,8 @@ export class JobsProcessor extends WorkerHost {
           syncStatus: SyncStatus.PENDING,
         },
       });
-      this.logger.log(`Media SERIES créé (id=${media.id}, tmdbId=${job.tmdbId}) — diffSync enrichira les métadonnées`);
+      this.logger.log(`Media SERIES créé (id=${media.id}, tmdbId=${job.tmdbId}) — sync TMDB enclenchée`);
+      await this.enqueueMetadataSync(media.id, media.cineClubId);
     }
 
     const season = await this.prisma.season.upsert({
@@ -428,6 +448,23 @@ export class JobsProcessor extends WorkerHost {
       update: {},
       create: { mediaId: media.id, seasonNumber: job.seasonNumber },
     });
+
+    // Méta TMDB de l'épisode (titre/overview/runtime/still) — best-effort, non bloquant.
+    let epMeta: { name?: string; overview?: string; runtime?: number | null; airDate?: Date | null; stillUrl?: string | null } = {};
+    try {
+      const detail = await this.metadataService.getTvEpisodeDetail(job.tmdbId, job.seasonNumber, job.episodeNumber, job.cineClubId);
+      if (detail) {
+        epMeta = {
+          name: detail.name || undefined,
+          overview: detail.overview || undefined,
+          runtime: detail.runtime ?? null,
+          airDate: detail.air_date ? new Date(detail.air_date) : null,
+          stillUrl: this.metadataService.stillUrl(detail.still_path),
+        };
+      }
+    } catch (e) {
+      this.logger.warn(`getTvEpisodeDetail échoué (tmdb=${job.tmdbId} S${job.seasonNumber}E${job.episodeNumber}): ${e}`);
+    }
 
     await this.prisma.episode.upsert({
       where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber: job.episodeNumber } },
@@ -437,6 +474,7 @@ export class JobsProcessor extends WorkerHost {
         nasSize: job.fileSize ?? null,
         sourceType: SourceType.NAS,
         nasDeletedAt: null,
+        ...epMeta,
       },
       create: {
         seasonId: season.id,
@@ -445,6 +483,7 @@ export class JobsProcessor extends WorkerHost {
         nasFilename: nasPath.split('/').pop() ?? null,
         nasSize: job.fileSize ?? null,
         sourceType: SourceType.NAS,
+        ...epMeta,
       },
     });
 
