@@ -304,6 +304,7 @@ model Job {
   media            Media?     @relation(fields: [mediaId], references: [id], onDelete: SetNull)
   episodeId        Int?
   episode          Episode?   @relation(fields: [episodeId], references: [id], onDelete: SetNull)
+  seriesTitle      String?
   seasonNumber     Int?
   episodeNumber    Int?
 

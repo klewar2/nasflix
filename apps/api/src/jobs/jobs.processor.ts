@@ -2,7 +2,7 @@ import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job as BullJob } from 'bullmq';
 import { Client as SshClient } from 'ssh2';
-import { Job as JobRow, JobKind, JobStatus, MediaType, SourceType } from '@prisma/client';
+import { Job as JobRow, JobKind, JobStatus, MediaType, SourceType, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
 import { NasService } from '../nas/nas.service';
@@ -65,6 +65,25 @@ export class JobsProcessor extends WorkerHost {
   // ── DOWNLOAD_TO_NAS ──────────────────────────────────────────────────────
 
   private async runDownload(job: JobRow): Promise<void> {
+    // Garde-fou contre les doublons créés AVANT la dédup côté service (jobs
+    // historiques) : si un autre job DOWNLOAD_TO_NAS plus ancien et non-terminal
+    // pointe sur le même sourcePath, on annule celui-ci.
+    if (job.sourcePath) {
+      const concurrent = await this.prisma.job.findFirst({
+        where: {
+          id: { not: job.id, lt: job.id },
+          cineClubId: job.cineClubId,
+          kind: JobKind.DOWNLOAD_TO_NAS,
+          sourcePath: job.sourcePath,
+          status: { in: [JobStatus.PENDING, JobStatus.AWAITING_NAS, JobStatus.AWAITING_SEEDBOX, JobStatus.IN_PROGRESS, JobStatus.COMPLETED] },
+        },
+      });
+      if (concurrent) {
+        this.logger.log(`Job ${job.id} dédoublonné (concurrent=${concurrent.id} status=${concurrent.status}) — annulé`);
+        await this.updateStatus(job, JobStatus.CANCELLED, { cancelledAt: new Date() });
+        return;
+      }
+    }
     const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
     if (!club) throw new Error('CineClub introuvable');
     if (!club.nasBaseUrl) throw new Error('NAS non configuré');
@@ -92,7 +111,10 @@ export class JobsProcessor extends WorkerHost {
 
     // 2. SSH seedbox + rsync
     await this.updateStatus(job, JobStatus.IN_PROGRESS);
-    const targetPath = `${targetDir.replace(/\/$/, '')}/${job.fileName}`;
+    const subDir = this.computeSubDir(job);
+    const baseDir = targetDir.replace(/\/$/, '');
+    const finalDir = subDir ? `${baseDir}/${subDir}` : baseDir;
+    const targetPath = `${finalDir}/${job.fileName}`;
     await this.prisma.job.update({ where: { id: job.id }, data: { targetPath } });
 
     const rsyncCmd = this.buildRsyncCommand({
@@ -100,8 +122,9 @@ export class JobsProcessor extends WorkerHost {
       nasUser: club.nasSshUser,
       nasHost: club.nasSshHost,
       nasPort: club.nasSshPort,
-      targetDir,
+      targetDir: finalDir,
       keyPath: club.seedboxToNasKeyPath ?? null,
+      ensureRemoteDir: !!subDir,
     });
     this.logger.log(`Job ${job.id} — rsync seedbox→NAS : ${rsyncCmd}`);
 
@@ -218,6 +241,12 @@ export class JobsProcessor extends WorkerHost {
     return false;
   }
 
+  private computeSubDir(job: JobRow): string | null {
+    if (job.tmdbType !== 'tv') return null;
+    if (!job.seriesTitle || job.seasonNumber == null) return null;
+    return `${sanitizeFolderName(job.seriesTitle)}/Season ${job.seasonNumber}`;
+  }
+
   private buildRsyncCommand(p: {
     sourcePath: string;
     nasUser: string;
@@ -225,6 +254,7 @@ export class JobsProcessor extends WorkerHost {
     nasPort: number;
     targetDir: string;
     keyPath: string | null;
+    ensureRemoteDir?: boolean;
   }): string {
     const verbose = process.env.SSH_VERBOSE === '1';
     const sshOpts: string[] = [];
@@ -235,16 +265,16 @@ export class JobsProcessor extends WorkerHost {
       sshOpts.push(`-o IdentityFile=${shellEscape(p.keyPath)}`, '-o IdentitiesOnly=yes');
     }
     const sshCmd = `ssh ${sshOpts.join(' ')}`;
-    const target = `${p.nasUser}@${p.nasHost}:${p.targetDir.replace(/\/$/, '')}/`;
-    return [
-      'rsync',
-      '-av',
-      '--partial',
-      '--info=progress2',
-      `-e ${shellEscape(sshCmd)}`,
-      shellEscape(p.sourcePath),
-      shellEscape(target),
-    ].join(' ');
+    const dir = p.targetDir.replace(/\/$/, '');
+    const target = `${p.nasUser}@${p.nasHost}:${dir}/`;
+    const parts = ['rsync', '-av', '--partial', '--info=progress2'];
+    if (p.ensureRemoteDir) {
+      // mkdir -p côté NAS avant rsync : --rsync-path est exécuté à la place du
+      // rsync distant et permet d'enchaîner un mkdir puis le vrai rsync.
+      parts.push(`--rsync-path=${shellEscape(`mkdir -p ${shellEscape(dir)} && rsync`)}`);
+    }
+    parts.push(`-e ${shellEscape(sshCmd)}`, shellEscape(p.sourcePath), shellEscape(target));
+    return parts.join(' ');
   }
 
   private async execSsh(p: {
@@ -313,15 +343,7 @@ export class JobsProcessor extends WorkerHost {
 
   private async registerInCatalog(job: JobRow, nasPath: string): Promise<void> {
     if (job.tmdbType === 'tv') {
-      // Pour les séries on s'appuie sur le diff sync NAS pour structure Season/Episode.
-      // Ici on touche juste la propriété nasPath de l'épisode si on a un mediaId+seasonNumber+episodeNumber.
-      // Sinon on laisse le prochain diffSync prendre le relais.
-      if (job.episodeId) {
-        await this.prisma.episode.update({
-          where: { id: job.episodeId },
-          data: { nasPath, nasFilename: nasPath.split('/').pop() ?? null, sourceType: SourceType.NAS, nasDeletedAt: null },
-        }).catch(() => null);
-      }
+      await this.registerTvInCatalog(job, nasPath);
       return;
     }
 
@@ -370,6 +392,72 @@ export class JobsProcessor extends WorkerHost {
     );
   }
 
+  private async registerTvInCatalog(job: JobRow, nasPath: string): Promise<void> {
+    if (!job.tmdbId || job.seasonNumber == null || job.episodeNumber == null) {
+      this.logger.warn(`Job ${job.id} TV : tmdbId/season/episode manquant — diffSync NAS prendra le relais`);
+      return;
+    }
+
+    let media = await this.prisma.media.findFirst({
+      where: { cineClubId: job.cineClubId, tmdbId: job.tmdbId, type: MediaType.SERIES },
+    });
+
+    if (!media) {
+      // Squelette série : diffSync NAS enrichira via TMDB (syncStatus=PENDING).
+      // nasPath sur Media est requis par le schéma : on utilise le chemin de
+      // l'épisode comme ancre (convention déjà appliquée par diffSync existant).
+      media = await this.prisma.media.create({
+        data: {
+          cineClubId: job.cineClubId,
+          type: MediaType.SERIES,
+          titleOriginal: job.seriesTitle ?? `tmdb:${job.tmdbId}`,
+          tmdbId: job.tmdbId,
+          nasPath,
+          nasFilename: nasPath.split('/').pop() ?? '',
+          nasSize: job.fileSize ?? null,
+          nasAddedAt: new Date(),
+          sourceType: SourceType.NAS,
+          syncStatus: SyncStatus.PENDING,
+        },
+      });
+      this.logger.log(`Media SERIES créé (id=${media.id}, tmdbId=${job.tmdbId}) — diffSync enrichira les métadonnées`);
+    }
+
+    const season = await this.prisma.season.upsert({
+      where: { mediaId_seasonNumber: { mediaId: media.id, seasonNumber: job.seasonNumber } },
+      update: {},
+      create: { mediaId: media.id, seasonNumber: job.seasonNumber },
+    });
+
+    await this.prisma.episode.upsert({
+      where: { seasonId_episodeNumber: { seasonId: season.id, episodeNumber: job.episodeNumber } },
+      update: {
+        nasPath,
+        nasFilename: nasPath.split('/').pop() ?? null,
+        nasSize: job.fileSize ?? null,
+        sourceType: SourceType.NAS,
+        nasDeletedAt: null,
+      },
+      create: {
+        seasonId: season.id,
+        episodeNumber: job.episodeNumber,
+        nasPath,
+        nasFilename: nasPath.split('/').pop() ?? null,
+        nasSize: job.fileSize ?? null,
+        sourceType: SourceType.NAS,
+      },
+    });
+
+    await this.prisma.media.update({
+      where: { id: media.id },
+      data: { nasAddedAt: new Date() },
+    });
+
+    await this.mediaService.populateJellyfinId(media, 'tv').catch((e) =>
+      this.logger.warn(`populateJellyfinId échoué pour Media ${media!.id}: ${e}`),
+    );
+  }
+
   private async updateStatus(
     job: JobRow,
     status: JobStatus,
@@ -406,4 +494,10 @@ function shellEscape(s: string): string {
   if (s === '') return "''";
   if (/^[a-zA-Z0-9_\-./@:=,]+$/.test(s)) return s;
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Nom de dossier safe pour ext4/btrfs : on remplace les caractères posant
+// problème (/, \, :, *, ?, ", <, >, |) par "-" et on trim les espaces.
+function sanitizeFolderName(name: string): string {
+  return name.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim() || 'unknown';
 }

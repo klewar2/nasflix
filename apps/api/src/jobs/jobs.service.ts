@@ -25,12 +25,29 @@ export class JobsService {
     fileSize?: number | bigint | null;
     tmdbId?: number | null;
     tmdbType?: 'movie' | 'tv';
+    seriesTitle?: string | null;
     seasonNumber?: number | null;
     episodeNumber?: number | null;
     mediaId?: number | null;
     episodeId?: number | null;
     triggeredBy?: string | null;
   }): Promise<JobRow> {
+    // Idempotence : Sonarr/Radarr peuvent envoyer plusieurs webhooks pour le
+    // même import (retry, On Upgrade après On Download…). Si un job non-terminal
+    // existe déjà pour ce sourcePath, on le renvoie tel quel.
+    const existing = await this.prisma.job.findFirst({
+      where: {
+        cineClubId: input.cineClubId,
+        kind: JobKind.DOWNLOAD_TO_NAS,
+        sourcePath: input.sourcePath,
+        status: { in: [JobStatus.PENDING, JobStatus.AWAITING_NAS, JobStatus.AWAITING_SEEDBOX, JobStatus.IN_PROGRESS] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) {
+      this.logger.log(`Job ${existing.id} déjà en cours pour ${input.sourcePath} — webhook dédoublonné`);
+      return existing;
+    }
     const job = await this.prisma.job.create({
       data: {
         cineClubId: input.cineClubId,
@@ -42,6 +59,7 @@ export class JobsService {
         fileSize: input.fileSize ? BigInt(input.fileSize) : null,
         tmdbId: input.tmdbId ?? null,
         tmdbType: input.tmdbType ?? null,
+        seriesTitle: input.seriesTitle ?? null,
         seasonNumber: input.seasonNumber ?? null,
         episodeNumber: input.episodeNumber ?? null,
         mediaId: input.mediaId ?? null,
@@ -220,10 +238,11 @@ export class JobsService {
       cineClubId,
       source: JobSource.SONARR,
       sourcePath: file.path,
-      fileName: file.relativePath ?? file.path.split('/').pop() ?? 'episode.mkv',
+      fileName: file.relativePath?.split('/').pop() ?? file.path.split('/').pop() ?? 'episode.mkv',
       fileSize: file.size ?? null,
       tmdbId: payload.series?.tmdbId ?? null,
       tmdbType: 'tv' as const,
+      seriesTitle: payload.series?.title ?? null,
       seasonNumber: firstEp?.seasonNumber ?? null,
       episodeNumber: firstEp?.episodeNumber ?? null,
     };
