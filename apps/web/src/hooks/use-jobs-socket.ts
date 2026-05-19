@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
+import type { JobProgressSocketEvent, JobSocketEvent } from '@nasflix/shared';
 
- 
-export type JobEvent = { cineClubId: number; job: any };
-export type JobProgressEvent = { cineClubId: number; jobId: number; percent: number };
+export type JobEvent = JobSocketEvent;
+export type JobProgressEvent = JobProgressSocketEvent;
 
 let socket: Socket | null = null;
 

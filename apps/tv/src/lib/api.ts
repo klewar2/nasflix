@@ -1,5 +1,12 @@
 import { tokens } from './tokens';
-import type { CineClubResponse, LoginResponse, UserResponse } from '@nasflix/shared';
+import type {
+  CineClubResponse,
+  LoginResponse,
+  MediaTracks,
+  NasSubtitleTrack,
+  StreamUrlResponse,
+  UserResponse,
+} from '@nasflix/shared';
 
 const BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -90,18 +97,7 @@ export function getMediaById(id: number): Promise<any> {
 
 // ── NAS ───────────────────────────────────────────────────────────────────
 
-export interface MediaTracks {
-  audio: { index: number; language: string; title: string; codec: string; channels: number }[];
-  subtitles: { index: number; language: string; title: string; codec: string; jellyfinIndex?: number }[];
-}
-
-export interface NasSubtitleTrack {
-  trackIdx: number;
-  language: string;
-  title: string;
-  codec: string;
-  vttContent: string;
-}
+export type { MediaTracks, NasSubtitleTrack };
 
 export function getNasStatus() {
   return request<{ online: boolean }>('/nas/status');
@@ -112,12 +108,12 @@ export function wakeNas() {
 }
 
 export async function getStreamUrl(mediaId: number, audioTrack = 1) {
-  const r = await request<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
+  const r = await request<StreamUrlResponse>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
   return { ...r, url: resolveApiUrl(r.url) };
 }
 
 export async function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
-  const r = await request<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
+  const r = await request<StreamUrlResponse>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
   return { ...r, url: resolveApiUrl(r.url) };
 }
 

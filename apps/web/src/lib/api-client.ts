@@ -1,4 +1,4 @@
-import type { PaginatedResponse, AuthTokens, HealthResponse, LoginResponse, UserResponse, CineClubResponse, CineClubMemberResponse } from '@nasflix/shared';
+import type { PaginatedResponse, AuthTokens, HealthResponse, JobKind, JobResponse, JobSource, JobStatus, LoginResponse, StreamMode, StreamUrlResponse, UserResponse, CineClubResponse, CineClubMemberResponse } from '@nasflix/shared';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -264,12 +264,12 @@ class ApiClient {
     return this.fetch<{ sent: boolean; message: string }>('/nas/wake', { method: 'POST' });
   }
 
-  getStreamUrl(mediaId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=${mode}&client=${detectClient()}`);
+  getStreamUrl(mediaId: number, mode: StreamMode = 'stream') {
+    return this.fetch<StreamUrlResponse>(`/nas/stream/${mediaId}?mode=${mode}&client=${detectClient()}`);
   }
 
-  getEpisodeStreamUrl(episodeId: number, mode: 'stream' | 'download' = 'stream') {
-    return this.fetch<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=${mode}&client=${detectClient()}`);
+  getEpisodeStreamUrl(episodeId: number, mode: StreamMode = 'stream') {
+    return this.fetch<StreamUrlResponse>(`/nas/stream/episode/${episodeId}?mode=${mode}&client=${detectClient()}`);
   }
 
   // Health
@@ -278,8 +278,9 @@ class ApiClient {
   }
 
   // Jobs (super admin)
-   
-  listJobs(params: { kind?: string; status?: string; source?: string; page?: number; limit?: number } = {}): Promise<{ items: any[]; total: number; page: number; limit: number }> {
+  listJobs(
+    params: { kind?: JobKind; status?: JobStatus; source?: JobSource; page?: number; limit?: number } = {},
+  ): Promise<{ items: JobResponse[]; total: number; page: number; limit: number }> {
     const qs = new URLSearchParams();
     if (params.kind) qs.set('kind', params.kind);
     if (params.status) qs.set('status', params.status);
@@ -287,20 +288,15 @@ class ApiClient {
     if (params.page) qs.set('page', String(params.page));
     if (params.limit) qs.set('limit', String(params.limit));
     const query = qs.toString();
-     
-    return this.fetch<{ items: any[]; total: number; page: number; limit: number }>(`/jobs${query ? `?${query}` : ''}`);
+    return this.fetch<{ items: JobResponse[]; total: number; page: number; limit: number }>(`/jobs${query ? `?${query}` : ''}`);
   }
 
-   
-  getJob(id: number): Promise<any> {
-     
-    return this.fetch<any>(`/jobs/${id}`);
+  getJob(id: number): Promise<JobResponse> {
+    return this.fetch<JobResponse>(`/jobs/${id}`);
   }
 
-   
-  listActiveJobs(): Promise<{ items: any[] }> {
-     
-    return this.fetch<{ items: any[] }>('/jobs/active');
+  listActiveJobs(): Promise<{ items: JobResponse[] }> {
+    return this.fetch<{ items: JobResponse[] }>('/jobs/active');
   }
 
   cancelJob(id: number) {
