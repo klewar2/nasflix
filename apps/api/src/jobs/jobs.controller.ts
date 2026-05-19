@@ -64,7 +64,7 @@ export class JobsController {
   async manualTransfer(@Req() req: { user: JwtPayload }, @Body() dto: ManualTransferDto) {
     const cineClubId = this.requireCineClub(req.user);
 
-    let sourcePath = dto.sourcePath ?? null;
+    const sourcePath = dto.sourcePath ?? null;
     let fileName: string | null = dto.fileName ?? null;
     let tmdbId = dto.tmdbId ?? null;
     let tmdbType = dto.tmdbType ?? null;

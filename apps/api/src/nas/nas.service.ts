@@ -43,7 +43,7 @@ function fetchInsecure(url: string, init: FetchInit = {}, timeoutMs = 10000): Pr
     req.end();
   });
 }
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+ 
 const ffmpegPath: string = require('ffmpeg-static');
 
 interface SynoResponse<T = unknown> {

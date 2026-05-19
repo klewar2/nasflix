@@ -40,7 +40,7 @@ export default function SeriesPage() {
     queryFn: () => api.getMedia({ type: 'SERIES', limit: 500 }),
   });
 
-  const series = data?.data ?? [];
+  const series = useMemo(() => data?.data ?? [], [data]);
 
   // Compute genres from loaded series
   const genres = useMemo(() => {
@@ -105,7 +105,7 @@ export default function SeriesPage() {
     );
     Object.values(sectionRefs.current).forEach((el) => { if (el) observer.observe(el); });
     return () => observer.disconnect();
-  }, [viewMode, sortedLetterKeys.join(',')]);
+  }, [viewMode, sortedLetterKeys]);
 
   const scrollToLetter = useCallback((letter: string) => {
     const el = sectionRefs.current[letter];

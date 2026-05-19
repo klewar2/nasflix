@@ -1,8 +1,6 @@
-import { Injectable, Logger, Inject, forwardRef, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { basename } from 'node:path';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../common/prisma.service';
 import { NasService } from '../nas/nas.service';
 import { MetadataService, TmdbSearchResult } from '../metadata/metadata.service';

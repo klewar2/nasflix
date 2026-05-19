@@ -5,12 +5,12 @@ import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useJobsSocket, type JobEvent } from '@/hooks/use-jobs-socket';
+import { useJobsSocket } from '@/hooks/use-jobs-socket';
 import { Loader2, RefreshCw, X } from 'lucide-react';
 
 type JobKind = 'DOWNLOAD_TO_NAS' | 'DELETE_FROM_SEEDBOX' | 'DELETE_FROM_JELLYFIN';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type Job = any;
 
 const TAB_LABELS: Record<JobKind, string> = {

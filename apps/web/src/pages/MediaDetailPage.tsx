@@ -375,7 +375,7 @@ export default function MediaDetailPage() {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function SourcesBlock({ media, onAction }: { media: any; onAction: () => void }) {
   const { user } = useAuth();
   const isSuperAdmin = !!user?.isSuperAdmin;

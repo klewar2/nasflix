@@ -10,9 +10,9 @@ import { Loader2, RefreshCw, Upload } from 'lucide-react';
 
 type Tab = 'radarr' | 'sonarr';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type RadarrItem = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type SonarrItem = any;
 
 export default function LibraryPage() {

@@ -11,7 +11,6 @@ import { useSyncSocket } from '@/hooks/use-sync-socket';
 export default function SyncPage() {
   const queryClient = useQueryClient();
   const { cineClub } = useAuth();
-  if (cineClub?.role !== 'ADMIN') return <Navigate to="/admin/dashboard" replace />;
   const { stats } = useSyncSocket();
   const isQueueActive = stats.active > 0 || stats.waiting > 0;
 
@@ -40,6 +39,8 @@ export default function SyncPage() {
       queryClient.invalidateQueries({ queryKey: ['unsync'] });
     },
   });
+
+  if (cineClub?.role !== 'ADMIN') return <Navigate to="/admin/dashboard" replace />;
 
   return (
     <div>

@@ -40,7 +40,7 @@ export default function FilmsPage() {
     queryFn: () => api.getMedia({ type: 'MOVIE', limit: 500 }),
   });
 
-  const films = data?.data ?? [];
+  const films = useMemo(() => data?.data ?? [], [data]);
 
   // Compute genres from loaded films
   const genres = useMemo(() => {
@@ -105,7 +105,7 @@ export default function FilmsPage() {
     );
     Object.values(sectionRefs.current).forEach((el) => { if (el) observer.observe(el); });
     return () => observer.disconnect();
-  }, [viewMode, sortedLetterKeys.join(',')]);
+  }, [viewMode, sortedLetterKeys]);
 
   const scrollToLetter = useCallback((letter: string) => {
     const el = sectionRefs.current[letter];

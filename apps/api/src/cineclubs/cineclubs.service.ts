@@ -31,7 +31,7 @@ export class CineClubsService {
   }
 
   /** Masque les secrets sensibles — jamais exposés côté API */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   private sanitize(club: any) {
     const {
       webhookSecret,
@@ -107,11 +107,11 @@ export class CineClubsService {
         (k === 'radarrApiKey' || k === 'sonarrApiKey' || k === 'seedboxSshPrivateKey' || k === 'seedboxSshPassphrase' || k === 'gmailAppPassword') &&
         typeof v === 'string'
       ) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         (patch as any)[k] = this.crypto.encrypt(v);
         continue;
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       (patch as any)[k] = v;
     }
     return this.sanitize(await this.prisma.cineClub.update({ where: { id }, data: patch }));

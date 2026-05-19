@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export type JobEvent = { cineClubId: number; job: any };
 export type JobProgressEvent = { cineClubId: number; jobId: number; percent: number };
 
