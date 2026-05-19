@@ -80,21 +80,6 @@ export class NasController {
     return `${payload}.${sig}`;
   }
 
-  /** Jeton court pour fileproxy TV : évite ?t=… > limite proxy (URL NAS avec path long). Résolution côté serveur + SID neuf. */
-  private signPassthroughFileToken(
-    durationSeconds: number,
-    ref: { mediaId?: number; episodeId?: number },
-    userId: number,
-    cineClubId: number,
-  ): string {
-    const exp = Math.floor(Date.now() / 1000) + 4 * 3600;
-    const payload = Buffer.from(
-      JSON.stringify({ ...ref, userId, cineClubId, duration: durationSeconds, exp }),
-    ).toString('base64url');
-    const sig = createHmac('sha256', this.tokenSecret).update(payload).digest('base64url');
-    return `${payload}.${sig}`;
-  }
-
   private verifyTranscodeToken(token: string): {
     url?: string;
     duration: number;
@@ -282,13 +267,12 @@ export class NasController {
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
     const clientType = clientQuery === 'tv' ? 'tv' : 'web';
 
-    // passthrough=1 : proxy FileStation direct pour NAS (SSL auto-signé), mais Jellyfin n'en a pas besoin
+    // passthrough=1 : lecture directe NAS (cert Let's Encrypt valide), évite l'égress Railway
     const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
     if (passthrough === '1' && sourceType !== 'SEEDBOX') {
       const duration = await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId);
-      const t = this.signPassthroughFileToken(duration, { episodeId }, req.user.sub, req.user.cineClubId);
-      this.logger.log(`[stream/episode] passthrough episodeId=${episodeId} token=compact`);
-      return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: duration };
+      this.logger.log(`[stream/episode] passthrough direct episodeId=${episodeId} nasHost=${new URL(nasUrl).host}`);
+      return { url: nasUrl, isHls: false, durationSeconds: duration };
     }
     this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
@@ -323,9 +307,8 @@ export class NasController {
     const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
     if (passthrough === '1' && sourceType !== 'SEEDBOX') {
       const media = await this.nasService.getMediaDuration(mediaId, req.user.cineClubId);
-      const t = this.signPassthroughFileToken(media, { mediaId }, req.user.sub, req.user.cineClubId);
-      this.logger.log(`[stream/media] passthrough mediaId=${mediaId} token=compact`);
-      return { url: `/nas/fileproxy?t=${t}`, isHls: false, durationSeconds: media };
+      this.logger.log(`[stream/media] passthrough direct mediaId=${mediaId} nasHost=${new URL(nasUrl).host}`);
+      return { url: nasUrl, isHls: false, durationSeconds: media };
     }
     this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
     if (mode === 'stream') {
