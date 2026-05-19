@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import type { MediaResponse } from '@nasflix/shared';
 import { api } from '@/lib/api-client';
 import { MediaCarousel } from '@/components/media/MediaCarousel';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -58,14 +59,14 @@ export default function HomePage() {
       {hdrMedia && hdrMedia.length > 0 && <MediaCarousel title="HDR & Dolby Vision" media={hdrMedia} />}
       {fhdMedia && fhdMedia.length > 0 && <MediaCarousel title="Full HD" media={fhdMedia} />}
 
-      {genres?.slice(0, 5).map((genre: any) => (
+      {genres?.slice(0, 5).map((genre) => (
         <GenreCarousel key={genre.id} genre={genre} />
       ))}
     </div>
   );
 }
 
-function HeroCarousel({ items }: { items: any[] }) {
+function HeroCarousel({ items }: { items: MediaResponse[] }) {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true }, [
     Autoplay({ delay: 6000, stopOnInteraction: true }),
   ]);

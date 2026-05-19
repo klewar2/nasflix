@@ -19,8 +19,8 @@ function getAlphaKey(title: string): string {
   return '#';
 }
 
-function groupByLetter(items: any[]): Record<string, any[]> {
-  const groups: Record<string, any[]> = {};
+function groupByLetter<T extends { titleVf: string | null; titleOriginal: string }>(items: T[]): Record<string, T[]> {
+  const groups: Record<string, T[]> = {};
   for (const item of items) {
     const key = getAlphaKey(item.titleVf || item.titleOriginal || '');
     if (!groups[key]) groups[key] = [];
@@ -48,11 +48,9 @@ export default function SeriesPage() {
     const result: { id: number; name: string }[] = [];
     for (const m of series) {
       for (const g of m.genres ?? []) {
-        const id = g.genre?.id ?? g.genreId;
-        const name = g.genre?.name ?? g.name;
-        if (id && name && !seen.has(id)) {
-          seen.add(id);
-          result.push({ id, name });
+        if (!seen.has(g.genre.id)) {
+          seen.add(g.genre.id);
+          result.push({ id: g.genre.id, name: g.genre.name });
         }
       }
     }
@@ -62,11 +60,7 @@ export default function SeriesPage() {
   // Apply genre filter
   const filteredSeries = useMemo(() => {
     if (activeGenreId === null) return series;
-    return series.filter((m: any) =>
-      (m.genres ?? []).some(
-        (g: any) => (g.genre?.id ?? g.genreId) === activeGenreId,
-      ),
-    );
+    return series.filter((m) => (m.genres ?? []).some((g) => g.genre.id === activeGenreId));
   }, [series, activeGenreId]);
 
   const sortedSeries = useMemo(
@@ -210,7 +204,7 @@ export default function SeriesPage() {
           <p className="text-zinc-600 text-sm py-12 text-center">Aucune série dans cette catégorie.</p>
         ) : viewMode === 'recent' ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-            {filteredSeries.map((m: any) => (
+            {filteredSeries.map((m) => (
               <MediaCard key={m.id} media={m} />
             ))}
           </div>
@@ -238,7 +232,7 @@ export default function SeriesPage() {
                   <span className="text-xs text-zinc-600 font-medium tabular-nums">{groups[letter].length}</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-3">
-                  {groups[letter].map((m: any) => (
+                  {groups[letter].map((m) => (
                     <MediaCard key={m.id} media={m} />
                   ))}
                 </div>

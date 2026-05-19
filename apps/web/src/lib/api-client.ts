@@ -1,4 +1,4 @@
-import type { PaginatedResponse, AuthTokens, HealthResponse, JobKind, JobResponse, JobSource, JobStatus, LoginResponse, StreamMode, StreamUrlResponse, UserResponse, CineClubResponse, CineClubMemberResponse } from '@nasflix/shared';
+import type { PaginatedResponse, AuthTokens, GenreResponse, HealthResponse, JobKind, JobResponse, JobSource, JobStatus, LoginResponse, MediaDetailResponse, MediaResponse, MediaType, RadarrLibraryItem, SonarrLibraryItem, StreamMode, StreamUrlResponse, SyncLogResponse, SyncStatus, UserResponse, CineClubResponse, CineClubMemberResponse } from '@nasflix/shared';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -178,68 +178,57 @@ class ApiClient {
   }
 
   // Media
-   
-  getMedia(params?: { type?: string; genreId?: number; year?: number; page?: number; limit?: number }): Promise<PaginatedResponse<any>> {
+  getMedia(params?: { type?: MediaType; genreId?: number; year?: number; page?: number; limit?: number }) {
     const search = new URLSearchParams();
     if (params) Object.entries(params).forEach(([k, v]) => { if (v !== undefined) search.set(k, String(v)); });
-    return this.fetch<PaginatedResponse<any>>(`/media?${search}`);
+    return this.fetch<PaginatedResponse<MediaResponse>>(`/media?${search}`);
   }
 
-   
-  getMediaById(id: number): Promise<any> {
-    return this.fetch<any>(`/media/${id}`);
+  getMediaById(id: number) {
+    return this.fetch<MediaDetailResponse>(`/media/${id}`);
   }
 
-   
-  searchMedia(query: string, page = 1): Promise<PaginatedResponse<any>> {
-    return this.fetch<PaginatedResponse<any>>(`/media/search?q=${encodeURIComponent(query)}&page=${page}`);
+  searchMedia(query: string, page = 1) {
+    return this.fetch<PaginatedResponse<MediaResponse>>(`/media/search?q=${encodeURIComponent(query)}&page=${page}`);
   }
 
-   
-  getRecentMedia(limit = 20): Promise<any[]> {
-    return this.fetch<any[]>(`/media/recent?limit=${limit}`);
+  getRecentMedia(limit = 20) {
+    return this.fetch<MediaResponse[]>(`/media/recent?limit=${limit}`);
   }
 
-   
-  getMediaByQuality(quality: 'UHD' | 'HDR' | 'FHD', limit = 20): Promise<any[]> {
-    return this.fetch<any[]>(`/media/quality/${quality}?limit=${limit}`);
+  getMediaByQuality(quality: 'UHD' | 'HDR' | 'FHD', limit = 20) {
+    return this.fetch<MediaResponse[]>(`/media/quality/${quality}?limit=${limit}`);
   }
 
-   
-  getAdminMedia(params?: { type?: string; status?: string; title?: string; videoQuality?: string; dolbyAtmos?: string; dolbyVision?: string; hdr?: string; sortBy?: string; sortOrder?: string; page?: number; limit?: number }): Promise<any> {
+  getAdminMedia(params?: { type?: MediaType; status?: SyncStatus; title?: string; videoQuality?: string; dolbyAtmos?: string; dolbyVision?: string; hdr?: string; sortBy?: string; sortOrder?: string; page?: number; limit?: number }) {
     const search = new URLSearchParams();
     if (params) Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') search.set(k, String(v)); });
-    return this.fetch<any>(`/media/admin/list?${search}`);
+    return this.fetch<PaginatedResponse<MediaResponse>>(`/media/admin/list?${search}`);
   }
 
   deleteMedia(id: number) {
     return this.fetch<void>(`/media/${id}`, { method: 'DELETE' });
   }
 
-   
-  updateMedia(id: number, data: any): Promise<any> {
-    return this.fetch<any>(`/media/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  updateMedia(id: number, data: Partial<Pick<MediaResponse, 'titleVf' | 'titleOriginal' | 'overview' | 'tmdbId' | 'releaseYear' | 'syncStatus' | 'type'>> & { syncError?: string | null }) {
+    return this.fetch<MediaResponse>(`/media/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
-   
-  getGenres(): Promise<any[]> {
-    return this.fetch<any[]>('/media/genres');
+  getGenres() {
+    return this.fetch<GenreResponse[]>('/media/genres');
   }
 
-   
-  getUnsynchronizedMedia(page = 1): Promise<PaginatedResponse<any>> {
-    return this.fetch<PaginatedResponse<any>>(`/media/unsynchronized?page=${page}`);
+  getUnsynchronizedMedia(page = 1) {
+    return this.fetch<PaginatedResponse<MediaResponse>>(`/media/unsynchronized?page=${page}`);
   }
 
   // Sync
-   
-  triggerFullSync(): Promise<any> {
-    return this.fetch<any>('/sync/full', { method: 'POST' });
+  triggerFullSync() {
+    return this.fetch<{ queued: number }>('/sync/full', { method: 'POST' });
   }
 
-   
-  syncSingleMedia(id: number): Promise<any> {
-    return this.fetch<any>(`/sync/media/${id}`, { method: 'POST' });
+  syncSingleMedia(id: number) {
+    return this.fetch<{ id: number; queued: boolean }>(`/sync/media/${id}`, { method: 'POST' });
   }
 
   enqueuePendingSync() {
@@ -250,9 +239,8 @@ class ApiClient {
     return this.fetch<{ cleaned: number }>('/sync/drain', { method: 'POST' });
   }
 
-   
-  getSyncLogs(page = 1): Promise<PaginatedResponse<any>> {
-    return this.fetch<PaginatedResponse<any>>(`/sync/logs?page=${page}`);
+  getSyncLogs(page = 1) {
+    return this.fetch<PaginatedResponse<SyncLogResponse>>(`/sync/logs?page=${page}`);
   }
 
   // NAS
@@ -322,16 +310,12 @@ class ApiClient {
     return this.fetch<{ jobId: number }>(`/jobs/delete-jellyfin/${mediaId}`, { method: 'POST' });
   }
 
-   
-  getRadarrLibrary(): Promise<{ items: any[] }> {
-     
-    return this.fetch<{ items: any[] }>('/jobs/library/radarr');
+  getRadarrLibrary() {
+    return this.fetch<{ items: RadarrLibraryItem[] }>('/jobs/library/radarr');
   }
 
-   
-  getSonarrLibrary(): Promise<{ items: any[] }> {
-     
-    return this.fetch<{ items: any[] }>('/jobs/library/sonarr');
+  getSonarrLibrary() {
+    return this.fetch<{ items: SonarrLibraryItem[] }>('/jobs/library/sonarr');
   }
 }
 

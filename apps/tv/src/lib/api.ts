@@ -2,8 +2,11 @@ import { tokens } from './tokens';
 import type {
   CineClubResponse,
   LoginResponse,
+  MediaDetailResponse,
+  MediaResponse,
   MediaTracks,
   NasSubtitleTrack,
+  PaginatedResponse,
   StreamUrlResponse,
   UserResponse,
 } from '@nasflix/shared';
@@ -78,21 +81,17 @@ export function selectCineClub(id: number) {
 
 // ── Media ─────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getMedia(params: Record<string, string | number> = {}): Promise<{ data: any[]; total: number }> {
+export function getMedia(params: Record<string, string | number> = {}) {
   const q = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return request<any>(`/media?${q}`);
+  return request<PaginatedResponse<MediaResponse>>(`/media?${q}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getRecentMedia(limit = 20): Promise<any[]> {
-  return request(`/media/recent?limit=${limit}`);
+export function getRecentMedia(limit = 20) {
+  return request<MediaResponse[]>(`/media/recent?limit=${limit}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getMediaById(id: number): Promise<any> {
-  return request(`/media/${id}`);
+export function getMediaById(id: number) {
+  return request<MediaDetailResponse>(`/media/${id}`);
 }
 
 // ── NAS ───────────────────────────────────────────────────────────────────

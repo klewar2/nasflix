@@ -45,12 +45,11 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const episodes: any[] = seasonGroups[activeSeasonIdx]?.episodes ?? [];
 
-  const title = media ? (media.titleVf || media.title || media.titleOriginal || '') : '';
-  const backdropUrl = media?.backdropUrl || (media?.backdropPath ? `https://image.tmdb.org/t/p/w1280${media.backdropPath}` : null);
-  const posterUrl = media?.posterUrl || (media?.posterPath ? `https://image.tmdb.org/t/p/w500${media.posterPath}` : null);
-  const year = media?.releaseYear || (media?.releaseDate ? new Date(media.releaseDate).getFullYear() : null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const genreNames = (media?.genres || []).slice(0, 3).map((g: any) => g?.genre?.name || g?.name).filter(Boolean);
+  const title = media ? (media.titleVf || media.titleOriginal || '') : '';
+  const backdropUrl = media?.backdropUrl ?? null;
+  const posterUrl = media?.posterUrl ?? null;
+  const year = media?.releaseYear ?? null;
+  const genreNames = (media?.genres ?? []).slice(0, 3).map((g) => g.genre.name);
 
   const movieProgressPct = mediaType === 'movie' ? watchProgress.pct(mediaId) : 0;
 
@@ -90,7 +89,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
     } else if (e.keyCode === KEY.OK) {
       e.preventDefault();
       if (focused === 'back') navigate({ name: 'home' });
-      else if (focused === 'play' && mediaType === 'movie') navigate({ name: 'player', mediaId, title, videoQuality: media?.videoQuality, hdr: media?.hdr });
+      else if (focused === 'play' && mediaType === 'movie') navigate({ name: 'player', mediaId, title, videoQuality: media?.videoQuality ?? undefined, hdr: media?.hdr });
       else if (focused === 'play' && hasTabs) setFocused({ zone: 'tab', idx: activeSeasonIdx });
       else if (typeof focused === 'object' && focused.zone === 'tab') {
         if (episodes.length > 0) setFocused({ zone: 'episode', idx: 0 });
@@ -100,7 +99,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
           name: 'player', mediaId, episodeId: ep.id,
           title: `${title} · S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
           seriesTitle: title,
-          videoQuality: media?.videoQuality, hdr: media?.hdr,
+          videoQuality: media?.videoQuality ?? undefined, hdr: media?.hdr,
         });
       }
     } else if (e.keyCode === KEY.LEFT) {
@@ -215,11 +214,11 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
 
           {/* Meta chips */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-            {media.voteAverage > 0 && (
+            {media.voteAverage != null && media.voteAverage > 0 && (
               <span className="chip gold">★ {media.voteAverage.toFixed(1)}</span>
             )}
             {year && <span className="chip">{year}</span>}
-            {media.runtime > 0 && <span className="chip">{media.runtime} min</span>}
+            {media.runtime != null && media.runtime > 0 && <span className="chip">{media.runtime} min</span>}
             {isSeries && seasonGroups.length > 0 && (
               <span className="chip">{seasonGroups.length} saison{seasonGroups.length !== 1 ? 's' : ''}</span>
             )}
@@ -244,28 +243,26 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
           )}
 
           {/* Director/cast if available */}
-          {(media.director || (media.cast && media.cast.length > 0)) && (
-            <div style={{ marginBottom: '1rem', display: 'flex', gap: '1.5rem' }}>
-              {media.director && (
-                <div>
-                  <div className="uppercase-eyebrow" style={{ marginBottom: '0.2rem' }}>Réalisateur</div>
-                  <div style={{ fontSize: '0.4rem', color: 'var(--text)' }}>{media.director}</div>
-                </div>
-              )}
-              {media.cast && media.cast.length > 0 && (
-                <div>
-                  <div className="uppercase-eyebrow" style={{ marginBottom: '0.2rem' }}>Avec</div>
-                  <div style={{ fontSize: '0.4rem', color: 'var(--text)' }}>
-                    {(media.cast as Array<{ person?: { name: string }; name?: string }>)
-                      .slice(0, 3)
-                      .map((c) => c.person?.name ?? c.name ?? '')
-                      .filter(Boolean)
-                      .join(', ')}
+          {media.cast && media.cast.length > 0 && (() => {
+            const director = media.cast.find((c) => c.role === 'director')?.person.name;
+            const actors = media.cast.filter((c) => c.role === 'actor').slice(0, 3).map((c) => c.person.name);
+            return (
+              <div style={{ marginBottom: '1rem', display: 'flex', gap: '1.5rem' }}>
+                {director && (
+                  <div>
+                    <div className="uppercase-eyebrow" style={{ marginBottom: '0.2rem' }}>Réalisateur</div>
+                    <div style={{ fontSize: '0.4rem', color: 'var(--text)' }}>{director}</div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+                {actors.length > 0 && (
+                  <div>
+                    <div className="uppercase-eyebrow" style={{ marginBottom: '0.2rem' }}>Avec</div>
+                    <div style={{ fontSize: '0.4rem', color: 'var(--text)' }}>{actors.join(', ')}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Action buttons */}
           <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
@@ -274,7 +271,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
               data-focused={focused === 'play'}
               onFocus={() => setFocused('play')}
               onClick={() => {
-                if (mediaType === 'movie') navigate({ name: 'player', mediaId, title, videoQuality: media?.videoQuality, hdr: media?.hdr });
+                if (mediaType === 'movie') navigate({ name: 'player', mediaId, title, videoQuality: media?.videoQuality ?? undefined, hdr: media?.hdr });
                 else if (hasTabs) setFocused({ zone: 'tab', idx: activeSeasonIdx });
               }}
               style={{
@@ -400,7 +397,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
                         name: 'player', mediaId, episodeId: ep.id,
                         title: `${title} · S${String(ep.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')}`,
                         seriesTitle: title,
-                        videoQuality: media?.videoQuality, hdr: media?.hdr,
+                        videoQuality: media?.videoQuality ?? undefined, hdr: media?.hdr,
                       })}
                       style={{
                         width: '320px', flexShrink: 0,
