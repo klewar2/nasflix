@@ -37,7 +37,7 @@ export default function SearchPage() {
 
       {data && data.data.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-          {data.data.map((m: any) => <MediaCard key={m.id} media={m} />)}
+          {data.data.map((m) => <MediaCard key={m.id} media={m} />)}
         </div>
       )}
 

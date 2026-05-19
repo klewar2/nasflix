@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useSyncSocket } from '@/hooks/use-sync-socket';
+import type { MediaType, SyncStatus } from '@nasflix/shared';
 import { Trash2, RefreshCw, Search, RefreshCcw, ChevronUp, ChevronDown, Square, Wifi, WifiOff } from 'lucide-react';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -114,8 +115,8 @@ export default function MediaListPage() {
     queryKey: ['admin', 'media', debouncedSearch, typeFilter, statusFilter, videoQualityFilter, audioFilter, sortBy, sortOrder, page],
     queryFn: () => api.getAdminMedia({
       title: debouncedSearch || undefined,
-      type: typeFilter || undefined,
-      status: statusFilter || undefined,
+      type: (typeFilter || undefined) as MediaType | undefined,
+      status: (statusFilter || undefined) as SyncStatus | undefined,
       videoQuality: videoQualityFilter || undefined,
       dolbyAtmos,
       dolbyVision,

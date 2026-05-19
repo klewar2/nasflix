@@ -347,7 +347,7 @@ export default function MediaEditPage() {
           </Card>
 
           {/* Seasons & Episodes */}
-          {isSeries && media.seasons?.length > 0 && (
+          {isSeries && media.seasons && media.seasons.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -356,7 +356,7 @@ export default function MediaEditPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {media.seasons.map((season: any) => (
+                {media.seasons.map((season) => (
                   <SeasonSection key={season.id} season={season} />
                 ))}
               </CardContent>
@@ -374,11 +374,11 @@ export default function MediaEditPage() {
           </Button>
 
           {/* Season progress bars */}
-          {isSeries && media.seasons?.length > 0 && (
+          {isSeries && media.seasons && media.seasons.length > 0 && (
             <div className="text-xs text-zinc-500 space-y-2 p-3 bg-zinc-900 rounded-lg">
               <p className="font-medium text-zinc-400 mb-2">Progression NAS</p>
-              {media.seasons.map((s: any) => {
-                const onNas = s.episodes?.filter((e: any) => e.nasPath).length ?? 0;
+              {media.seasons.map((s) => {
+                const onNas = s.episodes?.filter((e) => e.nasPath).length ?? 0;
                 const total = s.episodes?.length ?? s.episodeCount ?? 0;
                 const pct = total > 0 ? Math.round((onNas / total) * 100) : 0;
                 return (

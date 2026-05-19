@@ -37,8 +37,7 @@ function JellyfinStatusBadge() {
   if (!cineClub?.jellyfinApiTokenSet) return null;
 
   // Find the most recent completed jellyfin_sync entry
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lastSync = logsData?.data?.find((l: any) => l.type === 'jellyfin_sync' && l.status === 'completed');
+  const lastSync = logsData?.data?.find((l) => l.type === 'jellyfin_sync' && l.status === 'completed');
   const lastSyncTime = lastSync?.completedAt
     ? new Date(lastSync.completedAt).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : null;

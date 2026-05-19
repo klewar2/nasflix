@@ -202,10 +202,10 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
         mediaId: entry.mediaId,
         episodeId: entry.episodeId,
         pct: watchProgress.pct(entry.mediaId, entry.episodeId),
-        title: (data.titleVf || data.title || data.titleOriginal || 'Inconnu') as string,
-        posterUrl: (data.posterUrl || (data.posterPath ? `https://image.tmdb.org/t/p/w300${data.posterPath}` : undefined)) as string | undefined,
-        backdropUrl: (data.backdropUrl || (data.backdropPath ? `https://image.tmdb.org/t/p/w1280${data.backdropPath}` : undefined)) as string | undefined,
-        type: (data.type === 'SERIES' || data.type === 'series' ? 'series' : 'movie') as 'movie' | 'series',
+        title: data.titleVf || data.titleOriginal || 'Inconnu',
+        posterUrl: data.posterUrl ?? undefined,
+        backdropUrl: data.backdropUrl ?? undefined,
+        type: (data.type === 'SERIES' ? 'series' : 'movie') as 'movie' | 'series',
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);

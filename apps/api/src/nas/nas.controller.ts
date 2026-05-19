@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { basename } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Request, Response } from 'express';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+ 
 const ffmpegPath: string = require('ffmpeg-static');
 import { NasService } from './nas.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -12,6 +12,11 @@ import { Roles } from '../auth/guards/roles.decorator';
 import { Public } from '../auth/guards/public.decorator';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { MemberRole } from '@prisma/client';
+import {
+  SaveFreeboxTokenDto,
+  StartFreeboxAuthorizationDto,
+  SaveJellyfinConfigDto,
+} from './dto/freebox.dto';
 
 @Controller('nas')
 @UseGuards(RolesGuard)
@@ -147,10 +152,10 @@ export class NasController {
   @Roles(MemberRole.ADMIN)
   async saveFreeboxToken(
     @Req() req: { user: JwtPayload },
-    @Body() body: { freeboxApiUrl: string; appToken: string },
+    @Body() dto: SaveFreeboxTokenDto,
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    await this.nasService.saveFreeboxConfig(req.user.cineClubId, body.freeboxApiUrl, body.appToken);
+    await this.nasService.saveFreeboxConfig(req.user.cineClubId, dto.freeboxApiUrl, dto.appToken);
     return { saved: true };
   }
 
@@ -158,10 +163,10 @@ export class NasController {
   @Roles(MemberRole.ADMIN)
   async startFreeboxAuthorization(
     @Req() req: { user: JwtPayload },
-    @Body() body: { freeboxApiUrl: string },
+    @Body() dto: StartFreeboxAuthorizationDto,
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const result = await this.nasService.startFreeboxAuthorization(req.user.cineClubId, body.freeboxApiUrl);
+    const result = await this.nasService.startFreeboxAuthorization(req.user.cineClubId, dto.freeboxApiUrl);
     return { trackId: result.trackId, message: 'Appuyez sur OK sur l\'écran de la Freebox pour autoriser Nasflix' };
   }
 
@@ -197,10 +202,10 @@ export class NasController {
   @Roles(MemberRole.ADMIN)
   async saveJellyfinConfig(
     @Req() req: { user: JwtPayload },
-    @Body() body: { jellyfinBaseUrl: string; jellyfinApiToken: string },
+    @Body() dto: SaveJellyfinConfigDto,
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    await this.nasService.saveJellyfinConfig(req.user.cineClubId, body.jellyfinBaseUrl, body.jellyfinApiToken);
+    await this.nasService.saveJellyfinConfig(req.user.cineClubId, dto.jellyfinBaseUrl, dto.jellyfinApiToken);
     return { saved: true };
   }
 
@@ -254,6 +259,40 @@ export class NasController {
 
   // ── Stream URLs ────────────────────────────────────────────────────────────
 
+  /**
+   * Construit la réponse stream-url commune aux endpoints media/episode.
+   * - passthrough=1 (TV, source NAS) → URL FileStation directe (pas d'égress Railway)
+   * - HLS Jellyfin + web → proxy via /nas/jellyfin-stream (CORS/SSL)
+   * - HLS direct (TV) ou source SEEDBOX → URL telle quelle
+   * - sinon stream NAS → /nas/transcode FFmpeg
+   * - download → /nas/fileproxy?download=1 (pour Content-Disposition)
+   */
+  private buildStreamResponse(
+    info: { nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string },
+    ctx: { mode: 'stream' | 'download'; clientType: 'web' | 'tv'; passthrough: boolean; refLabel: string; passthroughDuration: number },
+  ) {
+    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = info;
+    const { mode, clientType, passthrough, refLabel, passthroughDuration } = ctx;
+
+    if (passthrough && sourceType !== 'SEEDBOX') {
+      this.logger.log(`[stream] passthrough direct ${refLabel} nasHost=${new URL(nasUrl).host}`);
+      return { url: nasUrl, isHls: false, durationSeconds: passthroughDuration };
+    }
+    this.logger.log(`[stream] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} ${refLabel} nasUrl=${nasUrl.slice(0, 80)}`);
+
+    if (mode === 'stream') {
+      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken && clientType === 'web') {
+        const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
+        return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+      }
+      if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+      if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
+      return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
+    }
+    if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds };
+    return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
+  }
+
   @Get('stream/episode/:episodeId')
   async getEpisodeStreamUrl(
     @Param('episodeId', ParseIntPipe) episodeId: number,
@@ -266,29 +305,13 @@ export class NasController {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
     const clientType = clientQuery === 'tv' ? 'tv' : 'web';
+    const isPassthrough = passthrough === '1';
 
-    // passthrough=1 : lecture directe NAS (cert Let's Encrypt valide), évite l'égress Railway
-    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
-    if (passthrough === '1' && sourceType !== 'SEEDBOX') {
-      const duration = await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId);
-      this.logger.log(`[stream/episode] passthrough direct episodeId=${episodeId} nasHost=${new URL(nasUrl).host}`);
-      return { url: nasUrl, isHls: false, durationSeconds: duration };
-    }
-    this.logger.log(`[stream/episode] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} episodeId=${episodeId} nasUrl=${nasUrl.slice(0, 80)}`);
-    if (mode === 'stream') {
-      // Proxy HLS Jellyfin uniquement pour le web (CORS/SSL). La TV se connecte directement
-      // afin d'éviter que les segments 4K transitent par le backend (bottleneck bande passante).
-      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken && clientType === 'web') {
-        const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
-        return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
-      }
-      if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
-      if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
-      return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
-    }
-    // download
-    if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds };
-    return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
+    const info = await this.nasService.getEpisodeStreamUrl(episodeId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
+    const passthroughDuration = isPassthrough && info.sourceType !== 'SEEDBOX'
+      ? await this.nasService.getEpisodeDuration(episodeId, req.user.cineClubId)
+      : info.durationSeconds;
+    return this.buildStreamResponse(info, { mode, clientType, passthrough: isPassthrough, refLabel: `episodeId=${episodeId}`, passthroughDuration });
   }
 
   @Get('stream/:mediaId')
@@ -303,27 +326,13 @@ export class NasController {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     const audioTrack = Math.max(1, parseInt(audioTrackQuery) || 1);
     const clientType = clientQuery === 'tv' ? 'tv' : 'web';
+    const isPassthrough = passthrough === '1';
 
-    const { nasUrl, durationSeconds, isHls, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken } = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
-    if (passthrough === '1' && sourceType !== 'SEEDBOX') {
-      const media = await this.nasService.getMediaDuration(mediaId, req.user.cineClubId);
-      this.logger.log(`[stream/media] passthrough direct mediaId=${mediaId} nasHost=${new URL(nasUrl).host}`);
-      return { url: nasUrl, isHls: false, durationSeconds: media };
-    }
-    this.logger.log(`[stream/media] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} mediaId=${mediaId} nasUrl=${nasUrl.slice(0, 80)}`);
-    if (mode === 'stream') {
-      // Proxy HLS Jellyfin uniquement pour le web. TV → connexion directe à Jellyfin.
-      if (isHls && sourceType === 'SEEDBOX' && jellyfinBaseUrl && jellyfinApiToken && clientType === 'web') {
-        const t = this.signJellyfinProxyToken(nasUrl, jellyfinBaseUrl, jellyfinApiToken, durationSeconds);
-        return { url: `/nas/jellyfin-stream?t=${t}`, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
-      }
-      if (isHls) return { url: nasUrl, isHls: true, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
-      if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken };
-      return { url: `/nas/transcode?t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
-    }
-    // download
-    if (sourceType === 'SEEDBOX') return { url: nasUrl, isHls: false, durationSeconds };
-    return { url: `/nas/fileproxy?download=1&t=${this.signTranscodeToken(nasUrl, durationSeconds)}`, isHls: false, durationSeconds };
+    const info = await this.nasService.getStreamUrl(mediaId, req.user.sub, req.user.cineClubId, mode, audioTrack, clientType);
+    const passthroughDuration = isPassthrough && info.sourceType !== 'SEEDBOX'
+      ? await this.nasService.getMediaDuration(mediaId, req.user.cineClubId)
+      : info.durationSeconds;
+    return this.buildStreamResponse(info, { mode, clientType, passthrough: isPassthrough, refLabel: `mediaId=${mediaId}`, passthroughDuration });
   }
 
   // ── Jellyfin HLS proxy (CORS + cert bypass for TV) ───────────────────────

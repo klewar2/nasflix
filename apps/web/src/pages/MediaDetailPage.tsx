@@ -8,9 +8,10 @@ import { ArrowLeft, Copy, Download, ExternalLink, HardDrive, Loader2, Pencil, Tr
 import { useState } from 'react';
 import { NasBadge } from '@/components/badges/NasBadge';
 import { JellyfinBadge } from '@/components/badges/JellyfinBadge';
+import type { EpisodeResponse, MediaDetailResponse } from '@nasflix/shared';
 
 type SeasonsSectionProps = {
-  media: any;
+  media: MediaDetailResponse;
   mediaTitle: string;
   isMember: boolean;
   nasOnline: boolean;
@@ -18,16 +19,16 @@ type SeasonsSectionProps = {
   handleDownload: (fetchUrl: () => Promise<{ url: string }>, filename: string, key: string) => void;
 };
 
-const isEpOnNas = (ep: any) => !!ep.nasPath && !ep.nasDeletedAt;
-const isEpAvailable = (ep: any) => isEpOnNas(ep) || !!ep.jellyfinItemId;
+const isEpOnNas = (ep: EpisodeResponse) => !!ep.nasPath && !ep.nasDeletedAt;
+const isEpAvailable = (ep: EpisodeResponse) => isEpOnNas(ep) || !!ep.jellyfinItemId;
 
 function SeasonsSection({ media, mediaTitle, isMember, nasOnline, loadingId, handleDownload }: SeasonsSectionProps) {
   // Sort seasons descending, keep only seasons that have at least one available episode
-  const sortedSeasons = [...media.seasons]
-    .sort((a: any, b: any) => b.seasonNumber - a.seasonNumber)
-    .filter((s: any) => s.episodes?.some(isEpAvailable));
+  const sortedSeasons = [...(media.seasons ?? [])]
+    .sort((a, b) => b.seasonNumber - a.seasonNumber)
+    .filter((s) => s.episodes?.some(isEpAvailable));
   const [activeSeasonId, setActiveSeasonId] = useState<number>(sortedSeasons[0]?.id);
-  const activeSeason = sortedSeasons.find((s: any) => s.id === activeSeasonId) ?? sortedSeasons[0];
+  const activeSeason = sortedSeasons.find((s) => s.id === activeSeasonId) ?? sortedSeasons[0];
 
   if (!activeSeason) return null;
 
@@ -36,7 +37,7 @@ function SeasonsSection({ media, mediaTitle, isMember, nasOnline, loadingId, han
       <h2 className="text-xl font-bold mb-4">Saisons</h2>
 
       <div className="flex gap-2 overflow-x-auto pb-2 mb-4 border-b border-zinc-800 scrollbar-thin">
-        {sortedSeasons.map((s: any) => {
+        {sortedSeasons.map((s) => {
           const count = s.episodes?.filter(isEpAvailable).length ?? 0;
           const isActive = s.id === activeSeason.id;
           return (
@@ -63,7 +64,7 @@ function SeasonsSection({ media, mediaTitle, isMember, nasOnline, loadingId, han
       <div className="p-4 bg-zinc-900 rounded-lg border border-zinc-800">
         <div className="flex items-center gap-4 mb-4">
           {activeSeason.posterUrl && (
-            <img src={activeSeason.posterUrl} alt={activeSeason.name} className="w-16 rounded flex-shrink-0" />
+            <img src={activeSeason.posterUrl} alt={activeSeason.name ?? undefined} className="w-16 rounded flex-shrink-0" />
           )}
           <div className="flex-1">
             <h3 className="font-semibold">Saison {activeSeason.seasonNumber}</h3>
@@ -83,8 +84,8 @@ function SeasonsSection({ media, mediaTitle, isMember, nasOnline, loadingId, han
           <div className="space-y-1">
             {[...activeSeason.episodes]
               .filter(isEpAvailable)
-              .sort((a: any, b: any) => a.episodeNumber - b.episodeNumber)
-              .map((ep: any) => {
+              .sort((a, b) => a.episodeNumber - b.episodeNumber)
+              .map((ep) => {
                 const epKey = `ep-${ep.id}`;
                 const epTitle = `${mediaTitle} — S${String(activeSeason.seasonNumber).padStart(2, '0')}E${String(ep.episodeNumber).padStart(2, '0')} ${ep.name ? `— ${ep.name}` : ''}`;
                 const epOnNas = isEpOnNas(ep);
@@ -197,8 +198,8 @@ export default function MediaDetailPage() {
     );
   }
 
-  const directors = media.cast?.filter((c: any) => c.role === 'director') || [];
-  const actors = media.cast?.filter((c: any) => c.role === 'actor') || [];
+  const directors = media.cast?.filter((c) => c.role === 'director') || [];
+  const actors = media.cast?.filter((c) => c.role === 'actor') || [];
   const mediaTitle = media.titleVf || media.titleOriginal;
 
   return (
@@ -261,8 +262,8 @@ export default function MediaDetailPage() {
               </div>
 
               <div className="flex gap-2 flex-wrap mb-4">
-                {media.genres?.map((g: any) => (
-                  <Badge key={g.genre?.id || g.genreId} variant="outline">{g.genre?.name || g.name}</Badge>
+                {media.genres?.map((g) => (
+                  <Badge key={g.genre.id} variant="outline">{g.genre.name}</Badge>
                 ))}
               </div>
 
@@ -271,7 +272,7 @@ export default function MediaDetailPage() {
               {directors.length > 0 && (
                 <p className="text-sm mb-4">
                   <span className="text-zinc-500">Réalisateur : </span>
-                  {directors.map((d: any) => d.person?.name || d.name).join(', ')}
+                  {directors.map((d) => d.person.name).join(', ')}
                 </p>
               )}
 
@@ -344,14 +345,14 @@ export default function MediaDetailPage() {
             <section className="mt-10">
               <h2 className="text-xl font-bold mb-4">Casting</h2>
               <div className="flex gap-4 overflow-x-auto pb-4">
-                {actors.map((a: any) => (
+                {actors.map((a) => (
                   <div key={a.id} className="flex-shrink-0 w-28 text-center">
-                    {a.person?.photoUrl ? (
+                    {a.person.photoUrl ? (
                       <img src={a.person.photoUrl} alt={a.person.name} className="w-20 h-20 rounded-full mx-auto object-cover" />
                     ) : (
                       <div className="w-20 h-20 rounded-full bg-zinc-800 mx-auto" />
                     )}
-                    <p className="text-xs mt-2 font-medium truncate">{a.person?.name}</p>
+                    <p className="text-xs mt-2 font-medium truncate">{a.person.name}</p>
                     <p className="text-[10px] text-zinc-500 truncate">{a.character}</p>
                   </div>
                 ))}
@@ -375,8 +376,7 @@ export default function MediaDetailPage() {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function SourcesBlock({ media, onAction }: { media: any; onAction: () => void }) {
+function SourcesBlock({ media, onAction }: { media: MediaDetailResponse; onAction: () => void }) {
   const { user } = useAuth();
   const isSuperAdmin = !!user?.isSuperAdmin;
   const onNas = media.sourceType === 'NAS' && !media.nasDeletedAt;

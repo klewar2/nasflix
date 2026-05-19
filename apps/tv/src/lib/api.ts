@@ -1,5 +1,15 @@
 import { tokens } from './tokens';
-import type { CineClubResponse, LoginResponse, UserResponse } from '@nasflix/shared';
+import type {
+  CineClubResponse,
+  LoginResponse,
+  MediaDetailResponse,
+  MediaResponse,
+  MediaTracks,
+  NasSubtitleTrack,
+  PaginatedResponse,
+  StreamUrlResponse,
+  UserResponse,
+} from '@nasflix/shared';
 
 const BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -71,37 +81,22 @@ export function selectCineClub(id: number) {
 
 // ── Media ─────────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getMedia(params: Record<string, string | number> = {}): Promise<{ data: any[]; total: number }> {
+export function getMedia(params: Record<string, string | number> = {}) {
   const q = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return request<any>(`/media?${q}`);
+  return request<PaginatedResponse<MediaResponse>>(`/media?${q}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getRecentMedia(limit = 20): Promise<any[]> {
-  return request(`/media/recent?limit=${limit}`);
+export function getRecentMedia(limit = 20) {
+  return request<MediaResponse[]>(`/media/recent?limit=${limit}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function getMediaById(id: number): Promise<any> {
-  return request(`/media/${id}`);
+export function getMediaById(id: number) {
+  return request<MediaDetailResponse>(`/media/${id}`);
 }
 
 // ── NAS ───────────────────────────────────────────────────────────────────
 
-export interface MediaTracks {
-  audio: { index: number; language: string; title: string; codec: string; channels: number }[];
-  subtitles: { index: number; language: string; title: string; codec: string; jellyfinIndex?: number }[];
-}
-
-export interface NasSubtitleTrack {
-  trackIdx: number;
-  language: string;
-  title: string;
-  codec: string;
-  vttContent: string;
-}
+export type { MediaTracks, NasSubtitleTrack };
 
 export function getNasStatus() {
   return request<{ online: boolean }>('/nas/status');
@@ -112,12 +107,12 @@ export function wakeNas() {
 }
 
 export async function getStreamUrl(mediaId: number, audioTrack = 1) {
-  const r = await request<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
+  const r = await request<StreamUrlResponse>(`/nas/stream/${mediaId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
   return { ...r, url: resolveApiUrl(r.url) };
 }
 
 export async function getEpisodeStreamUrl(episodeId: number, audioTrack = 1) {
-  const r = await request<{ url: string; isHls: boolean; durationSeconds: number; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
+  const r = await request<StreamUrlResponse>(`/nas/stream/episode/${episodeId}?mode=stream&passthrough=1&audioTrack=${audioTrack}&client=tv`);
   return { ...r, url: resolveApiUrl(r.url) };
 }
 

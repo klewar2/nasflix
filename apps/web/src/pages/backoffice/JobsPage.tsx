@@ -5,13 +5,11 @@ import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useJobsSocket, type JobEvent } from '@/hooks/use-jobs-socket';
+import { useJobsSocket } from '@/hooks/use-jobs-socket';
+import type { JobKind, JobResponse, JobStatus } from '@nasflix/shared';
 import { Loader2, RefreshCw, X } from 'lucide-react';
 
-type JobKind = 'DOWNLOAD_TO_NAS' | 'DELETE_FROM_SEEDBOX' | 'DELETE_FROM_JELLYFIN';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Job = any;
+type Job = JobResponse;
 
 const TAB_LABELS: Record<JobKind, string> = {
   DOWNLOAD_TO_NAS: 'Transferts',
@@ -32,7 +30,7 @@ const STATUS_VARIANT: Record<string, 'success' | 'destructive' | 'secondary' | '
 export default function JobsPage() {
   const { user } = useAuth();
   const [tab, setTab] = useState<JobKind>('DOWNLOAD_TO_NAS');
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<JobStatus | ''>('');
   const [page, setPage] = useState(1);
   const queryClient = useQueryClient();
 
@@ -126,7 +124,7 @@ export default function JobsPage() {
             <select
               value={statusFilter}
               onChange={(e) => {
-                setStatusFilter(e.target.value);
+                setStatusFilter(e.target.value as JobStatus | '');
                 setPage(1);
               }}
               className="bg-zinc-900 border border-zinc-800 text-zinc-200 rounded px-2 py-1 text-sm"
@@ -274,10 +272,10 @@ function JobDetailModal({ job, onClose }: { job: Job; onClose: () => void }) {
           <div className="mt-4">
             <h3 className="text-sm font-semibold text-destructive mb-2">Erreur</h3>
             <pre className="text-xs bg-zinc-900 p-3 rounded border border-zinc-800 whitespace-pre-wrap break-words">{job.errorMessage}</pre>
-            {job.errorDetails?.stack && (
+            {(job.errorDetails as { stack?: string } | null)?.stack && (
               <details className="mt-2">
                 <summary className="text-xs text-zinc-500 cursor-pointer">Stacktrace</summary>
-                <pre className="text-[10px] bg-zinc-900 p-3 rounded mt-2 whitespace-pre-wrap break-words">{job.errorDetails.stack}</pre>
+                <pre className="text-[10px] bg-zinc-900 p-3 rounded mt-2 whitespace-pre-wrap break-words">{(job.errorDetails as { stack?: string }).stack}</pre>
               </details>
             )}
           </div>

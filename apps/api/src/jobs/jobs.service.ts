@@ -291,7 +291,7 @@ export class JobsService {
       const body = await res.text().catch(() => '');
       throw new BadRequestException(`Radarr HTTP ${res.status}: ${body.slice(0, 200)}`);
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const movies = (await res.json()) as any[];
 
     // cross-check Media par tmdbId (NAS)
@@ -371,7 +371,7 @@ export class JobsService {
       const body = await seriesRes.text().catch(() => '');
       throw new BadRequestException(`Sonarr HTTP ${seriesRes.status}: ${body.slice(0, 200)}`);
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const allSeries = (await seriesRes.json()) as any[];
 
     // 2. Episodes + files par série en parallèle.
@@ -384,14 +384,14 @@ export class JobsService {
             fetch(`${base}/api/v3/episode?seriesId=${s.id}`, { headers: fetchHeaders, signal: AbortSignal.timeout(30_000) }),
             fetch(`${base}/api/v3/episodefile?seriesId=${s.id}`, { headers: fetchHeaders, signal: AbortSignal.timeout(30_000) }),
           ]);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           const eps = epsRes.ok ? ((await epsRes.json()) as any[]) : [];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           const files = filesRes.ok ? ((await filesRes.json()) as any[]) : [];
           return { series: s, episodes: eps, files };
         } catch (err) {
           this.logger.warn(`Sonarr fetch failed for series ${s.id}: ${err}`);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           return { series: s, episodes: [] as any[], files: [] as any[] };
         }
       }),
@@ -401,7 +401,7 @@ export class JobsService {
     for (const { files } of seriesData) {
       for (const f of files) filesById.set(f.id, f);
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const allEpisodes: any[] = seriesData.flatMap(({ series, episodes }) =>
       episodes.map((ep) => ({ ...ep, _series: series })),
     );

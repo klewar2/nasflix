@@ -54,8 +54,8 @@ export function MediaCard({ media, className }: MediaCardProps) {
           {media.genres && media.genres.length > 0 && (
             <div className="flex gap-1 mt-1 flex-wrap">
               {media.genres.slice(0, 2).map((g) => (
-                <span key={g.id} className="text-[10px] bg-zinc-700 px-1.5 py-0.5 rounded">
-                  {g.name}
+                <span key={g.genre.id} className="text-[10px] bg-zinc-700 px-1.5 py-0.5 rounded">
+                  {g.genre.name}
                 </span>
               ))}
             </div>

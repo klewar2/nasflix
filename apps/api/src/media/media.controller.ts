@@ -4,6 +4,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/guards/roles.decorator';
 import { MemberRole, MediaType, SyncStatus } from '@prisma/client';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { UpdateMediaDto } from './dto/update-media.dto';
 
 @Controller('media')
 export class MediaController {
@@ -115,11 +116,11 @@ export class MediaController {
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() data: { titleVf?: string; titleOriginal?: string; overview?: string; tmdbId?: number; releaseYear?: number; syncStatus?: SyncStatus; syncError?: string | null; type?: MediaType },
+    @Body() dto: UpdateMediaDto,
     @Req() req: { user: JwtPayload },
   ) {
     const cineClubId = this.requireCineClub(req.user);
-    return this.mediaService.update(id, cineClubId, data);
+    return this.mediaService.update(id, cineClubId, dto);
   }
 
   private requireCineClub(user: JwtPayload): number {

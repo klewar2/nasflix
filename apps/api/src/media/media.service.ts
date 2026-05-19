@@ -215,7 +215,7 @@ export class MediaService {
   }
 
   async update(id: number, cineClubId: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null; type: MediaType }>) {
-    const existing = await this.findById(id, cineClubId);
+    await this.findById(id, cineClubId);
     const patch: typeof data = { ...data };
 
     // Resync strategy: the sync engine tries tmdbId first and falls back to title+year on failure.
