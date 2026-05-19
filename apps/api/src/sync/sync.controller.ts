@@ -23,6 +23,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/guards/roles.decorator';
 import { MemberRole } from '@prisma/client';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { SyncWebhookDto } from './dto/sync-webhook.dto';
 
 @Controller('sync')
 @UseGuards(RolesGuard)
@@ -77,7 +78,7 @@ export class SyncController {
   async webhook(
     @Headers('x-sync-secret') secret: string,
     @Headers('x-cineclubid') cineClubIdHeader: string,
-    @Body() body: { trigger?: string; added?: string[]; removed?: string[]; moved?: Array<{ from: string; to: string }> },
+    @Body() body: SyncWebhookDto,
   ) {
     // Résolution du CineClub : 1) par webhookSecret en DB (auto-identifiant, pas de header requis)
     //                           2) fallback legacy : env var global + header x-cineclubid

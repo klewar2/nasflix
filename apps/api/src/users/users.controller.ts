@@ -3,6 +3,7 @@ import { UsersService } from './users.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/guards/roles.decorator';
 import { MemberRole } from '@prisma/client';
+import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Controller('users')
 @UseGuards(RolesGuard)
@@ -21,16 +22,13 @@ export class UsersController {
   }
 
   @Post()
-  create(@Body() body: { username: string; firstName: string; lastName: string; password: string; isSuperAdmin?: boolean }) {
-    return this.usersService.create(body);
+  create(@Body() dto: CreateUserDto) {
+    return this.usersService.create(dto);
   }
 
   @Patch(':id')
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { username?: string; firstName?: string; lastName?: string; password?: string; isSuperAdmin?: boolean },
-  ) {
-    return this.usersService.update(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
+    return this.usersService.update(id, dto);
   }
 
   @Delete(':id')

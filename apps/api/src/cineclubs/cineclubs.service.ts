@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
 import { MemberRole, Prisma } from '@prisma/client';
+import { UpdateCineClubDto } from './dto/cineclub.dto';
 
 @Injectable()
 export class CineClubsService {
@@ -63,40 +64,7 @@ export class CineClubsService {
     return this.sanitize(await this.prisma.cineClub.create({ data }));
   }
 
-  async update(id: number, data: {
-    name?: string;
-    nasBaseUrl?: string;
-    nasSharedFolders?: string[];
-    tmdbApiKey?: string;
-    nasWolMac?: string | null;
-    nasWolHost?: string | null;
-    nasWolPort?: number | null;
-    freeboxApiUrl?: string | null;
-    // Radarr / Sonarr
-    radarrBaseUrl?: string | null;
-    radarrApiKey?: string | null;
-    sonarrBaseUrl?: string | null;
-    sonarrApiKey?: string | null;
-    // SSH seedbox
-    seedboxSshHost?: string | null;
-    seedboxSshPort?: number;
-    seedboxSshUser?: string | null;
-    seedboxSshPrivateKey?: string | null;
-    seedboxSshPassphrase?: string | null;
-    // SSH NAS
-    nasSshHost?: string | null;
-    nasSshPort?: number;
-    nasSshUser?: string | null;
-    seedboxToNasKeyPath?: string | null;
-    nasTargetMovieDir?: string | null;
-    nasTargetSeriesDir?: string | null;
-    nasWolWaitSeconds?: number;
-    seedboxDeleteGraceHours?: number;
-    // Gmail
-    gmailFrom?: string | null;
-    gmailAppPassword?: string | null;
-    gmailEnabled?: boolean;
-  }) {
+  async update(id: number, data: UpdateCineClubDto) {
     await this.findOne(id);
     const patch: Prisma.CineClubUpdateInput = {};
     for (const k of Object.keys(data) as Array<keyof typeof data>) {

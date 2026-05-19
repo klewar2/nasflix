@@ -4,6 +4,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/guards/roles.decorator';
 import { MemberRole } from '@prisma/client';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
+import { AddMemberDto, CreateCineClubDto, UpdateCineClubDto, UpdateMemberDto } from './dto/cineclub.dto';
 
 @Controller('cineclubs')
 @UseGuards(RolesGuard)
@@ -22,46 +23,14 @@ export class CineClubsController {
 
   @Post()
   @Roles(MemberRole.ADMIN)
-  create(@Body() body: { name: string; slug: string; nasBaseUrl?: string; nasSharedFolders?: string[]; tmdbApiKey?: string }) {
-    return this.cineClubsService.create(body);
+  create(@Body() dto: CreateCineClubDto) {
+    return this.cineClubsService.create(dto);
   }
 
   @Patch(':id')
   @Roles(MemberRole.ADMIN)
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: {
-      name?: string;
-      nasBaseUrl?: string;
-      nasSharedFolders?: string[];
-      tmdbApiKey?: string;
-      nasWolMac?: string | null;
-      nasWolHost?: string | null;
-      nasWolPort?: number | null;
-      freeboxApiUrl?: string | null;
-      radarrBaseUrl?: string | null;
-      radarrApiKey?: string | null;
-      sonarrBaseUrl?: string | null;
-      sonarrApiKey?: string | null;
-      seedboxSshHost?: string | null;
-      seedboxSshPort?: number;
-      seedboxSshUser?: string | null;
-      seedboxSshPrivateKey?: string | null;
-      seedboxSshPassphrase?: string | null;
-      nasSshHost?: string | null;
-      nasSshPort?: number;
-      nasSshUser?: string | null;
-      seedboxToNasKeyPath?: string | null;
-      nasTargetMovieDir?: string | null;
-      nasTargetSeriesDir?: string | null;
-      nasWolWaitSeconds?: number;
-      seedboxDeleteGraceHours?: number;
-      gmailFrom?: string | null;
-      gmailAppPassword?: string | null;
-      gmailEnabled?: boolean;
-    },
-  ) {
-    return this.cineClubsService.update(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCineClubDto) {
+    return this.cineClubsService.update(id, dto);
   }
 
   @Post(':id/generate-webhook-secret')
@@ -84,9 +53,9 @@ export class CineClubsController {
   @Roles(MemberRole.ADMIN)
   addMember(
     @Param('id', ParseIntPipe) cineClubId: number,
-    @Body() body: { userId: number; role: MemberRole; nasUsername?: string; nasPassword?: string },
+    @Body() dto: AddMemberDto,
   ) {
-    return this.cineClubsService.addMember(cineClubId, body.userId, body.role, body.nasUsername, body.nasPassword);
+    return this.cineClubsService.addMember(cineClubId, dto.userId, dto.role, dto.nasUsername, dto.nasPassword);
   }
 
   @Patch(':id/members/:userId')
@@ -94,9 +63,9 @@ export class CineClubsController {
   updateMember(
     @Param('id', ParseIntPipe) cineClubId: number,
     @Param('userId', ParseIntPipe) userId: number,
-    @Body() body: { role?: MemberRole; nasUsername?: string; nasPassword?: string },
+    @Body() dto: UpdateMemberDto,
   ) {
-    return this.cineClubsService.updateMember(cineClubId, userId, body);
+    return this.cineClubsService.updateMember(cineClubId, userId, dto);
   }
 
   @Delete(':id/members/:userId')

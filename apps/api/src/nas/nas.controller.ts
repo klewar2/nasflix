@@ -12,6 +12,11 @@ import { Roles } from '../auth/guards/roles.decorator';
 import { Public } from '../auth/guards/public.decorator';
 import { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { MemberRole } from '@prisma/client';
+import {
+  SaveFreeboxTokenDto,
+  StartFreeboxAuthorizationDto,
+  SaveJellyfinConfigDto,
+} from './dto/freebox.dto';
 
 @Controller('nas')
 @UseGuards(RolesGuard)
@@ -147,10 +152,10 @@ export class NasController {
   @Roles(MemberRole.ADMIN)
   async saveFreeboxToken(
     @Req() req: { user: JwtPayload },
-    @Body() body: { freeboxApiUrl: string; appToken: string },
+    @Body() dto: SaveFreeboxTokenDto,
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    await this.nasService.saveFreeboxConfig(req.user.cineClubId, body.freeboxApiUrl, body.appToken);
+    await this.nasService.saveFreeboxConfig(req.user.cineClubId, dto.freeboxApiUrl, dto.appToken);
     return { saved: true };
   }
 
@@ -158,10 +163,10 @@ export class NasController {
   @Roles(MemberRole.ADMIN)
   async startFreeboxAuthorization(
     @Req() req: { user: JwtPayload },
-    @Body() body: { freeboxApiUrl: string },
+    @Body() dto: StartFreeboxAuthorizationDto,
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    const result = await this.nasService.startFreeboxAuthorization(req.user.cineClubId, body.freeboxApiUrl);
+    const result = await this.nasService.startFreeboxAuthorization(req.user.cineClubId, dto.freeboxApiUrl);
     return { trackId: result.trackId, message: 'Appuyez sur OK sur l\'écran de la Freebox pour autoriser Nasflix' };
   }
 
@@ -197,10 +202,10 @@ export class NasController {
   @Roles(MemberRole.ADMIN)
   async saveJellyfinConfig(
     @Req() req: { user: JwtPayload },
-    @Body() body: { jellyfinBaseUrl: string; jellyfinApiToken: string },
+    @Body() dto: SaveJellyfinConfigDto,
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    await this.nasService.saveJellyfinConfig(req.user.cineClubId, body.jellyfinBaseUrl, body.jellyfinApiToken);
+    await this.nasService.saveJellyfinConfig(req.user.cineClubId, dto.jellyfinBaseUrl, dto.jellyfinApiToken);
     return { saved: true };
   }
 
