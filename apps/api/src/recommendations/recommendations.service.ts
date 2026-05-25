@@ -125,11 +125,13 @@ export class RecommendationsService {
 
   /**
    * Hydrate une reco avec les métadonnées TMDB (poster, backdrop, trailer, vote moyen, releaseDate).
+   * Si `presetTmdbId` est fourni, skip le search (cas UPCOMING : on a déjà l'id depuis la liste TMDB).
    * Retourne null si aucun match TMDB.
    */
   private async hydrateFromTmdb(
     item: RecommendationItem,
     cineClubId: number,
+    presetTmdbId?: number,
   ): Promise<{
     tmdbId: number;
     tmdbType: TmdbMediaType;
@@ -142,18 +144,18 @@ export class RecommendationsService {
     voteAverage: number | null;
     genres: string[];
   } | null> {
-    let candidates: TmdbSearchResult[] = [];
-    if (item.type === 'MOVIE') {
-      candidates = await this.metadata.searchMovie(item.title, item.year, cineClubId);
-    } else {
-      candidates = await this.metadata.searchTv(item.title, item.year, cineClubId);
+    let resolvedId = presetTmdbId;
+    if (!resolvedId) {
+      const candidates: TmdbSearchResult[] = item.type === 'MOVIE'
+        ? await this.metadata.searchMovie(item.title, item.year, cineClubId)
+        : await this.metadata.searchTv(item.title, item.year, cineClubId);
+      resolvedId = candidates[0]?.id;
     }
-    const match = candidates[0];
-    if (!match) return null;
+    if (!resolvedId) return null;
 
     try {
       if (item.type === 'MOVIE') {
-        const detail = await this.metadata.getMovieDetail(match.id, cineClubId);
+        const detail = await this.metadata.getMovieDetail(resolvedId, cineClubId);
         return {
           tmdbId: detail.id,
           tmdbType: TmdbMediaType.MOVIE,
@@ -167,7 +169,7 @@ export class RecommendationsService {
           genres: detail.genres?.map((g) => g.name) ?? [],
         };
       }
-      const detail = await this.metadata.getTvDetail(match.id, cineClubId);
+      const detail = await this.metadata.getTvDetail(resolvedId, cineClubId);
       return {
         tmdbId: detail.id,
         tmdbType: TmdbMediaType.TV,
@@ -184,6 +186,17 @@ export class RecommendationsService {
       this.logger.warn(`[hydrate] échec TMDB detail pour "${item.title}": ${err}`);
       return null;
     }
+  }
+
+  /** Normalise un titre pour le matching tolérant (insensible casse/accents/espaces multiples). */
+  private normalizeTitle(s: string): string {
+    return s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[’`]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /**
@@ -217,7 +230,12 @@ export class RecommendationsService {
     ]);
 
     const prompt = buildPastPrompt(library, feedback, targetCount);
-    const items = await this.callClaude(client, prompt);
+    const rawItems = await this.callClaude(client, prompt);
+    if (rawItems.length > targetCount) {
+      this.logger.warn(`[generatePast] Claude a renvoyé ${rawItems.length} recos (>${targetCount}), tronqué`);
+    }
+    // On garde quelques candidats de surplus pour absorber les pertes d'hydratation (TMDB miss).
+    const items = rawItems.slice(0, targetCount * 2);
 
     const batchId = randomUUID();
     const hydrated: Array<Awaited<ReturnType<typeof this.hydrateFromTmdb>>> = [];
@@ -267,15 +285,21 @@ export class RecommendationsService {
       return da - db;
     });
 
-    const upcomingForPrompt: UpcomingCandidate[] = futureCandidates.slice(0, 40).map((c) => {
+    // Map titre normalisé → candidat TMDB pour matching direct (économise un /search par reco)
+    const candidatesPool = futureCandidates.slice(0, 40);
+    const candidateByKey = new Map<string, TmdbSearchResult>();
+    const upcomingForPrompt: UpcomingCandidate[] = candidatesPool.map((c) => {
       const isMovie = c.media_type === 'movie';
       const genreMap = isMovie ? TMDB_MOVIE_GENRES : TMDB_TV_GENRES;
       const genres = (c.genre_ids ?? [])
         .map((id) => genreMap[id])
         .filter((g): g is string => !!g);
+      const title = (c.title || c.name) ?? '';
+      const type: 'MOVIE' | 'TV' = isMovie ? 'MOVIE' : 'TV';
+      candidateByKey.set(`${type}:${this.normalizeTitle(title)}`, c);
       return {
-        title: (c.title || c.name) ?? '',
-        type: isMovie ? 'MOVIE' : 'TV',
+        title,
+        type,
         releaseDate: c.release_date || c.first_air_date || null,
         overview: c.overview || '',
         genres,
@@ -283,13 +307,26 @@ export class RecommendationsService {
     });
 
     const prompt = buildUpcomingPrompt(library, feedback, upcomingForPrompt, targetCount);
-    const items = await this.callClaude(client, prompt);
+    const rawItems = await this.callClaude(client, prompt);
+    if (rawItems.length > targetCount) {
+      this.logger.warn(`[generateUpcoming] Claude a renvoyé ${rawItems.length} recos (>${targetCount}), tronqué`);
+    }
+    // On garde quelques candidats de surplus pour absorber les pertes d'hydratation
+    const items = rawItems.slice(0, targetCount * 2);
 
     const batchId = randomUUID();
     const hydrated: Array<Awaited<ReturnType<typeof this.hydrateFromTmdb>>> = [];
     for (const item of items) {
-      const h = await this.hydrateFromTmdb(item, cineClubId);
+      const presetId = candidateByKey.get(`${item.type}:${this.normalizeTitle(item.title)}`)?.id;
+      const h = await this.hydrateFromTmdb(item, cineClubId, presetId);
       if (!h) continue;
+      // Re-check post-hydrate : TMDB /upcoming retourne parfois des films dont la
+      // release_date dans le détail est en réalité passée (ressortie / version
+      // internationale). Filtre les MOVIES dont la date finale n'est pas future.
+      if (h.tmdbType === TmdbMediaType.MOVIE && h.releaseDate && h.releaseDate < now) {
+        this.logger.warn(`[generateUpcoming] "${h.title}" écarté (release_date ${h.releaseDate.toISOString().slice(0, 10)} < today)`);
+        continue;
+      }
       const key = `${h.tmdbType}:${h.tmdbId}`;
       if (excludedIds.has(key)) continue;
       if (hydrated.some((x) => x && x.tmdbType === h.tmdbType && x.tmdbId === h.tmdbId)) continue;

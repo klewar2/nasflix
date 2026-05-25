@@ -51,13 +51,14 @@ ${formatLibrary(library)}
 ${formatFeedback(feedback)}
 
 ## Mission
-Recommande exactement ${targetCount} films ou séries (mélange libre selon ce qui colle au profil) déjà sortis et bien établis.
+Recommande EXACTEMENT ${targetCount} films ou séries (mélange libre selon ce qui colle au profil) déjà sortis et bien établis. **Ni plus, ni moins** : le tableau "recommendations" doit contenir précisément ${targetCount} entrées.
 
 ## Règles ABSOLUES (non négociables)
-1. **Aucun titre déjà dans la bibliothèque ci-dessus.** Vérifie chaque titre proposé contre la liste.
-2. **Aucun titre marqué DÉJÀ VU ou REJETÉ** dans le bloc retours.
-3. **Pas d'invention de genre** : si tu n'es pas certain du genre d'un film, ne le propose pas. Ne tords jamais la description pour faire matcher avec un goût du cineclub.
-4. **Ne te limite pas à reproduire les genres dominants** de la bibliothèque. Cherche aussi la cohérence de ton, de thèmes, de réalisateurs, d'époque, d'ambiance.
+1. **Le tableau "recommendations" doit contenir EXACTEMENT ${targetCount} éléments.** Pas ${targetCount - 1}, pas ${targetCount + 1}.
+2. **Aucun titre déjà dans la bibliothèque ci-dessus.** Vérifie chaque titre proposé contre la liste.
+3. **Aucun titre marqué DÉJÀ VU ou REJETÉ** dans le bloc retours.
+4. **Pas d'invention de genre** : si tu n'es pas certain du genre d'un film, ne le propose pas. Ne tords jamais la description pour faire matcher avec un goût du cineclub.
+5. **Ne te limite pas à reproduire les genres dominants** de la bibliothèque. Cherche aussi la cohérence de ton, de thèmes, de réalisateurs, d'époque, d'ambiance.
 
 ## Stratégie attendue
 - Identifie les patterns réels dans la bibliothèque : réalisateurs récurrents, genres principaux ET secondaires, époques, sensibilités (cérébral / fun / contemplatif / etc.).
@@ -100,13 +101,14 @@ ${formatFeedback(feedback)}
 ${upcomingList}
 
 ## Mission
-Sélectionne exactement ${targetCount} titres **STRICTEMENT** parmi la liste ci-dessus, ceux qui matchent le mieux les goûts du cineclub.
+Sélectionne EXACTEMENT ${targetCount} titres **STRICTEMENT** parmi la liste ci-dessus, ceux qui matchent le mieux les goûts du cineclub. **Ni plus, ni moins** : le tableau "recommendations" doit contenir précisément ${targetCount} entrées.
 
 ## Règles ABSOLUES (non négociables)
-1. **Tu DOIS choisir uniquement parmi les ${upcoming.length} titres de la liste « Catalogue des sorties à venir » ci-dessus.** Recopie le titre EXACTEMENT comme écrit dans la liste (entre guillemets).
-2. **Tu n'as pas le droit d'inventer le genre ou les thèmes d'un titre.** Tu ne connais ces films/séries QUE par les genres TMDB et le synopsis fournis. Si le synopsis ne dit pas que c'est de l'horreur, ce n'est PAS un film d'horreur — quelles que soient les apparences du titre.
-3. **Aucun titre DÉJÀ VU ou REJETÉ** dans le feedback.
-4. **La justification doit citer un fait précis du synopsis OU des genres TMDB fournis** dans la liste. Si tu ne peux pas justifier sans inventer, ne propose pas ce titre.
+1. **Le tableau "recommendations" doit contenir EXACTEMENT ${targetCount} éléments.** Pas ${targetCount - 1}, pas ${targetCount + 1}.
+2. **Tu DOIS choisir uniquement parmi les ${upcoming.length} titres de la liste « Catalogue des sorties à venir » ci-dessus.** Recopie le titre EXACTEMENT comme écrit dans la liste (entre guillemets), sans modification.
+3. **Tu n'as pas le droit d'inventer le genre ou les thèmes d'un titre.** Tu ne connais ces films/séries QUE par les genres TMDB et le synopsis fournis. Si le synopsis ne dit pas que c'est de l'horreur, ce n'est PAS un film d'horreur — quelles que soient les apparences du titre.
+4. **Aucun titre DÉJÀ VU ou REJETÉ** dans le feedback.
+5. **La justification doit citer un fait précis du synopsis OU des genres TMDB fournis** dans la liste. Si tu ne peux pas justifier sans inventer, ne propose pas ce titre.
 
 ## Stratégie attendee
 - Pour chaque candidat : lis attentivement son synopsis et ses genres TMDB.

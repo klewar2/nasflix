@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const RECOMMENDATIONS_PROMPT_VERSION = 'v2';
+export const RECOMMENDATIONS_PROMPT_VERSION = 'v3';
 
 export const RecommendationItemSchema = z.object({
   title: z.string().min(1),
@@ -9,8 +9,10 @@ export const RecommendationItemSchema = z.object({
   reason: z.string().min(20).max(600),
 });
 
+// Limite haute volontairement permissive (Claude dépasse parfois la consigne) ;
+// le service tronque ensuite au `targetCount` configuré du cineclub.
 export const RecommendationResponseSchema = z.object({
-  recommendations: z.array(RecommendationItemSchema).min(1).max(20),
+  recommendations: z.array(RecommendationItemSchema).min(1).max(40),
 });
 
 export type RecommendationItem = z.infer<typeof RecommendationItemSchema>;
@@ -26,7 +28,7 @@ export const RECOMMENDATIONS_TOOL_SCHEMA = {
     recommendations: {
       type: 'array',
       minItems: 1,
-      maxItems: 20,
+      maxItems: 40,
       items: {
         type: 'object',
         properties: {
