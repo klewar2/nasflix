@@ -9,8 +9,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
-import { TMDB_MOVIE_GENRES, TMDB_TV_GENRES } from '@nasflix/shared';
 import { MetadataService, TmdbSearchResult } from '../metadata/metadata.service';
+import { TMDB_MOVIE_GENRES, TMDB_TV_GENRES } from './tmdb-genres';
 import {
   RECOMMENDATIONS_PROMPT_VERSION,
   RECOMMENDATIONS_TOOL_SCHEMA,
