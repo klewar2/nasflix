@@ -13,6 +13,7 @@ import { CineClubsModule } from './cineclubs/cineclubs.module';
 import { UsersModule } from './users/users.module';
 import { JobsModule } from './jobs/jobs.module';
 import { MailModule } from './mail/mail.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { MailModule } from './mail/mail.module';
     UsersModule,
     MailModule,
     JobsModule,
+    RecommendationsModule,
   ],
 })
 export class AppModule {}

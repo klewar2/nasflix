@@ -85,6 +85,9 @@ export interface CineClubResponse {
   gmailFrom?: string | null;
   gmailAppPasswordSet?: boolean;
   gmailEnabled?: boolean;
+  // Recommandations IA
+  recommendationsEnabled?: boolean;
+  anthropicApiKeySet?: boolean;
   lastOnlineAt: string | null;
   lastSyncAt: string | null;
   role?: 'ADMIN' | 'VIEWER';

@@ -139,11 +139,13 @@ export class NasController {
   // ── Wake-on-LAN ────────────────────────────────────────────────────────────
 
   @Post('wake')
-  @Roles(MemberRole.ADMIN)
   async wake(@Req() req: { user: JwtPayload }) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    await this.nasService.sendWakeOnLan(req.user.cineClubId);
-    return { sent: true, message: 'Magic packet envoyé. Le NAS devrait démarrer dans 1 à 3 minutes.' };
+    const result = await this.nasService.sendWakeOnLan(req.user.cineClubId, req.user.sub);
+    if (result.alreadyInProgress) {
+      return { sent: false, alreadyInProgress: true, message: 'Un démarrage du NAS est déjà en cours.' };
+    }
+    return { sent: true, alreadyInProgress: false, message: 'Magic packet envoyé. Le NAS devrait démarrer dans 1 à 3 minutes.' };
   }
 
   // ── Freebox token ──────────────────────────────────────────────────────────
@@ -184,10 +186,19 @@ export class NasController {
 
   @Get('status')
   async getStatus(@Req() req: { user: JwtPayload }) {
-    if (!req.user.cineClubId) return { online: false, lastCheckedAt: new Date().toISOString() };
+    if (!req.user.cineClubId) {
+      return {
+        online: false,
+        lastCheckedAt: new Date().toISOString(),
+        wakeInProgress: false,
+        wakeStartedAt: null,
+        wakeStartedByUserId: null,
+        wakeTimeoutSeconds: 300,
+      };
+    }
 
-    const online = await this.nasService.checkStatusForCineClub(req.user.cineClubId);
-    return { online, lastCheckedAt: new Date().toISOString() };
+    const status = await this.nasService.getNasStatusForCineClub(req.user.cineClubId);
+    return { ...status, lastCheckedAt: new Date().toISOString() };
   }
 
   // ── Jellyfin status ───────────────────────────────────────────────────────────

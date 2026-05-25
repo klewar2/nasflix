@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Copy, RefreshCw, Save, Wifi } from 'lucide-react';
+import { Copy, RefreshCw, Save, Sparkles, Wifi } from 'lucide-react';
 
 // ── Formulaire paramètres généraux ────────────────────────────────────────────
 function GeneralSettingsCard() {
@@ -799,6 +799,144 @@ function GmailCard() {
   );
 }
 
+// ── Recommandations IA (Claude) ────────────────────────────────────────────────
+function RecommendationsAiCard() {
+  const { cineClub } = useAuth();
+  const queryClient = useQueryClient();
+  const { data: club } = useQuery({
+    queryKey: ['cineclub-fresh', cineClub?.id],
+    queryFn: () => api.getCineClub(cineClub!.id),
+    enabled: !!cineClub?.id,
+  });
+
+  const [enabled, setEnabled] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+
+  useEffect(() => {
+    if (club) setEnabled(!!club.recommendationsEnabled);
+  }, [club]);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api.updateCineClub(cineClub!.id, {
+        recommendationsEnabled: enabled,
+        ...(apiKey ? { anthropicApiKey: apiKey } : {}),
+      }),
+    onSuccess: () => {
+      setApiKey('');
+      queryClient.invalidateQueries({ queryKey: ['cineclub-fresh', cineClub?.id] });
+    },
+  });
+
+  const regenPastMutation = useMutation({
+    mutationFn: () => api.regenerateRecommendations('PAST'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recommendations', 'PAST'] }),
+  });
+
+  const regenUpcomingMutation = useMutation({
+    mutationFn: () => api.regenerateRecommendations('UPCOMING'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recommendations', 'UPCOMING'] }),
+  });
+
+  const isConfigured = !!club?.anthropicApiKeySet;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            Recommandations IA (Claude)
+          </CardTitle>
+          <Badge variant={isConfigured ? 'success' : 'secondary'}>
+            {isConfigured ? 'Clé configurée' : 'Non configuré'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-zinc-500">
+          Active la génération hebdomadaire (lundi 08:00) de recommandations IA basées sur ta bibliothèque + les retours du cineclub. Sortie validée par Zod, hydratée via TMDB.
+        </p>
+
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-zinc-300">Activer les recommandations IA pour ce CineClub</span>
+        </label>
+
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">Clé API Anthropic (Claude)</label>
+          <p className="text-xs text-zinc-500 mb-1">
+            {isConfigured ? 'Clé configurée (masquée). Saisis une nouvelle valeur pour la remplacer.' : 'Aucune clé configurée.'}
+          </p>
+          <Input
+            type="password"
+            placeholder={isConfigured ? '••••••••••••••••' : 'sk-ant-...'}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} size="sm">
+            <Save className="w-4 h-4 mr-2" />
+            {saveMutation.isPending ? 'Sauvegarde...' : 'Sauvegarder'}
+          </Button>
+          {enabled && isConfigured && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => regenPastMutation.mutate()}
+                disabled={regenPastMutation.isPending}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${regenPastMutation.isPending ? 'animate-spin' : ''}`} />
+                {regenPastMutation.isPending ? 'Génération...' : 'Régénérer recos "déjà sortis"'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => regenUpcomingMutation.mutate()}
+                disabled={regenUpcomingMutation.isPending}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${regenUpcomingMutation.isPending ? 'animate-spin' : ''}`} />
+                {regenUpcomingMutation.isPending ? 'Génération...' : 'Régénérer recos "à venir"'}
+              </Button>
+            </>
+          )}
+        </div>
+
+        {saveMutation.isSuccess && <p className="text-sm text-green-400">Configuration sauvegardée.</p>}
+        {saveMutation.isError && (
+          <p className="text-sm text-destructive">
+            {saveMutation.error instanceof Error ? saveMutation.error.message : 'Erreur'}
+          </p>
+        )}
+        {regenPastMutation.isSuccess && (
+          <p className="text-sm text-green-400">{regenPastMutation.data?.length ?? 0} recos générées.</p>
+        )}
+        {regenPastMutation.isError && (
+          <p className="text-sm text-destructive">
+            {regenPastMutation.error instanceof Error ? regenPastMutation.error.message : 'Erreur'}
+          </p>
+        )}
+        {regenUpcomingMutation.isSuccess && (
+          <p className="text-sm text-green-400">{regenUpcomingMutation.data?.length ?? 0} recos générées.</p>
+        )}
+        {regenUpcomingMutation.isError && (
+          <p className="text-sm text-destructive">
+            {regenUpcomingMutation.error instanceof Error ? regenUpcomingMutation.error.message : 'Erreur'}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Page principale ────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const { cineClub, user } = useAuth();
@@ -815,6 +953,7 @@ export default function SettingsPage() {
           {isAdmin && <WolCard />}
           {isAdmin && <FreeboxCard />}
           {isAdmin && <JellyfinCard />}
+          {isAdmin && <RecommendationsAiCard />}
           {isSuperAdmin && <RadarrSonarrCard />}
           {isSuperAdmin && <TransferCard />}
           {isSuperAdmin && <GmailCard />}

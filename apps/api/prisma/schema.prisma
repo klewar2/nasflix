@@ -58,6 +58,22 @@ enum JobStatus {
   CANCELLED
 }
 
+enum RecommendationType {
+  PAST
+  UPCOMING
+}
+
+enum TmdbMediaType {
+  MOVIE
+  TV
+}
+
+enum FeedbackVote {
+  LIKE
+  DISLIKE
+  SEEN
+}
+
 model User {
   id           Int              @id @default(autoincrement())
   username     String           @unique
@@ -71,6 +87,7 @@ model User {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   memberships      CineClubMember[]
+  recommendationFeedbacks RecommendationFeedback[]
 }
 
 model CineClub {
@@ -116,6 +133,13 @@ model CineClub {
   gmailFrom            String?
   gmailAppPassword     String?
   gmailEnabled         Boolean  @default(false)
+  // Recommandations IA
+  recommendationsEnabled Boolean @default(false)
+  anthropicApiKey        String?
+  // État persistant du Wake-on-LAN (survit aux reloads + crashs API)
+  nasWakeInProgress      Boolean   @default(false)
+  nasWakeStartedAt       DateTime?
+  nasWakeStartedByUserId Int?
   lastOnlineAt     DateTime?
   lastSyncAt       DateTime?
   createdAt        DateTime         @default(now())
@@ -124,6 +148,7 @@ model CineClub {
   media            Media[]
   syncLogs         SyncLog[]
   jobs             Job[]
+  recommendations  Recommendation[]
 }
 
 model CineClubMember {
@@ -331,4 +356,48 @@ model Job {
   @@index([cineClubId, kind, status])
   @@index([status, scheduledFor])
   @@index([createdAt])
+}
+
+model Recommendation {
+  id          Int                @id @default(autoincrement())
+  cineClubId  Int
+  cineClub    CineClub           @relation(fields: [cineClubId], references: [id], onDelete: Cascade)
+  batchId     String
+  type        RecommendationType
+  tmdbId      Int
+  tmdbType    TmdbMediaType
+  title       String
+  overview    String?            @db.Text
+  posterUrl   String?
+  backdropUrl String?
+  trailerUrl  String?
+  releaseDate DateTime?
+  voteAverage Float?
+  genres      String[]           @default([])
+  reasonText  String             @db.Text
+  createdAt   DateTime           @default(now())
+  feedback    RecommendationFeedback[]
+
+  @@unique([cineClubId, batchId, tmdbId, tmdbType])
+  @@index([cineClubId, type, createdAt])
+}
+
+model RecommendationFeedback {
+  id               Int             @id @default(autoincrement())
+  recommendationId Int?
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  userId           Int
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote             FeedbackVote
+  // Dénormalisation : permet de conserver les préférences même après rotation des batches de recos
+  cineClubId       Int
+  tmdbId           Int
+  tmdbType         TmdbMediaType
+  title            String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([cineClubId, userId, tmdbId, tmdbType])
+  @@index([cineClubId, vote])
+  @@index([userId])
 }

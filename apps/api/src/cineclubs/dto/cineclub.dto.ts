@@ -58,6 +58,10 @@ export class UpdateCineClubDto {
   @IsOptional() @IsString() gmailFrom?: string | null;
   @IsOptional() @IsString() gmailAppPassword?: string | null;
   @IsOptional() @IsBoolean() gmailEnabled?: boolean;
+
+  // Recommandations IA
+  @IsOptional() @IsBoolean() recommendationsEnabled?: boolean;
+  @IsOptional() @IsString() anthropicApiKey?: string | null;
 }
 
 export class AddMemberDto {

@@ -186,6 +186,26 @@ export class MetadataService {
     );
   }
 
+  async getUpcomingMovies(cineClubId?: number, region = 'FR'): Promise<TmdbSearchResult[]> {
+    const apiKey = await this.getApiKeyForCineClub(cineClubId);
+    const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>(
+      '/movie/upcoming',
+      { region, page: '1' },
+      apiKey,
+    );
+    return result.results.map((r) => ({ ...r, media_type: 'movie' }));
+  }
+
+  async getOnTheAirTv(cineClubId?: number): Promise<TmdbSearchResult[]> {
+    const apiKey = await this.getApiKeyForCineClub(cineClubId);
+    const result = await this.tmdbFetch<{ results: TmdbSearchResult[] }>(
+      '/tv/on_the_air',
+      { page: '1' },
+      apiKey,
+    );
+    return result.results.map((r) => ({ ...r, media_type: 'tv' }));
+  }
+
   posterUrl(path: string | null): string | null {
     return path ? `${this.imageBaseUrl}/w500${path}` : null;
   }

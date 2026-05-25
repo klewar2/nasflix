@@ -4,6 +4,7 @@ import { JobsController } from './jobs.controller';
 import { JobsService } from './jobs.service';
 import { JobsProcessor } from './jobs.processor';
 import { JobsGateway } from './jobs.gateway';
+import { JobsCleanupService } from './jobs.cleanup.service';
 import { JOBS_QUEUE } from './jobs.constants';
 import { NasModule } from '../nas/nas.module';
 import { MediaModule } from '../media/media.module';
@@ -29,7 +30,7 @@ import { METADATA_SYNC_QUEUE } from '../sync/sync.constants';
     BullModule.registerQueue({ name: METADATA_SYNC_QUEUE }),
   ],
   controllers: [JobsController],
-  providers: [JobsService, JobsProcessor, JobsGateway],
+  providers: [JobsService, JobsProcessor, JobsGateway, JobsCleanupService],
   exports: [JobsService, JobsGateway],
 })
 export class JobsModule {}

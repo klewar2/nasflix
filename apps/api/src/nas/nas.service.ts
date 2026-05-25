@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException, ForbiddenException, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
@@ -8,6 +8,7 @@ import * as https from 'node:https';
 import * as http from 'node:http';
 import { PrismaService } from '../common/prisma.service';
 import { parseMediaFilename } from '../common/media-parser';
+import { NasGateway } from './nas.gateway';
 
 interface FetchInit {
   method?: string;
@@ -105,7 +106,7 @@ export interface NasSession {
 }
 
 @Injectable()
-export class NasService {
+export class NasService implements OnModuleInit {
   private readonly logger = new Logger(NasService.name);
 
   /** Évite deux logins FileStation concurrents (même NAS / même user) : la 2ᵉ session invalide souvent la 1ʳᵉ → 404 sur fileproxy. */
@@ -116,7 +117,86 @@ export class NasService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly nasGateway: NasGateway,
   ) {}
+
+  /**
+   * Au boot : reset les flags `nasWakeInProgress` des cineclubs dont le timer a expiré
+   * (évite les états bloqués si l'API a crashé en plein wake).
+   */
+  async onModuleInit() {
+    try {
+      const clubs = await this.prisma.cineClub.findMany({
+        where: { nasWakeInProgress: true },
+        select: { id: true, nasWakeStartedAt: true, nasWolWaitSeconds: true },
+      });
+      const now = Date.now();
+      for (const club of clubs) {
+        const startedAt = club.nasWakeStartedAt?.getTime() ?? 0;
+        const timeoutMs = (club.nasWolWaitSeconds || 300) * 1000;
+        if (now - startedAt > timeoutMs) {
+          await this.prisma.cineClub.update({
+            where: { id: club.id },
+            data: { nasWakeInProgress: false, nasWakeStartedAt: null, nasWakeStartedByUserId: null },
+          });
+          this.logger.warn(`[WoL] Reset flag wake bloqué pour cineClub#${club.id}`);
+        }
+      }
+    } catch (err) {
+      this.logger.error(`[WoL] onModuleInit reset failed: ${err}`);
+    }
+  }
+
+  /** État NAS enrichi pour le frontend (online + wake en cours). */
+  async getNasStatusForCineClub(cineClubId: number): Promise<{
+    online: boolean;
+    wakeInProgress: boolean;
+    wakeStartedAt: string | null;
+    wakeStartedByUserId: number | null;
+    wakeTimeoutSeconds: number;
+  }> {
+    const club = await this.prisma.cineClub.findUnique({
+      where: { id: cineClubId },
+      select: {
+        nasBaseUrl: true,
+        nasWakeInProgress: true,
+        nasWakeStartedAt: true,
+        nasWakeStartedByUserId: true,
+        nasWolWaitSeconds: true,
+      },
+    });
+    const wakeTimeoutSeconds = club?.nasWolWaitSeconds || 300;
+
+    if (!club?.nasBaseUrl) {
+      return {
+        online: false,
+        wakeInProgress: !!club?.nasWakeInProgress,
+        wakeStartedAt: club?.nasWakeStartedAt?.toISOString() ?? null,
+        wakeStartedByUserId: club?.nasWakeStartedByUserId ?? null,
+        wakeTimeoutSeconds,
+      };
+    }
+
+    const online = await this.checkStatusForCineClub(cineClubId);
+
+    // Si online + un wake était en cours, reset les flags (cas : NAS répond avant la fin du poll).
+    if (online && club.nasWakeInProgress) {
+      await this.prisma.cineClub.update({
+        where: { id: cineClubId },
+        data: { nasWakeInProgress: false, nasWakeStartedAt: null, nasWakeStartedByUserId: null },
+      });
+      this.nasGateway.emitNasOnline(cineClubId);
+      return { online: true, wakeInProgress: false, wakeStartedAt: null, wakeStartedByUserId: null, wakeTimeoutSeconds };
+    }
+
+    return {
+      online,
+      wakeInProgress: club.nasWakeInProgress,
+      wakeStartedAt: club.nasWakeStartedAt?.toISOString() ?? null,
+      wakeStartedByUserId: club.nasWakeStartedByUserId,
+      wakeTimeoutSeconds,
+    };
+  }
 
   private fileStationSessionKey(baseUrl: string, username: string): string {
     return `${baseUrl.replace(/\/$/, '')}\u0000${username}`;
@@ -565,55 +645,128 @@ export class NasService {
 
   // ── Wake-on-LAN ────────────────────────────────────────────────────────────
 
-  async sendWakeOnLan(cineClubId: number): Promise<void> {
+  async sendWakeOnLan(cineClubId: number, startedByUserId?: number): Promise<{ alreadyInProgress: boolean }> {
     const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
     if (!club?.nasWolMac) throw new BadRequestException('Adresse MAC WoL non configurée pour ce CineClub');
 
     const mac = club.nasWolMac.replace(/[:\-\s]/g, '');
     if (mac.length !== 12) throw new BadRequestException('Adresse MAC invalide (format attendu: XX:XX:XX:XX:XX:XX)');
 
-    // Méthode préférée : API Freebox (fiable depuis internet)
-    if (club.freeboxApiUrl && club.freeboxAppToken) {
-      const appToken = this.decryptToken(club.freeboxAppToken);
-      await this.sendWakeOnLanViaFreebox(club.freeboxApiUrl, appToken, club.nasWolMac);
-      this.logger.log(`[WoL] Magic packet envoyé via Freebox API (MAC: ${club.nasWolMac})`);
-      return;
+    // Idempotence : si un wake est déjà en cours et n'a pas expiré, on ne renvoie pas de nouveau magic packet.
+    const timeoutMs = (club.nasWolWaitSeconds || 300) * 1000;
+    if (club.nasWakeInProgress && club.nasWakeStartedAt) {
+      const elapsed = Date.now() - club.nasWakeStartedAt.getTime();
+      if (elapsed < timeoutMs) {
+        this.logger.log(`[WoL] Démarrage déjà en cours pour cineClub#${cineClubId} (élapsed ${Math.round(elapsed / 1000)}s)`);
+        return { alreadyInProgress: true };
+      }
     }
 
-    // Fallback : UDP direct (nécessite port-forward broadcast côté routeur)
-    if (!club.nasWolHost) throw new BadRequestException('Hôte WoL non configuré pour ce CineClub');
-
-    const macBytes = mac.match(/.{2}/g)!.map((h) => parseInt(h, 16));
-
-    // Magic packet : 6× 0xFF + 16× adresse MAC = 102 octets
-    const packet = Buffer.alloc(102);
-    for (let i = 0; i < 6; i++) packet[i] = 0xff;
-    for (let i = 1; i <= 16; i++) macBytes.forEach((b, j) => { packet[i * 6 + j] = b; });
-
-    // Résoudre l'hostname en IP (supporte DynDNS)
-    let address: string;
-    try {
-      const resolved = await lookup(club.nasWolHost);
-      address = resolved.address;
-    } catch {
-      address = club.nasWolHost;
-    }
-
-    const port = club.nasWolPort ?? 9;
-
-    await new Promise<void>((resolve, reject) => {
-      const socket = createSocket('udp4');
-      socket.once('error', (err) => { socket.close(); reject(err); });
-      socket.bind(() => {
-        socket.setBroadcast(true);
-        socket.send(packet, port, address, (err) => {
-          socket.close();
-          if (err) reject(err); else resolve();
-        });
-      });
+    // Marquer le wake comme en cours AVANT d'envoyer le packet.
+    await this.prisma.cineClub.update({
+      where: { id: cineClubId },
+      data: {
+        nasWakeInProgress: true,
+        nasWakeStartedAt: new Date(),
+        nasWakeStartedByUserId: startedByUserId ?? null,
+      },
     });
+    this.nasGateway.emitNasWakeStarted(cineClubId, startedByUserId ?? null);
 
-    this.logger.log(`[WoL] Magic packet envoyé (UDP) → ${address}:${port} (MAC: ${club.nasWolMac})`);
+    try {
+      // Méthode préférée : API Freebox (fiable depuis internet)
+      if (club.freeboxApiUrl && club.freeboxAppToken) {
+        const appToken = this.decryptToken(club.freeboxAppToken);
+        await this.sendWakeOnLanViaFreebox(club.freeboxApiUrl, appToken, club.nasWolMac);
+        this.logger.log(`[WoL] Magic packet envoyé via Freebox API (MAC: ${club.nasWolMac})`);
+      } else {
+        // Fallback : UDP direct (nécessite port-forward broadcast côté routeur)
+        if (!club.nasWolHost) throw new BadRequestException('Hôte WoL non configuré pour ce CineClub');
+
+        const macBytes = mac.match(/.{2}/g)!.map((h) => parseInt(h, 16));
+        const packet = Buffer.alloc(102);
+        for (let i = 0; i < 6; i++) packet[i] = 0xff;
+        for (let i = 1; i <= 16; i++) macBytes.forEach((b, j) => { packet[i * 6 + j] = b; });
+
+        let address: string;
+        try {
+          const resolved = await lookup(club.nasWolHost);
+          address = resolved.address;
+        } catch {
+          address = club.nasWolHost;
+        }
+        const port = club.nasWolPort ?? 9;
+
+        await new Promise<void>((resolve, reject) => {
+          const socket = createSocket('udp4');
+          socket.once('error', (err) => { socket.close(); reject(err); });
+          socket.bind(() => {
+            socket.setBroadcast(true);
+            socket.send(packet, port, address, (err) => {
+              socket.close();
+              if (err) reject(err); else resolve();
+            });
+          });
+        });
+
+        this.logger.log(`[WoL] Magic packet envoyé (UDP) → ${address}:${port} (MAC: ${club.nasWolMac})`);
+      }
+    } catch (err) {
+      // Rollback du flag si l'envoi du packet a échoué
+      await this.prisma.cineClub.update({
+        where: { id: cineClubId },
+        data: { nasWakeInProgress: false, nasWakeStartedAt: null, nasWakeStartedByUserId: null },
+      });
+      this.nasGateway.emitNasWakeFailed(cineClubId, err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+
+    // Démarre le poll asynchrone (non bloquant) qui détecte le NAS en ligne ou expire après nasWolWaitSeconds.
+    this.startWakePoll(cineClubId, timeoutMs);
+
+    return { alreadyInProgress: false };
+  }
+
+  private startWakePoll(cineClubId: number, timeoutMs: number) {
+    const startedAt = Date.now();
+    const intervalMs = 5000;
+    const tick = async () => {
+      try {
+        const club = await this.prisma.cineClub.findUnique({
+          where: { id: cineClubId },
+          select: { nasBaseUrl: true, nasWakeInProgress: true },
+        });
+        if (!club?.nasWakeInProgress) return; // déjà cleared par ailleurs
+
+        if (club.nasBaseUrl) {
+          const online = await this.checkStatus(club.nasBaseUrl);
+          if (online) {
+            await this.prisma.cineClub.update({
+              where: { id: cineClubId },
+              data: { nasWakeInProgress: false, nasWakeStartedAt: null, nasWakeStartedByUserId: null, lastOnlineAt: new Date() },
+            });
+            this.nasGateway.emitNasOnline(cineClubId);
+            this.logger.log(`[WoL] NAS cineClub#${cineClubId} en ligne après ${Math.round((Date.now() - startedAt) / 1000)}s`);
+            return;
+          }
+        }
+
+        if (Date.now() - startedAt > timeoutMs) {
+          await this.prisma.cineClub.update({
+            where: { id: cineClubId },
+            data: { nasWakeInProgress: false, nasWakeStartedAt: null, nasWakeStartedByUserId: null },
+          });
+          this.nasGateway.emitNasWakeFailed(cineClubId, 'Timeout — aucune réponse du NAS');
+          this.logger.warn(`[WoL] Timeout wake cineClub#${cineClubId} après ${Math.round(timeoutMs / 1000)}s`);
+          return;
+        }
+
+        setTimeout(tick, intervalMs);
+      } catch (err) {
+        this.logger.error(`[WoL poll] ${err}`);
+      }
+    };
+    setTimeout(tick, intervalMs);
   }
 
   private async sendWakeOnLanViaFreebox(freeboxApiUrl: string, appToken: string, mac: string): Promise<void> {

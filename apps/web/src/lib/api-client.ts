@@ -1,4 +1,4 @@
-import type { PaginatedResponse, AuthTokens, GenreResponse, HealthResponse, JobKind, JobResponse, JobSource, JobStatus, LoginResponse, MediaDetailResponse, MediaResponse, MediaType, RadarrLibraryItem, SonarrLibraryItem, StreamMode, StreamUrlResponse, SyncLogResponse, SyncStatus, UserResponse, CineClubResponse, CineClubMemberResponse } from '@nasflix/shared';
+import type { PaginatedResponse, AuthTokens, GenreResponse, HealthResponse, JobKind, JobResponse, JobSource, JobStatus, LoginResponse, MediaDetailResponse, MediaResponse, MediaType, RadarrLibraryItem, SonarrLibraryItem, StreamMode, StreamUrlResponse, SyncLogResponse, SyncStatus, UserResponse, CineClubResponse, CineClubMemberResponse, RecommendationResponse, RecommendationType, FeedbackVote, NasStatusResponse } from '@nasflix/shared';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -245,11 +245,40 @@ class ApiClient {
 
   // NAS
   getNasStatus() {
-    return this.fetch<{ online: boolean; lastCheckedAt: string }>('/nas/status');
+    return this.fetch<NasStatusResponse>('/nas/status');
   }
 
   wakeNas() {
-    return this.fetch<{ sent: boolean; message: string }>('/nas/wake', { method: 'POST' });
+    return this.fetch<{ sent: boolean; alreadyInProgress: boolean; message: string }>('/nas/wake', { method: 'POST' });
+  }
+
+  // Recommendations
+  getRecommendations(type: RecommendationType) {
+    return this.fetch<RecommendationResponse[]>(`/recommendations?type=${type}`);
+  }
+
+  getRecommendation(id: number) {
+    return this.fetch<RecommendationResponse>(`/recommendations/${id}`);
+  }
+
+  regenerateRecommendations(type: RecommendationType) {
+    return this.fetch<RecommendationResponse[]>('/recommendations/regenerate', {
+      method: 'POST',
+      body: JSON.stringify({ type }),
+    });
+  }
+
+  setRecommendationFeedback(id: number, vote: FeedbackVote) {
+    return this.fetch<{ id: number; vote: FeedbackVote }>(`/recommendations/${id}/feedback`, {
+      method: 'PUT',
+      body: JSON.stringify({ vote }),
+    });
+  }
+
+  clearRecommendationFeedback(id: number) {
+    return this.fetch<{ cleared: boolean }>(`/recommendations/${id}/feedback`, {
+      method: 'DELETE',
+    });
   }
 
   getStreamUrl(mediaId: number, mode: StreamMode = 'stream') {

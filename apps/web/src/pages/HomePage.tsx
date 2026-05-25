@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { MediaResponse } from '@nasflix/shared';
 import { api } from '@/lib/api-client';
 import { MediaCarousel } from '@/components/media/MediaCarousel';
+import { RecommendationCarousel } from '@/components/media/RecommendationCarousel';
+import { NasOfflineBanner } from '@/components/NasOfflineBanner';
 import { Skeleton } from '@/components/ui/skeleton';
 import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
@@ -45,12 +47,30 @@ export default function HomePage() {
     queryFn: () => api.getMediaByQuality('FHD', 40),
   });
 
+  const { data: pastRecos } = useQuery({
+    queryKey: ['recommendations', 'PAST'],
+    queryFn: () => api.getRecommendations('PAST'),
+  });
+
+  const { data: upcomingRecos } = useQuery({
+    queryKey: ['recommendations', 'UPCOMING'],
+    queryFn: () => api.getRecommendations('UPCOMING'),
+  });
+
   const heroItems = recentMedia?.slice(0, 8) || [];
 
   return (
     <div className="pb-10">
+      <NasOfflineBanner />
       {loadingRecent && <Skeleton className="h-[60vh] w-full mb-8" />}
       {heroItems.length > 0 && <HeroCarousel items={heroItems} />}
+
+      {pastRecos && pastRecos.length > 0 && (
+        <RecommendationCarousel title="Recommandé pour votre cineclub" recommendations={pastRecos} />
+      )}
+      {upcomingRecos && upcomingRecos.length > 0 && (
+        <RecommendationCarousel title="Bientôt disponible" recommendations={upcomingRecos} />
+      )}
 
       {recentMedia && recentMedia.length > 0 && <MediaCarousel title="Ajouté récemment" media={recentMedia} />}
       {movies?.data && movies.data.length > 0 && <MediaCarousel title="Films" media={movies.data} />}

@@ -16,6 +16,7 @@
     "db:migrate:prod": "prisma migrate deploy"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
     "@nasflix/shared": "workspace:*",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11",
@@ -41,7 +42,8 @@
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
     "socket.io": "^4.8.3",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@nestjs/cli": "^11",

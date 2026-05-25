@@ -32,7 +32,7 @@ export class CineClubsService {
   }
 
   /** Masque les secrets sensibles — jamais exposés côté API */
-   
+
   private sanitize(club: any) {
     const {
       webhookSecret,
@@ -43,6 +43,7 @@ export class CineClubsService {
       seedboxSshPrivateKey,
       seedboxSshPassphrase,
       gmailAppPassword,
+      anthropicApiKey,
       ...rest
     } = club;
     return {
@@ -55,6 +56,7 @@ export class CineClubsService {
       seedboxSshPrivateKeySet: !!seedboxSshPrivateKey,
       seedboxSshPassphraseSet: !!seedboxSshPassphrase,
       gmailAppPasswordSet: !!gmailAppPassword,
+      anthropicApiKeySet: !!anthropicApiKey,
     };
   }
 
@@ -72,7 +74,7 @@ export class CineClubsService {
       if (v === undefined) continue;
       // Chiffrement des secrets
       if (
-        (k === 'radarrApiKey' || k === 'sonarrApiKey' || k === 'seedboxSshPrivateKey' || k === 'seedboxSshPassphrase' || k === 'gmailAppPassword') &&
+        (k === 'radarrApiKey' || k === 'sonarrApiKey' || k === 'seedboxSshPrivateKey' || k === 'seedboxSshPassphrase' || k === 'gmailAppPassword' || k === 'anthropicApiKey') &&
         typeof v === 'string'
       ) {
          

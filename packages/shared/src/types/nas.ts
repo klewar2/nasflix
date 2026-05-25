@@ -20,5 +20,10 @@ export interface NasFileResponse {
 export interface NasStatusResponse {
   online: boolean;
   lastCheckedAt: string;
-  baseUrl: string;
+  baseUrl?: string;
+  // État persistant du Wake-on-LAN
+  wakeInProgress: boolean;
+  wakeStartedAt: string | null;
+  wakeStartedByUserId: number | null;
+  wakeTimeoutSeconds: number;
 }
