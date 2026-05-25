@@ -10,7 +10,7 @@ export const RecommendationItemSchema = z.object({
 });
 
 export const RecommendationResponseSchema = z.object({
-  recommendations: z.array(RecommendationItemSchema).min(1).max(10),
+  recommendations: z.array(RecommendationItemSchema).min(1).max(20),
 });
 
 export type RecommendationItem = z.infer<typeof RecommendationItemSchema>;
@@ -26,7 +26,7 @@ export const RECOMMENDATIONS_TOOL_SCHEMA = {
     recommendations: {
       type: 'array',
       minItems: 1,
-      maxItems: 10,
+      maxItems: 20,
       items: {
         type: 'object',
         properties: {

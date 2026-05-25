@@ -136,6 +136,7 @@ model CineClub {
   // Recommandations IA
   recommendationsEnabled Boolean @default(false)
   anthropicApiKey        String?
+  recommendationsCount   Int     @default(5)
   // État persistant du Wake-on-LAN (survit aux reloads + crashs API)
   nasWakeInProgress      Boolean   @default(false)
   nasWakeStartedAt       DateTime?

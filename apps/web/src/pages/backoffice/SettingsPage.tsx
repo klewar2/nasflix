@@ -811,15 +811,21 @@ function RecommendationsAiCard() {
 
   const [enabled, setEnabled] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [count, setCount] = useState<5 | 10 | 15 | 20>(5);
 
   useEffect(() => {
-    if (club) setEnabled(!!club.recommendationsEnabled);
+    if (club) {
+      setEnabled(!!club.recommendationsEnabled);
+      const c = club.recommendationsCount;
+      if (c === 5 || c === 10 || c === 15 || c === 20) setCount(c);
+    }
   }, [club]);
 
   const saveMutation = useMutation({
     mutationFn: () =>
       api.updateCineClub(cineClub!.id, {
         recommendationsEnabled: enabled,
+        recommendationsCount: count,
         ...(apiKey ? { anthropicApiKey: apiKey } : {}),
       }),
     onSuccess: () => {
@@ -879,6 +885,30 @@ function RecommendationsAiCard() {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />
+        </div>
+
+        <div>
+          <label className="text-sm text-zinc-400 mb-1 block">Nombre de recommandations par type</label>
+          <p className="text-xs text-zinc-500 mb-2">
+            Appliqué aux deux types (« déjà sortis » et « à venir »). Plus de recos = plus de tokens consommés.
+          </p>
+          <div className="flex gap-2">
+            {([5, 10, 15, 20] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setCount(n)}
+                className={[
+                  'flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
+                  count === n
+                    ? 'border-primary bg-primary/15 text-white'
+                    : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500',
+                ].join(' ')}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">

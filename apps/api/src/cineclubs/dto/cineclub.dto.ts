@@ -62,6 +62,7 @@ export class UpdateCineClubDto {
   // Recommandations IA
   @IsOptional() @IsBoolean() recommendationsEnabled?: boolean;
   @IsOptional() @IsString() anthropicApiKey?: string | null;
+  @IsOptional() @IsInt() recommendationsCount?: number;
 }
 
 export class AddMemberDto {

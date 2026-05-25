@@ -19,8 +19,6 @@ export interface UpcomingCandidate {
   genres: string[];
 }
 
-const TARGET_COUNT = 5;
-
 function formatLibrary(library: LibraryItem[]): string {
   if (!library.length) return '(bibliothèque vide)';
   return library
@@ -37,7 +35,7 @@ function formatFeedback(feedback: FeedbackSummary): string {
   return parts.length ? parts.join('\n') : '(aucun retour utilisateur pour le moment)';
 }
 
-export function buildPastPrompt(library: LibraryItem[], feedback: FeedbackSummary): string {
+export function buildPastPrompt(library: LibraryItem[], feedback: FeedbackSummary, targetCount: number): string {
   return `Tu es un assistant qui recommande des films et séries à un cineclub privé.
 
 Voici la bibliothèque actuelle du cineclub :
@@ -47,7 +45,7 @@ Retours du cineclub sur des recommandations précédentes :
 ${formatFeedback(feedback)}
 
 Mission :
-- Recommande exactement ${TARGET_COUNT} films/séries qui ressemblent aux goûts visibles dans cette bibliothèque.
+- Recommande exactement ${targetCount} films/séries qui ressemblent aux goûts visibles dans cette bibliothèque.
 - N'inclus AUCUN titre déjà présent dans la bibliothèque ci-dessus.
 - Privilégie ce que le cineclub a aimé. Évite ce qui ressemble à ce qu'il a rejeté.
 - Mélange films et séries selon ce qui colle le mieux au profil.
@@ -61,6 +59,7 @@ export function buildUpcomingPrompt(
   library: LibraryItem[],
   feedback: FeedbackSummary,
   upcoming: UpcomingCandidate[],
+  targetCount: number,
 ): string {
   const upcomingList = upcoming.slice(0, 40)
     .map((u) => `- [${u.type === 'MOVIE' ? 'Film' : 'Série'}] ${u.title}${u.releaseDate ? ` (sortie ${u.releaseDate})` : ''} — ${u.genres.join(', ') || 'genres inconnus'}\n  ${u.overview.slice(0, 200)}`)
@@ -78,7 +77,7 @@ Voici les sorties à venir disponibles dans le catalogue TMDB :
 ${upcomingList}
 
 Mission :
-- Sélectionne exactement ${TARGET_COUNT} titres parmi la liste des sorties à venir ci-dessus, qui correspondent le mieux aux goûts du cineclub.
+- Sélectionne exactement ${targetCount} titres parmi la liste des sorties à venir ci-dessus, qui correspondent le mieux aux goûts du cineclub.
 - Tu DOIS choisir UNIQUEMENT parmi les titres de la liste des sorties à venir — ne propose aucun autre film/série.
 - Privilégie ce que le cineclub a aimé. Évite ce qui ressemble à ce qu'il a rejeté.
 - Pour chaque reco, justifie en t'appuyant sur des éléments visibles de la bibliothèque.

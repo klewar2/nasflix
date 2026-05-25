@@ -88,6 +88,7 @@ export interface CineClubResponse {
   // Recommandations IA
   recommendationsEnabled?: boolean;
   anthropicApiKeySet?: boolean;
+  recommendationsCount?: number;
   lastOnlineAt: string | null;
   lastSyncAt: string | null;
   role?: 'ADMIN' | 'VIEWER';

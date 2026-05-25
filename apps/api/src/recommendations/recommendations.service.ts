@@ -25,7 +25,13 @@ import {
 } from './recommendations.prompts';
 
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
-const TARGET_COUNT = 5;
+const ALLOWED_COUNTS = [5, 10, 15, 20] as const;
+const DEFAULT_COUNT = 5;
+
+function normalizeCount(value: number | null | undefined): number {
+  if (!value) return DEFAULT_COUNT;
+  return (ALLOWED_COUNTS as readonly number[]).includes(value) ? value : DEFAULT_COUNT;
+}
 
 @Injectable()
 export class RecommendationsService {
@@ -37,10 +43,10 @@ export class RecommendationsService {
     private readonly metadata: MetadataService,
   ) {}
 
-  private async getAnthropicClient(cineClubId: number): Promise<Anthropic> {
+  private async getCineclubConfig(cineClubId: number): Promise<{ client: Anthropic; targetCount: number }> {
     const club = await this.prisma.cineClub.findUnique({
       where: { id: cineClubId },
-      select: { anthropicApiKey: true, recommendationsEnabled: true },
+      select: { anthropicApiKey: true, recommendationsEnabled: true, recommendationsCount: true },
     });
     if (!club) throw new NotFoundException('CineClub introuvable');
     if (!club.recommendationsEnabled) {
@@ -50,7 +56,10 @@ export class RecommendationsService {
       throw new BadRequestException("Aucune clé API Claude configurée pour ce CineClub");
     }
     const apiKey = this.crypto.decrypt(club.anthropicApiKey);
-    return new Anthropic({ apiKey });
+    return {
+      client: new Anthropic({ apiKey }),
+      targetCount: normalizeCount(club.recommendationsCount),
+    };
   }
 
   private async getLibrarySummary(cineClubId: number): Promise<LibraryItem[]> {
@@ -93,7 +102,7 @@ export class RecommendationsService {
   private async callClaude(client: Anthropic, prompt: string): Promise<RecommendationItem[]> {
     const response = await client.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 2048,
+      max_tokens: 4096,
       tools: [
         {
           name: 'submit_recommendations',
@@ -185,14 +194,14 @@ export class RecommendationsService {
   }
 
   async generatePast(cineClubId: number): Promise<Recommendation[]> {
-    const client = await this.getAnthropicClient(cineClubId);
+    const { client, targetCount } = await this.getCineclubConfig(cineClubId);
     const [library, feedback, libraryIds] = await Promise.all([
       this.getLibrarySummary(cineClubId),
       this.getFeedbackSummary(cineClubId),
       this.getLibraryTmdbIds(cineClubId),
     ]);
 
-    const prompt = buildPastPrompt(library, feedback);
+    const prompt = buildPastPrompt(library, feedback, targetCount);
     const items = await this.callClaude(client, prompt);
 
     const batchId = randomUUID();
@@ -204,14 +213,14 @@ export class RecommendationsService {
       if (libraryIds.has(key)) continue; // déjà en bibliothèque
       if (hydrated.some((x) => x && x.tmdbType === h.tmdbType && x.tmdbId === h.tmdbId)) continue; // doublon dans le batch
       hydrated.push(h);
-      if (hydrated.length >= TARGET_COUNT) break;
+      if (hydrated.length >= targetCount) break;
     }
 
     return this.replaceBatch(cineClubId, RecommendationType.PAST, batchId, hydrated, items);
   }
 
   async generateUpcoming(cineClubId: number): Promise<Recommendation[]> {
-    const client = await this.getAnthropicClient(cineClubId);
+    const { client, targetCount } = await this.getCineclubConfig(cineClubId);
     const [library, feedback, libraryIds, upcomingMovies, onAirTv] = await Promise.all([
       this.getLibrarySummary(cineClubId),
       this.getFeedbackSummary(cineClubId),
@@ -234,7 +243,7 @@ export class RecommendationsService {
       genres: [],
     }));
 
-    const prompt = buildUpcomingPrompt(library, feedback, upcomingForPrompt);
+    const prompt = buildUpcomingPrompt(library, feedback, upcomingForPrompt, targetCount);
     const items = await this.callClaude(client, prompt);
 
     const batchId = randomUUID();
@@ -246,7 +255,7 @@ export class RecommendationsService {
       if (libraryIds.has(key)) continue;
       if (hydrated.some((x) => x && x.tmdbType === h.tmdbType && x.tmdbId === h.tmdbId)) continue;
       hydrated.push(h);
-      if (hydrated.length >= TARGET_COUNT) break;
+      if (hydrated.length >= targetCount) break;
     }
 
     return this.replaceBatch(cineClubId, RecommendationType.UPCOMING, batchId, hydrated, items);
