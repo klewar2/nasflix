@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const RECOMMENDATIONS_PROMPT_VERSION = 'v1';
+export const RECOMMENDATIONS_PROMPT_VERSION = 'v2';
 
 export const RecommendationItemSchema = z.object({
   title: z.string().min(1),

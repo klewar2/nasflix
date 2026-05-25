@@ -9,6 +9,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
+import { TMDB_MOVIE_GENRES, TMDB_TV_GENRES } from '@nasflix/shared';
 import { MetadataService, TmdbSearchResult } from '../metadata/metadata.service';
 import {
   RECOMMENDATIONS_PROMPT_VERSION,
@@ -185,20 +186,34 @@ export class RecommendationsService {
     }
   }
 
-  private async getLibraryTmdbIds(cineClubId: number): Promise<Set<string>> {
-    const rows = await this.prisma.media.findMany({
-      where: { cineClubId, tmdbId: { not: null } },
-      select: { type: true, tmdbId: true },
-    });
-    return new Set(rows.map((r) => `${r.type === 'MOVIE' ? 'MOVIE' : 'TV'}:${r.tmdbId}`));
+  /**
+   * Set des `<TYPE>:<tmdbId>` à exclure :
+   * - médias déjà présents dans la bibliothèque
+   * - titres ayant reçu un feedback SEEN ou DISLIKE (par n'importe quel membre du cineclub)
+   */
+  private async getExcludedTmdbIds(cineClubId: number): Promise<Set<string>> {
+    const [media, feedbacks] = await Promise.all([
+      this.prisma.media.findMany({
+        where: { cineClubId, tmdbId: { not: null } },
+        select: { type: true, tmdbId: true },
+      }),
+      this.prisma.recommendationFeedback.findMany({
+        where: { cineClubId, vote: { in: [FeedbackVote.SEEN, FeedbackVote.DISLIKE] } },
+        select: { tmdbType: true, tmdbId: true },
+      }),
+    ]);
+    const excluded = new Set<string>();
+    for (const m of media) excluded.add(`${m.type === 'MOVIE' ? 'MOVIE' : 'TV'}:${m.tmdbId}`);
+    for (const f of feedbacks) excluded.add(`${f.tmdbType}:${f.tmdbId}`);
+    return excluded;
   }
 
   async generatePast(cineClubId: number): Promise<Recommendation[]> {
     const { client, targetCount } = await this.getCineclubConfig(cineClubId);
-    const [library, feedback, libraryIds] = await Promise.all([
+    const [library, feedback, excludedIds] = await Promise.all([
       this.getLibrarySummary(cineClubId),
       this.getFeedbackSummary(cineClubId),
-      this.getLibraryTmdbIds(cineClubId),
+      this.getExcludedTmdbIds(cineClubId),
     ]);
 
     const prompt = buildPastPrompt(library, feedback, targetCount);
@@ -210,7 +225,7 @@ export class RecommendationsService {
       const h = await this.hydrateFromTmdb(item, cineClubId);
       if (!h) continue;
       const key = `${h.tmdbType}:${h.tmdbId}`;
-      if (libraryIds.has(key)) continue; // déjà en bibliothèque
+      if (excludedIds.has(key)) continue; // bibliothèque ou DISLIKE/SEEN
       if (hydrated.some((x) => x && x.tmdbType === h.tmdbType && x.tmdbId === h.tmdbId)) continue; // doublon dans le batch
       hydrated.push(h);
       if (hydrated.length >= targetCount) break;
@@ -221,27 +236,51 @@ export class RecommendationsService {
 
   async generateUpcoming(cineClubId: number): Promise<Recommendation[]> {
     const { client, targetCount } = await this.getCineclubConfig(cineClubId);
-    const [library, feedback, libraryIds, upcomingMovies, onAirTv] = await Promise.all([
+    const [library, feedback, excludedIds, upcomingMovies, onAirTv] = await Promise.all([
       this.getLibrarySummary(cineClubId),
       this.getFeedbackSummary(cineClubId),
-      this.getLibraryTmdbIds(cineClubId),
+      this.getExcludedTmdbIds(cineClubId),
       this.metadata.getUpcomingMovies(cineClubId).catch(() => []),
       this.metadata.getOnTheAirTv(cineClubId).catch(() => []),
     ]);
 
-    const tmdbCandidates: TmdbSearchResult[] = [...upcomingMovies, ...onAirTv];
-    if (tmdbCandidates.length === 0) {
-      this.logger.warn(`[generateUpcoming] cineClub#${cineClubId} : aucun candidat TMDB`);
+    // Filtre uniquement les titres dont la date de sortie est dans le futur
+    // (TMDB /upcoming retourne aussi des sorties récentes déjà passées)
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const futureCandidates = [...upcomingMovies, ...onAirTv].filter((c) => {
+      const dateStr = c.release_date || c.first_air_date;
+      if (!dateStr) return false;
+      const date = new Date(dateStr);
+      return !isNaN(date.getTime()) && date >= now;
+    });
+
+    if (futureCandidates.length === 0) {
+      this.logger.warn(`[generateUpcoming] cineClub#${cineClubId} : aucun candidat TMDB à venir`);
       return [];
     }
 
-    const upcomingForPrompt: UpcomingCandidate[] = tmdbCandidates.slice(0, 40).map((c) => ({
-      title: (c.title || c.name) ?? '',
-      type: c.media_type === 'movie' ? 'MOVIE' : 'TV',
-      releaseDate: c.release_date || c.first_air_date || null,
-      overview: c.overview || '',
-      genres: [],
-    }));
+    // Tri par date croissante + cap à 40
+    futureCandidates.sort((a, b) => {
+      const da = new Date(a.release_date || a.first_air_date || '').getTime();
+      const db = new Date(b.release_date || b.first_air_date || '').getTime();
+      return da - db;
+    });
+
+    const upcomingForPrompt: UpcomingCandidate[] = futureCandidates.slice(0, 40).map((c) => {
+      const isMovie = c.media_type === 'movie';
+      const genreMap = isMovie ? TMDB_MOVIE_GENRES : TMDB_TV_GENRES;
+      const genres = (c.genre_ids ?? [])
+        .map((id) => genreMap[id])
+        .filter((g): g is string => !!g);
+      return {
+        title: (c.title || c.name) ?? '',
+        type: isMovie ? 'MOVIE' : 'TV',
+        releaseDate: c.release_date || c.first_air_date || null,
+        overview: c.overview || '',
+        genres,
+      };
+    });
 
     const prompt = buildUpcomingPrompt(library, feedback, upcomingForPrompt, targetCount);
     const items = await this.callClaude(client, prompt);
@@ -252,7 +291,7 @@ export class RecommendationsService {
       const h = await this.hydrateFromTmdb(item, cineClubId);
       if (!h) continue;
       const key = `${h.tmdbType}:${h.tmdbId}`;
-      if (libraryIds.has(key)) continue;
+      if (excludedIds.has(key)) continue;
       if (hydrated.some((x) => x && x.tmdbType === h.tmdbType && x.tmdbId === h.tmdbId)) continue;
       hydrated.push(h);
       if (hydrated.length >= targetCount) break;
