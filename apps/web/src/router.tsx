@@ -5,6 +5,7 @@ import FilmsPage from './pages/FilmsPage';
 import SeriesPage from './pages/SeriesPage';
 import MediaDetailPage from './pages/MediaDetailPage';
 import RecommendationDetailPage from './pages/RecommendationDetailPage';
+import RecommendationsPage from './pages/RecommendationsPage';
 import SearchPage from './pages/SearchPage';
 import LoginPage from './pages/LoginPage';
 import CineClubSelectorPage from './pages/CineClubSelectorPage';
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
           { index: true, element: <HomePage /> },
           { path: 'films', element: <FilmsPage /> },
           { path: 'series', element: <SeriesPage /> },
+          { path: 'recos', element: <RecommendationsPage /> },
           { path: 'media/:id', element: <MediaDetailPage /> },
           { path: 'recommendation/:id', element: <RecommendationDetailPage /> },
           { path: 'search', element: <SearchPage /> },

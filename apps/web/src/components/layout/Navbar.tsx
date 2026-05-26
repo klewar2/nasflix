@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router';
-import { Search, Film, Tv2, Menu, X, Home, Settings, LogOut, RefreshCw } from 'lucide-react';
+import { Search, Film, Tv2, Sparkles, Menu, X, Home, Settings, LogOut, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -53,6 +53,7 @@ export function Navbar() {
     { to: '/', label: 'Accueil', icon: Home },
     { to: '/films', label: 'Films', icon: Film, count: filmCount?.total },
     { to: '/series', label: 'Séries', icon: Tv2, count: seriesCount?.total },
+    { to: '/recos', label: 'Recos IA', icon: Sparkles },
   ];
 
   return (
