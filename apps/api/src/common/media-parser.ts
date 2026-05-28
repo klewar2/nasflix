@@ -15,6 +15,19 @@ export interface ParsedMediaInfo {
 export function parseMediaFilename(filename: string): ParsedMediaInfo {
   const parsed = ptt.parse(filename);
 
+  // parse-torrent-title rate le pattern `S01.E09` (séparateur autre que collé) :
+  // il extrait `season` mais pas `episode`. Fallback regex pour récupérer les deux
+  // si l'un manque — couvre S01E09, S01.E09, S01 E09, S01_E09, S01-E09.
+  let season = parsed.season;
+  let episode = parsed.episode;
+  if (season === undefined || episode === undefined) {
+    const m = filename.match(/\bS(\d{1,2})[.\s_-]?E(\d{1,3})\b/i);
+    if (m) {
+      if (season === undefined) season = parseInt(m[1], 10);
+      if (episode === undefined) episode = parseInt(m[2], 10);
+    }
+  }
+
   // Video quality
   let videoQuality: string | undefined;
   const res = parsed.resolution?.toLowerCase();
@@ -60,8 +73,8 @@ export function parseMediaFilename(filename: string): ParsedMediaInfo {
   return {
     title: parsed.title || filename,
     year: parsed.year,
-    season: parsed.season,
-    episode: parsed.episode,
+    season,
+    episode,
     videoQuality,
     hdr,
     dolbyVision,

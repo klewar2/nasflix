@@ -12,6 +12,7 @@ import { MetadataService } from '../metadata/metadata.service';
 import { JobsGateway } from './jobs.gateway';
 import { JOBS_QUEUE } from './jobs.constants';
 import { METADATA_SYNC_QUEUE } from '../sync/sync.constants';
+import { parseMediaFilename } from '../common/media-parser';
 
 interface JobRunData {
   jobId: number;
@@ -32,6 +33,39 @@ export class JobsProcessor extends WorkerHost {
     @InjectQueue(METADATA_SYNC_QUEUE) private readonly metadataQueue: Queue,
   ) {
     super();
+  }
+
+  // Extrait qualité vidéo / HDR / DV / Atmos depuis le nom du fichier, avec
+  // fallback sur le dossier parent (les release groups laissent souvent ces
+  // infos uniquement dans le nom du dossier).
+  private parseQualityFromPath(nasPath: string): {
+    videoQuality: string | null;
+    hdr: boolean;
+    dolbyVision: boolean;
+    dolbyAtmos: boolean;
+    audioFormat: string | null;
+  } {
+    const filename = nasPath.split('/').pop() ?? '';
+    const parsed = parseMediaFilename(filename);
+    const pathParts = nasPath.split('/').filter(Boolean);
+    if (
+      pathParts.length >= 2 &&
+      (!parsed.videoQuality || (!parsed.hdr && !parsed.dolbyVision && !parsed.dolbyAtmos && !parsed.audioFormat))
+    ) {
+      const folderParsed = parseMediaFilename(pathParts[pathParts.length - 2] + '.mkv');
+      if (!parsed.videoQuality) parsed.videoQuality = folderParsed.videoQuality;
+      if (!parsed.hdr) parsed.hdr = folderParsed.hdr;
+      if (!parsed.dolbyVision) parsed.dolbyVision = folderParsed.dolbyVision;
+      if (!parsed.dolbyAtmos) parsed.dolbyAtmos = folderParsed.dolbyAtmos;
+      if (!parsed.audioFormat) parsed.audioFormat = folderParsed.audioFormat;
+    }
+    return {
+      videoQuality: parsed.videoQuality ?? null,
+      hdr: parsed.hdr,
+      dolbyVision: parsed.dolbyVision,
+      dolbyAtmos: parsed.dolbyAtmos,
+      audioFormat: parsed.audioFormat ?? null,
+    };
   }
 
   private async enqueueMetadataSync(mediaId: number, cineClubId: number) {
@@ -374,7 +408,19 @@ export class JobsProcessor extends WorkerHost {
       where: { cineClubId: job.cineClubId, tmdbId: job.tmdbId, type: MediaType.MOVIE },
     });
 
+    const quality = this.parseQualityFromPath(nasPath);
+
     if (existing) {
+      // Met à jour la qualité uniquement si elle n'a pas déjà été détectée
+      // (sinon on risque d'écraser un champ correct par un null venant d'un
+      // filename moins descriptif après un move/re-rsync).
+      const qualityPatch: Record<string, unknown> = {};
+      if (!existing.videoQuality && quality.videoQuality) qualityPatch.videoQuality = quality.videoQuality;
+      if (!existing.hdr && quality.hdr) qualityPatch.hdr = true;
+      if (!existing.dolbyVision && quality.dolbyVision) qualityPatch.dolbyVision = true;
+      if (!existing.dolbyAtmos && quality.dolbyAtmos) qualityPatch.dolbyAtmos = true;
+      if (!existing.audioFormat && quality.audioFormat) qualityPatch.audioFormat = quality.audioFormat;
+
       const updated = await this.prisma.media.update({
         where: { id: existing.id },
         data: {
@@ -384,6 +430,7 @@ export class JobsProcessor extends WorkerHost {
           nasAddedAt: new Date(),
           sourceType: SourceType.NAS,
           nasDeletedAt: null,
+          ...qualityPatch,
         },
       });
       await this.mediaService.populateJellyfinId(updated, 'movie').catch((e) =>
@@ -403,6 +450,11 @@ export class JobsProcessor extends WorkerHost {
         nasAddedAt: new Date(),
         sourceType: SourceType.NAS,
         tmdbId: job.tmdbId,
+        videoQuality: quality.videoQuality,
+        hdr: quality.hdr,
+        dolbyVision: quality.dolbyVision,
+        dolbyAtmos: quality.dolbyAtmos,
+        audioFormat: quality.audioFormat,
       },
     });
     await this.enqueueMetadataSync(created.id, created.cineClubId);
@@ -421,6 +473,8 @@ export class JobsProcessor extends WorkerHost {
       where: { cineClubId: job.cineClubId, tmdbId: job.tmdbId, type: MediaType.SERIES },
     });
 
+    const quality = this.parseQualityFromPath(nasPath);
+
     if (!media) {
       // Squelette série : diffSync NAS enrichira via TMDB (syncStatus=PENDING).
       // nasPath sur Media est requis par le schéma : on utilise le chemin de
@@ -437,6 +491,11 @@ export class JobsProcessor extends WorkerHost {
           nasAddedAt: new Date(),
           sourceType: SourceType.NAS,
           syncStatus: SyncStatus.PENDING,
+          videoQuality: quality.videoQuality,
+          hdr: quality.hdr,
+          dolbyVision: quality.dolbyVision,
+          dolbyAtmos: quality.dolbyAtmos,
+          audioFormat: quality.audioFormat,
         },
       });
       this.logger.log(`Media SERIES créé (id=${media.id}, tmdbId=${job.tmdbId}) — sync TMDB enclenchée`);

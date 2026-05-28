@@ -367,6 +367,40 @@ export class SyncService {
     return { cleaned: failed.length + completed.length };
   }
 
+  private async backfillQualityIfMissing(media: {
+    id: number;
+    nasPath: string;
+    videoQuality: string | null;
+    hdr: boolean;
+    dolbyVision: boolean;
+    dolbyAtmos: boolean;
+    audioFormat: string | null;
+  }): Promise<void> {
+    const filename = media.nasPath.split('/').pop() || '';
+    const parsed = parseMediaFilename(filename);
+    const pathParts = media.nasPath.split('/').filter(Boolean);
+    if (
+      pathParts.length >= 2 &&
+      (!parsed.videoQuality || (!parsed.hdr && !parsed.dolbyVision && !parsed.dolbyAtmos && !parsed.audioFormat))
+    ) {
+      const folderParsed = parseMediaFilename(pathParts[pathParts.length - 2] + '.mkv');
+      if (!parsed.videoQuality) parsed.videoQuality = folderParsed.videoQuality;
+      if (!parsed.hdr) parsed.hdr = folderParsed.hdr;
+      if (!parsed.dolbyVision) parsed.dolbyVision = folderParsed.dolbyVision;
+      if (!parsed.dolbyAtmos) parsed.dolbyAtmos = folderParsed.dolbyAtmos;
+      if (!parsed.audioFormat) parsed.audioFormat = folderParsed.audioFormat;
+    }
+    const patch: Record<string, unknown> = {};
+    if (!media.videoQuality && parsed.videoQuality) patch.videoQuality = parsed.videoQuality;
+    if (!media.hdr && parsed.hdr) patch.hdr = true;
+    if (!media.dolbyVision && parsed.dolbyVision) patch.dolbyVision = true;
+    if (!media.dolbyAtmos && parsed.dolbyAtmos) patch.dolbyAtmos = true;
+    if (!media.audioFormat && parsed.audioFormat) patch.audioFormat = parsed.audioFormat;
+    if (Object.keys(patch).length > 0) {
+      await this.prisma.media.update({ where: { id: media.id }, data: patch });
+    }
+  }
+
   async enqueuePendingMetadata(cineClubId: number): Promise<number> {
     const pending = await this.prisma.media.findMany({
       where: { cineClubId, syncStatus: { in: [SyncStatus.PENDING, SyncStatus.FAILED, SyncStatus.NOT_FOUND] } },
@@ -400,6 +434,11 @@ export class SyncService {
       // Parse filename only — no folder heuristic
       const filename = media.nasPath.split('/').pop() || media.nasFilename;
       const parsed = parseMediaFilename(filename);
+
+      // Backfill qualité depuis le nom (+ dossier parent en fallback) si la
+      // fiche a été créée par un code path qui ne le faisait pas (ex. rsync
+      // Jellyfin → NAS via Jobs). Ne jamais écraser une valeur déjà posée.
+      await this.backfillQualityIfMissing(media);
 
       // Title: admin-edited titleOriginal wins, otherwise ptt result from filename
       const title = media.titleOriginal || parsed.title || filename;

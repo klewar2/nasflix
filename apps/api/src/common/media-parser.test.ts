@@ -17,6 +17,12 @@ describe('parseMediaFilename', () => {
     expect(r.videoQuality).toBe('720p');
   });
 
+  it('extracts season and episode when separator is a dot (S01.E09)', () => {
+    const r = parseMediaFilename('Pluribus.S01.E09.Final.Multi.VFF.HDR10.DV.2160p.Webrip.Dolby.Atmos.H265-Neostark.mkv');
+    expect(r.season).toBe(1);
+    expect(r.episode).toBe(9);
+  });
+
   it('detects 4K from 2160p / UHD tokens', () => {
     expect(parseMediaFilename('Dune.2021.2160p.WEB-DL.mkv').videoQuality).toBe('4K');
     expect(parseMediaFilename('Dune.2021.UHD.BluRay.mkv').videoQuality).toBe('4K');
