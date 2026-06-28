@@ -1,4 +1,4 @@
-import { Controller, Get, Delete, Patch, Param, Query, ParseIntPipe, Body, Req, ForbiddenException, UseGuards, DefaultValuePipe } from '@nestjs/common';
+import { Controller, Get, Delete, Patch, Param, Query, ParseIntPipe, Body, Req, ForbiddenException, UseGuards, DefaultValuePipe, Logger } from '@nestjs/common';
 import { MediaService } from './media.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/guards/roles.decorator';
@@ -8,6 +8,7 @@ import { UpdateMediaDto } from './dto/update-media.dto';
 
 @Controller('media')
 export class MediaController {
+  private readonly logger = new Logger(MediaController.name);
   constructor(private readonly mediaService: MediaService) {}
 
   @Get()
@@ -108,6 +109,7 @@ export class MediaController {
   @Delete(':id')
   delete(@Param('id', ParseIntPipe) id: number, @Req() req: { user: JwtPayload }) {
     const cineClubId = this.requireCineClub(req.user);
+    this.logger.log(`[DELETE /media/${id}] reçu par user:${req.user.sub} cineClubId=${cineClubId}`);
     return this.mediaService.delete(id, cineClubId, `user:${req.user.sub}`);
   }
 
@@ -120,6 +122,7 @@ export class MediaController {
     @Req() req: { user: JwtPayload },
   ) {
     const cineClubId = this.requireCineClub(req.user);
+    this.logger.log(`[DELETE /media/${mediaId}/episodes/${episodeId}] reçu par user:${req.user.sub} cineClubId=${cineClubId}`);
     return this.mediaService.deleteEpisode(mediaId, episodeId, cineClubId, `user:${req.user.sub}`);
   }
 

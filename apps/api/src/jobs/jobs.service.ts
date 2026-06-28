@@ -118,6 +118,7 @@ export class JobsService {
         triggeredBy: input.triggeredBy ?? null,
       },
     });
+    this.logger.log(`[factory] Job #${job.id} DELETE_FROM_JELLYFIN créé (itemId=${input.jellyfinItemId}, episodeId=${input.episodeId ?? 'null'}) — enqueue BullMQ`);
     await this.enqueueRun(job.id);
     return job;
   }
@@ -143,6 +144,7 @@ export class JobsService {
         triggeredBy: input.triggeredBy ?? null,
       },
     });
+    this.logger.log(`[factory] Job #${job.id} DELETE_FROM_NAS créé (path=${input.sourcePath}) — enqueue BullMQ`);
     await this.enqueueRun(job.id);
     return job;
   }
@@ -165,6 +167,7 @@ export class JobsService {
         triggeredBy: input.triggeredBy ?? null,
       },
     });
+    this.logger.log(`[factory] Job #${job.id} DELETE_FROM_RADARR créé (tmdbId=${input.tmdbId}) — enqueue BullMQ`);
     await this.enqueueRun(job.id);
     return job;
   }
@@ -195,6 +198,7 @@ export class JobsService {
         triggeredBy: input.triggeredBy ?? null,
       },
     });
+    this.logger.log(`[factory] Job #${job.id} DELETE_FROM_SONARR créé (tmdbId=${input.tmdbId}, episodeId=${input.episodeId ?? 'null'}) — enqueue BullMQ`);
     await this.enqueueRun(job.id);
     return job;
   }
@@ -328,7 +332,7 @@ export class JobsService {
   }
 
   private async enqueueRun(jobId: number, delayMs?: number) {
-    await this.queue.add(
+    const bullJob = await this.queue.add(
       'run',
       { jobId },
       {
@@ -338,6 +342,7 @@ export class JobsService {
         attempts: 1,
       },
     );
+    this.logger.log(`[enqueueRun] Job DB #${jobId} ajouté à BullMQ (bullId=${bullJob.id}, delay=${delayMs ?? 0}ms)`);
   }
 
   // ── Bibliothèque Radarr/Sonarr (pour backfill manuel) ────────────────────

@@ -84,6 +84,7 @@ export class JobsProcessor extends WorkerHost {
 
   async process(bullJob: BullJob<JobRunData>): Promise<void> {
     const { jobId } = bullJob.data;
+    this.logger.log(`[processor] BullMQ déclenche job #${jobId}`);
     const job = await this.prisma.job.findUnique({ where: { id: jobId } });
     if (!job) {
       this.logger.warn(`Job ${jobId} introuvable — skip`);
@@ -93,6 +94,7 @@ export class JobsProcessor extends WorkerHost {
       this.logger.log(`Job ${jobId} déjà ${job.status} — skip`);
       return;
     }
+    this.logger.log(`[processor] Job #${job.id} kind=${job.kind} status=${job.status} mediaId=${job.mediaId ?? 'null'} episodeId=${job.episodeId ?? 'null'} → dispatch`);
     try {
       switch (job.kind) {
         case JobKind.DOWNLOAD_TO_NAS:
@@ -113,6 +115,8 @@ export class JobsProcessor extends WorkerHost {
         case JobKind.DELETE_FROM_SONARR:
           await this.runDeleteSonarr(job);
           break;
+        default:
+          this.logger.warn(`[processor] Job #${job.id} kind=${job.kind} non géré — pas de handler`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -249,6 +253,7 @@ export class JobsProcessor extends WorkerHost {
   // ── DELETE_FROM_JELLYFIN ──────────────────────────────────────────────────
 
   private async runDeleteJellyfin(job: JobRow): Promise<void> {
+    this.logger.log(`[runDeleteJellyfin] Job #${job.id} START itemId=${job.jellyfinItemId} episodeId=${job.episodeId ?? 'null'}`);
     const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
     if (!club) throw new Error('CineClub introuvable');
     if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) throw new Error('Jellyfin non configuré');
@@ -284,6 +289,7 @@ export class JobsProcessor extends WorkerHost {
   // ── DELETE_FROM_NAS ───────────────────────────────────────────────────────
 
   private async runDeleteNas(job: JobRow): Promise<void> {
+    this.logger.log(`[runDeleteNas] Job #${job.id} START path=${job.sourcePath}`);
     const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
     if (!club) throw new Error('CineClub introuvable');
     if (!club.nasBaseUrl) throw new Error('NAS non configuré');
@@ -334,6 +340,7 @@ export class JobsProcessor extends WorkerHost {
   // ── DELETE_FROM_RADARR ────────────────────────────────────────────────────
 
   private async runDeleteRadarr(job: JobRow): Promise<void> {
+    this.logger.log(`[runDeleteRadarr] Job #${job.id} START tmdbId=${job.tmdbId}`);
     const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
     if (!club) throw new Error('CineClub introuvable');
     if (!club.radarrBaseUrl || !club.radarrApiKey) throw new Error('Radarr non configuré');
@@ -377,6 +384,7 @@ export class JobsProcessor extends WorkerHost {
   // ── DELETE_FROM_SONARR ────────────────────────────────────────────────────
 
   private async runDeleteSonarr(job: JobRow): Promise<void> {
+    this.logger.log(`[runDeleteSonarr] Job #${job.id} START tmdbId=${job.tmdbId} episodeId=${job.episodeId ?? 'null'}`);
     const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
     if (!club) throw new Error('CineClub introuvable');
     if (!club.sonarrBaseUrl || !club.sonarrApiKey) throw new Error('Sonarr non configuré');

@@ -226,14 +226,30 @@ export class MediaService {
 
     const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
     const jobsEnqueued: Array<{ kind: string; jobId: number }> = [];
+    const epCount = media.seasons.reduce((n, s) => n + s.episodes.length, 0);
+    const epWithNas = media.seasons.reduce((n, s) => n + s.episodes.filter((e) => e.nasPath && !e.nasDeletedAt).length, 0);
+    const epWithJf = media.seasons.reduce((n, s) => n + s.episodes.filter((e) => e.jellyfinItemId).length, 0);
+
+    this.logger.log(
+      `[delete] Media #${id} type=${media.type} tmdbId=${media.tmdbId ?? 'null'} ` +
+      `nasPath=${media.nasPath ? 'set' : 'null'} nasDeletedAt=${media.nasDeletedAt ? 'set' : 'null'} ` +
+      `jellyfinItemId=${media.jellyfinItemId ? 'set' : 'null'} ` +
+      `episodes=${epCount} (epNAS=${epWithNas} epJF=${epWithJf}) triggeredBy=${triggeredBy ?? 'null'}`,
+    );
+    this.logger.log(
+      `[delete] CineClub #${cineClubId} jellyfin=${club?.jellyfinBaseUrl ? 'OK' : 'KO'} ` +
+      `radarr=${club?.radarrBaseUrl ? 'OK' : 'KO'} sonarr=${club?.sonarrBaseUrl ? 'OK' : 'KO'} ` +
+      `nas=${club?.nasBaseUrl ? 'OK' : 'KO'}`,
+    );
 
     const safeEnqueue = async (kind: string, fn: () => Promise<{ id: number }>) => {
       try {
         const job = await fn();
         this.jobsGateway.emitJobCreated(cineClubId, job as never);
         jobsEnqueued.push({ kind, jobId: job.id });
+        this.logger.log(`[delete] ✔ enqueue ${kind} → job #${job.id}`);
       } catch (err) {
-        this.logger.warn(`Enqueue ${kind} échoué pour Media ${id}: ${err}`);
+        this.logger.warn(`[delete] ✘ enqueue ${kind} échoué pour Media ${id}: ${err}`);
       }
     };
 
@@ -249,8 +265,12 @@ export class MediaService {
             triggeredBy,
           }),
         );
+      } else {
+        this.logger.log(`[delete] skip DELETE_FROM_NAS (nasPath=${!!media.nasPath}, nasDeletedAt=${!!media.nasDeletedAt})`);
       }
     } else {
+      const epsToDeleteOnNas = media.seasons.flatMap((s) => s.episodes.filter((e) => e.nasPath && !e.nasDeletedAt));
+      this.logger.log(`[delete] série : ${epsToDeleteOnNas.length} épisode(s) à supprimer du NAS`);
       for (const season of media.seasons) {
         for (const ep of season.episodes) {
           if (ep.nasPath && !ep.nasDeletedAt) {
@@ -279,6 +299,8 @@ export class MediaService {
           triggeredBy,
         }),
       );
+    } else {
+      this.logger.log(`[delete] skip DELETE_FROM_JELLYFIN niveau média (pas de jellyfinItemId)`);
     }
     for (const season of media.seasons) {
       for (const ep of season.episodes) {
@@ -297,8 +319,12 @@ export class MediaService {
     }
 
     // 3. Radarr / Sonarr
-    if (media.tmdbId && club) {
-      if (media.type === MediaType.MOVIE && club.radarrBaseUrl && club.radarrApiKey) {
+    if (!media.tmdbId) {
+      this.logger.log(`[delete] skip Radarr/Sonarr (tmdbId manquant)`);
+    } else if (!club) {
+      this.logger.log(`[delete] skip Radarr/Sonarr (CineClub introuvable)`);
+    } else if (media.type === MediaType.MOVIE) {
+      if (club.radarrBaseUrl && club.radarrApiKey) {
         await safeEnqueue('DELETE_FROM_RADARR', () =>
           this.jobsService.createRadarrDeletionJob({
             cineClubId,
@@ -307,7 +333,11 @@ export class MediaService {
             triggeredBy,
           }),
         );
-      } else if (media.type === MediaType.SERIES && club.sonarrBaseUrl && club.sonarrApiKey) {
+      } else {
+        this.logger.log(`[delete] skip DELETE_FROM_RADARR (radarrBaseUrl=${!!club.radarrBaseUrl}, radarrApiKey=${!!club.radarrApiKey})`);
+      }
+    } else if (media.type === MediaType.SERIES) {
+      if (club.sonarrBaseUrl && club.sonarrApiKey) {
         await safeEnqueue('DELETE_FROM_SONARR', () =>
           this.jobsService.createSonarrDeletionJob({
             cineClubId,
@@ -316,12 +346,15 @@ export class MediaService {
             triggeredBy,
           }),
         );
+      } else {
+        this.logger.log(`[delete] skip DELETE_FROM_SONARR (sonarrBaseUrl=${!!club.sonarrBaseUrl}, sonarrApiKey=${!!club.sonarrApiKey})`);
       }
     }
 
     // 4. Suppression DB (cascade Prisma sur Season/Episode/MediaGenre/MediaPerson)
     await this.prisma.media.delete({ where: { id } });
 
+    this.logger.log(`[delete] Media #${id} supprimé en DB. Récap : ${jobsEnqueued.length} job(s) enqueué(s) : ${JSON.stringify(jobsEnqueued)}`);
     return { deleted: true, jobsEnqueued };
   }
 
