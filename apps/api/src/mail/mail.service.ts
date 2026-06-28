@@ -115,6 +115,12 @@ export class MailService {
         return 'Suppression seedbox';
       case 'DELETE_FROM_JELLYFIN':
         return 'Suppression Jellyfin';
+      case 'DELETE_FROM_NAS':
+        return 'Suppression fichier NAS';
+      case 'DELETE_FROM_RADARR':
+        return 'Suppression Radarr';
+      case 'DELETE_FROM_SONARR':
+        return 'Suppression Sonarr';
     }
   }
 

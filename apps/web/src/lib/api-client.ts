@@ -207,7 +207,14 @@ class ApiClient {
   }
 
   deleteMedia(id: number) {
-    return this.fetch<void>(`/media/${id}`, { method: 'DELETE' });
+    return this.fetch<{ deleted: boolean; jobsEnqueued: Array<{ kind: string; jobId: number }> }>(`/media/${id}`, { method: 'DELETE' });
+  }
+
+  deleteEpisode(mediaId: number, episodeId: number) {
+    return this.fetch<{ deleted: boolean; jobsEnqueued: Array<{ kind: string; jobId: number }> }>(
+      `/media/${mediaId}/episodes/${episodeId}`,
+      { method: 'DELETE' },
+    );
   }
 
   updateMedia(id: number, data: Partial<Pick<MediaResponse, 'titleVf' | 'titleOriginal' | 'overview' | 'tmdbId' | 'releaseYear' | 'syncStatus' | 'type'>> & { syncError?: string | null }) {
@@ -333,10 +340,6 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(body),
     });
-  }
-
-  triggerJellyfinDelete(mediaId: number) {
-    return this.fetch<{ jobId: number }>(`/jobs/delete-jellyfin/${mediaId}`, { method: 'POST' });
   }
 
   getRadarrLibrary() {

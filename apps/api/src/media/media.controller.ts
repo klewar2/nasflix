@@ -108,7 +108,19 @@ export class MediaController {
   @Delete(':id')
   delete(@Param('id', ParseIntPipe) id: number, @Req() req: { user: JwtPayload }) {
     const cineClubId = this.requireCineClub(req.user);
-    return this.mediaService.delete(id, cineClubId);
+    return this.mediaService.delete(id, cineClubId, `user:${req.user.sub}`);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(MemberRole.ADMIN)
+  @Delete(':mediaId/episodes/:episodeId')
+  deleteEpisode(
+    @Param('mediaId', ParseIntPipe) mediaId: number,
+    @Param('episodeId', ParseIntPipe) episodeId: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    const cineClubId = this.requireCineClub(req.user);
+    return this.mediaService.deleteEpisode(mediaId, episodeId, cineClubId, `user:${req.user.sub}`);
   }
 
   @UseGuards(RolesGuard)

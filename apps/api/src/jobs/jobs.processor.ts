@@ -104,6 +104,15 @@ export class JobsProcessor extends WorkerHost {
         case JobKind.DELETE_FROM_JELLYFIN:
           await this.runDeleteJellyfin(job);
           break;
+        case JobKind.DELETE_FROM_NAS:
+          await this.runDeleteNas(job);
+          break;
+        case JobKind.DELETE_FROM_RADARR:
+          await this.runDeleteRadarr(job);
+          break;
+        case JobKind.DELETE_FROM_SONARR:
+          await this.runDeleteSonarr(job);
+          break;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -258,11 +267,198 @@ export class JobsProcessor extends WorkerHost {
       throw new Error(`Jellyfin DELETE ${res.status} ${res.statusText}\n${body.slice(0, 1000)}`);
     }
 
-    if (job.mediaId) {
+    if (job.episodeId) {
+      await this.prisma.episode.update({
+        where: { id: job.episodeId },
+        data: { jellyfinItemId: null },
+      }).catch(() => null);
+    } else if (job.mediaId) {
       await this.prisma.media.update({
         where: { id: job.mediaId },
         data: { jellyfinItemId: null },
       }).catch(() => null);
+    }
+    await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+  }
+
+  // ── DELETE_FROM_NAS ───────────────────────────────────────────────────────
+
+  private async runDeleteNas(job: JobRow): Promise<void> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
+    if (!club) throw new Error('CineClub introuvable');
+    if (!club.nasBaseUrl) throw new Error('NAS non configuré');
+    if (!job.sourcePath) throw new Error('sourcePath manquant');
+
+    // Récupère les credentials NAS depuis un membre du club (ADMIN en priorité)
+    const member = await this.prisma.cineClubMember.findFirst({
+      where: {
+        cineClubId: job.cineClubId,
+        nasUsername: { not: null },
+        nasPassword: { not: null },
+      },
+      orderBy: { role: 'asc' }, // ADMIN avant VIEWER alphabétiquement
+    });
+    if (!member?.nasUsername || !member?.nasPassword) {
+      throw new Error('Aucun membre avec credentials NAS configurés');
+    }
+
+    await this.updateStatus(job, JobStatus.IN_PROGRESS, { startedAt: new Date(), attempts: { increment: 1 } });
+
+    const session = await this.nasService.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    try {
+      await this.nasService.deleteFile(session, job.sourcePath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Synology FileStation error code 408 = "No such file or directory" — déjà supprimé, on tolère.
+      if (/"code":\s*408/.test(msg) || /no such file/i.test(msg)) {
+        this.logger.log(`Job ${job.id} NAS delete: fichier déjà absent (${job.sourcePath})`);
+      } else {
+        throw err;
+      }
+    }
+
+    if (job.episodeId) {
+      await this.prisma.episode.update({
+        where: { id: job.episodeId },
+        data: { nasDeletedAt: new Date() },
+      }).catch(() => null);
+    } else if (job.mediaId) {
+      await this.prisma.media.update({
+        where: { id: job.mediaId },
+        data: { nasDeletedAt: new Date() },
+      }).catch(() => null);
+    }
+    await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+  }
+
+  // ── DELETE_FROM_RADARR ────────────────────────────────────────────────────
+
+  private async runDeleteRadarr(job: JobRow): Promise<void> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
+    if (!club) throw new Error('CineClub introuvable');
+    if (!club.radarrBaseUrl || !club.radarrApiKey) throw new Error('Radarr non configuré');
+    if (!job.tmdbId) throw new Error('tmdbId manquant');
+
+    await this.updateStatus(job, JobStatus.IN_PROGRESS, { startedAt: new Date(), attempts: { increment: 1 } });
+
+    const apiKey = this.crypto.decrypt(club.radarrApiKey);
+    const base = club.radarrBaseUrl.replace(/\/$/, '');
+    const headers = { 'X-Api-Key': apiKey };
+
+    const lookupRes = await fetch(`${base}/api/v3/movie?tmdbId=${job.tmdbId}`, {
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!lookupRes.ok) {
+      const body = await lookupRes.text().catch(() => '');
+      throw new Error(`Radarr lookup ${lookupRes.status}: ${body.slice(0, 500)}`);
+    }
+    const movies = (await lookupRes.json()) as Array<{ id: number }>;
+    if (!Array.isArray(movies) || movies.length === 0) {
+      this.logger.log(`Job ${job.id} Radarr: tmdbId=${job.tmdbId} introuvable — déjà supprimé`);
+      await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+      return;
+    }
+
+    const movieId = movies[0].id;
+    const delUrl = `${base}/api/v3/movie/${movieId}?deleteFiles=true&addImportListExclusion=false`;
+    const delRes = await fetch(delUrl, {
+      method: 'DELETE',
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!delRes.ok && delRes.status !== 404) {
+      const body = await delRes.text().catch(() => '');
+      throw new Error(`Radarr DELETE ${delRes.status}: ${body.slice(0, 500)}`);
+    }
+    await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+  }
+
+  // ── DELETE_FROM_SONARR ────────────────────────────────────────────────────
+
+  private async runDeleteSonarr(job: JobRow): Promise<void> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: job.cineClubId } });
+    if (!club) throw new Error('CineClub introuvable');
+    if (!club.sonarrBaseUrl || !club.sonarrApiKey) throw new Error('Sonarr non configuré');
+    if (!job.tmdbId) throw new Error('tmdbId manquant');
+
+    await this.updateStatus(job, JobStatus.IN_PROGRESS, { startedAt: new Date(), attempts: { increment: 1 } });
+
+    const apiKey = this.crypto.decrypt(club.sonarrApiKey);
+    const base = club.sonarrBaseUrl.replace(/\/$/, '');
+    const headers = { 'X-Api-Key': apiKey };
+
+    // Sonarr n'expose pas /series?tmdbId — on itère sur toutes les séries.
+    const seriesRes = await fetch(`${base}/api/v3/series`, {
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!seriesRes.ok) {
+      const body = await seriesRes.text().catch(() => '');
+      throw new Error(`Sonarr series ${seriesRes.status}: ${body.slice(0, 500)}`);
+    }
+    const allSeries = (await seriesRes.json()) as Array<{ id: number; tmdbId?: number | null }>;
+    const series = allSeries.find((s) => s.tmdbId === job.tmdbId);
+    if (!series) {
+      this.logger.log(`Job ${job.id} Sonarr: tmdbId=${job.tmdbId} introuvable — déjà supprimé`);
+      await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+      return;
+    }
+
+    // Cas épisode unique : on supprime juste l'episodefile correspondant.
+    if (job.episodeId) {
+      const filesRes = await fetch(`${base}/api/v3/episodefile?seriesId=${series.id}`, {
+        headers,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!filesRes.ok) {
+        const body = await filesRes.text().catch(() => '');
+        throw new Error(`Sonarr episodefile ${filesRes.status}: ${body.slice(0, 500)}`);
+      }
+      const files = (await filesRes.json()) as Array<{ id: number; path: string; seasonNumber?: number }>;
+
+      // Match prioritaire par sourcePath ; fallback par seasonNumber si non trouvé.
+      let target: { id: number; path: string } | undefined;
+      if (job.sourcePath) {
+        target = files.find((f) => f.path === job.sourcePath);
+      }
+      if (!target && job.seasonNumber != null) {
+        // Heuristique : Sonarr et Nasflix ont parfois des chemins différents (rsync vers
+        // dossier NAS distinct). On matche sur le nom de fichier seul.
+        const wantedFilename = job.sourcePath?.split('/').pop();
+        if (wantedFilename) {
+          target = files.find((f) => f.path.endsWith('/' + wantedFilename));
+        }
+      }
+      if (!target) {
+        this.logger.log(`Job ${job.id} Sonarr: episodefile introuvable pour ${job.sourcePath} — déjà supprimé`);
+        await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+        return;
+      }
+
+      const delRes = await fetch(`${base}/api/v3/episodefile/${target.id}`, {
+        method: 'DELETE',
+        headers,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!delRes.ok && delRes.status !== 404) {
+        const body = await delRes.text().catch(() => '');
+        throw new Error(`Sonarr DELETE episodefile ${delRes.status}: ${body.slice(0, 500)}`);
+      }
+      await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+      return;
+    }
+
+    // Cas série entière.
+    const delUrl = `${base}/api/v3/series/${series.id}?deleteFiles=true&addImportListExclusion=false`;
+    const delRes = await fetch(delUrl, {
+      method: 'DELETE',
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!delRes.ok && delRes.status !== 404) {
+      const body = await delRes.text().catch(() => '');
+      throw new Error(`Sonarr DELETE series ${delRes.status}: ${body.slice(0, 500)}`);
     }
     await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
   }

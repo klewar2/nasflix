@@ -102,6 +102,7 @@ export class JobsService {
   async createJellyfinDeletionJob(input: {
     cineClubId: number;
     mediaId: number;
+    episodeId?: number | null;
     jellyfinItemId: string;
     triggeredBy?: string | null;
   }): Promise<JobRow> {
@@ -112,7 +113,85 @@ export class JobsService {
         source: JobSource.MANUAL,
         status: JobStatus.PENDING,
         mediaId: input.mediaId,
+        episodeId: input.episodeId ?? null,
         jellyfinItemId: input.jellyfinItemId,
+        triggeredBy: input.triggeredBy ?? null,
+      },
+    });
+    await this.enqueueRun(job.id);
+    return job;
+  }
+
+  async createNasDeletionJob(input: {
+    cineClubId: number;
+    sourcePath: string;
+    fileName?: string | null;
+    mediaId?: number | null;
+    episodeId?: number | null;
+    triggeredBy?: string | null;
+  }): Promise<JobRow> {
+    const job = await this.prisma.job.create({
+      data: {
+        cineClubId: input.cineClubId,
+        kind: JobKind.DELETE_FROM_NAS,
+        source: JobSource.MANUAL,
+        status: JobStatus.PENDING,
+        sourcePath: input.sourcePath,
+        fileName: input.fileName ?? input.sourcePath.split('/').pop() ?? null,
+        mediaId: input.mediaId ?? null,
+        episodeId: input.episodeId ?? null,
+        triggeredBy: input.triggeredBy ?? null,
+      },
+    });
+    await this.enqueueRun(job.id);
+    return job;
+  }
+
+  async createRadarrDeletionJob(input: {
+    cineClubId: number;
+    mediaId: number;
+    tmdbId: number;
+    triggeredBy?: string | null;
+  }): Promise<JobRow> {
+    const job = await this.prisma.job.create({
+      data: {
+        cineClubId: input.cineClubId,
+        kind: JobKind.DELETE_FROM_RADARR,
+        source: JobSource.MANUAL,
+        status: JobStatus.PENDING,
+        mediaId: input.mediaId,
+        tmdbId: input.tmdbId,
+        tmdbType: 'movie',
+        triggeredBy: input.triggeredBy ?? null,
+      },
+    });
+    await this.enqueueRun(job.id);
+    return job;
+  }
+
+  async createSonarrDeletionJob(input: {
+    cineClubId: number;
+    mediaId: number;
+    tmdbId: number;
+    episodeId?: number | null;
+    sourcePath?: string | null;
+    seasonNumber?: number | null;
+    episodeNumber?: number | null;
+    triggeredBy?: string | null;
+  }): Promise<JobRow> {
+    const job = await this.prisma.job.create({
+      data: {
+        cineClubId: input.cineClubId,
+        kind: JobKind.DELETE_FROM_SONARR,
+        source: JobSource.MANUAL,
+        status: JobStatus.PENDING,
+        mediaId: input.mediaId,
+        episodeId: input.episodeId ?? null,
+        tmdbId: input.tmdbId,
+        tmdbType: 'tv',
+        sourcePath: input.sourcePath ?? null,
+        seasonNumber: input.seasonNumber ?? null,
+        episodeNumber: input.episodeNumber ?? null,
         triggeredBy: input.triggeredBy ?? null,
       },
     });

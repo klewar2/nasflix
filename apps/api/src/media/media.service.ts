@@ -1,12 +1,18 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../common/prisma.service';
 import { Media, MediaType, SyncStatus } from '@prisma/client';
+import { JobsService } from '../jobs/jobs.service';
+import { JobsGateway } from '../jobs/jobs.gateway';
 
 @Injectable()
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => JobsService)) private readonly jobsService: JobsService,
+    @Inject(forwardRef(() => JobsGateway)) private readonly jobsGateway: JobsGateway,
+  ) {}
 
   private readonly includeRelations = {
     genres: { include: { genre: true } },
@@ -209,9 +215,180 @@ export class MediaService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async delete(id: number, cineClubId: number) {
-    await this.findById(id, cineClubId);
-    return this.prisma.media.delete({ where: { id } });
+  async delete(id: number, cineClubId: number, triggeredBy?: string | null) {
+    const media = await this.prisma.media.findFirst({
+      where: { id, cineClubId },
+      include: {
+        seasons: { include: { episodes: true } },
+      },
+    });
+    if (!media) throw new NotFoundException('Média introuvable');
+
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    const jobsEnqueued: Array<{ kind: string; jobId: number }> = [];
+
+    const safeEnqueue = async (kind: string, fn: () => Promise<{ id: number }>) => {
+      try {
+        const job = await fn();
+        this.jobsGateway.emitJobCreated(cineClubId, job as never);
+        jobsEnqueued.push({ kind, jobId: job.id });
+      } catch (err) {
+        this.logger.warn(`Enqueue ${kind} échoué pour Media ${id}: ${err}`);
+      }
+    };
+
+    // 1. Fichiers NAS
+    if (media.type === MediaType.MOVIE) {
+      if (media.nasPath) {
+        await safeEnqueue('DELETE_FROM_NAS', () =>
+          this.jobsService.createNasDeletionJob({
+            cineClubId,
+            sourcePath: media.nasPath,
+            fileName: media.nasFilename,
+            mediaId: media.id,
+            triggeredBy,
+          }),
+        );
+      }
+    } else {
+      for (const season of media.seasons) {
+        for (const ep of season.episodes) {
+          if (ep.nasPath) {
+            await safeEnqueue('DELETE_FROM_NAS', () =>
+              this.jobsService.createNasDeletionJob({
+                cineClubId,
+                sourcePath: ep.nasPath!,
+                fileName: ep.nasFilename,
+                mediaId: media.id,
+                episodeId: ep.id,
+                triggeredBy,
+              }),
+            );
+          }
+        }
+      }
+    }
+
+    // 2. Jellyfin (item au niveau média + chaque épisode qui a son propre item)
+    if (media.jellyfinItemId) {
+      await safeEnqueue('DELETE_FROM_JELLYFIN', () =>
+        this.jobsService.createJellyfinDeletionJob({
+          cineClubId,
+          mediaId: media.id,
+          jellyfinItemId: media.jellyfinItemId!,
+          triggeredBy,
+        }),
+      );
+    }
+    for (const season of media.seasons) {
+      for (const ep of season.episodes) {
+        if (ep.jellyfinItemId) {
+          await safeEnqueue('DELETE_FROM_JELLYFIN', () =>
+            this.jobsService.createJellyfinDeletionJob({
+              cineClubId,
+              mediaId: media.id,
+              episodeId: ep.id,
+              jellyfinItemId: ep.jellyfinItemId!,
+              triggeredBy,
+            }),
+          );
+        }
+      }
+    }
+
+    // 3. Radarr / Sonarr
+    if (media.tmdbId && club) {
+      if (media.type === MediaType.MOVIE && club.radarrBaseUrl && club.radarrApiKey) {
+        await safeEnqueue('DELETE_FROM_RADARR', () =>
+          this.jobsService.createRadarrDeletionJob({
+            cineClubId,
+            mediaId: media.id,
+            tmdbId: media.tmdbId!,
+            triggeredBy,
+          }),
+        );
+      } else if (media.type === MediaType.SERIES && club.sonarrBaseUrl && club.sonarrApiKey) {
+        await safeEnqueue('DELETE_FROM_SONARR', () =>
+          this.jobsService.createSonarrDeletionJob({
+            cineClubId,
+            mediaId: media.id,
+            tmdbId: media.tmdbId!,
+            triggeredBy,
+          }),
+        );
+      }
+    }
+
+    // 4. Suppression DB (cascade Prisma sur Season/Episode/MediaGenre/MediaPerson)
+    await this.prisma.media.delete({ where: { id } });
+
+    return { deleted: true, jobsEnqueued };
+  }
+
+  async deleteEpisode(mediaId: number, episodeId: number, cineClubId: number, triggeredBy?: string | null) {
+    const media = await this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } });
+    if (!media) throw new NotFoundException('Média introuvable');
+
+    const episode = await this.prisma.episode.findFirst({
+      where: { id: episodeId, season: { mediaId } },
+      include: { season: true },
+    });
+    if (!episode) throw new NotFoundException('Épisode introuvable');
+
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    const jobsEnqueued: Array<{ kind: string; jobId: number }> = [];
+
+    const safeEnqueue = async (kind: string, fn: () => Promise<{ id: number }>) => {
+      try {
+        const job = await fn();
+        this.jobsGateway.emitJobCreated(cineClubId, job as never);
+        jobsEnqueued.push({ kind, jobId: job.id });
+      } catch (err) {
+        this.logger.warn(`Enqueue ${kind} échoué pour Episode ${episodeId}: ${err}`);
+      }
+    };
+
+    if (episode.nasPath) {
+      await safeEnqueue('DELETE_FROM_NAS', () =>
+        this.jobsService.createNasDeletionJob({
+          cineClubId,
+          sourcePath: episode.nasPath!,
+          fileName: episode.nasFilename,
+          mediaId,
+          episodeId,
+          triggeredBy,
+        }),
+      );
+    }
+    if (episode.jellyfinItemId) {
+      await safeEnqueue('DELETE_FROM_JELLYFIN', () =>
+        this.jobsService.createJellyfinDeletionJob({
+          cineClubId,
+          mediaId,
+          episodeId,
+          jellyfinItemId: episode.jellyfinItemId!,
+          triggeredBy,
+        }),
+      );
+    }
+    if (media.tmdbId && club?.sonarrBaseUrl && club?.sonarrApiKey) {
+      await safeEnqueue('DELETE_FROM_SONARR', () =>
+        this.jobsService.createSonarrDeletionJob({
+          cineClubId,
+          mediaId,
+          tmdbId: media.tmdbId!,
+          episodeId,
+          sourcePath: episode.nasPath ?? null,
+          seasonNumber: episode.season.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          triggeredBy,
+        }),
+      );
+    }
+
+    await this.prisma.episode.delete({ where: { id: episodeId } });
+
+    return { deleted: true, jobsEnqueued };
   }
 
   async update(id: number, cineClubId: number, data: Partial<{ titleVf: string; titleOriginal: string; overview: string; tmdbId: number | null; releaseYear: number; syncStatus: SyncStatus; syncError: string | null; type: MediaType }>) {

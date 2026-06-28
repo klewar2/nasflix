@@ -313,7 +313,7 @@ export default function MediaListPage() {
                         <Button variant="ghost" size="icon" onClick={() => syncMutation.mutate(m.id)} disabled={syncMutation.isPending} title="Re-synchroniser">
                           <RefreshCw className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Supprimer ce média ?')) deleteMutation.mutate(m.id); }} title="Supprimer">
+                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Supprimer ce média (NAS + Jellyfin + Radarr/Sonarr) ? Cette action lance des jobs en arrière-plan.')) deleteMutation.mutate(m.id); }} title="Supprimer">
                           <Trash2 className="w-4 h-4 text-destructive" />
                         </Button>
                       </div>

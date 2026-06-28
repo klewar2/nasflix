@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { JobsController } from './jobs.controller';
 import { JobsService } from './jobs.service';
@@ -15,7 +15,7 @@ import { METADATA_SYNC_QUEUE } from '../sync/sync.constants';
 @Module({
   imports: [
     NasModule,
-    MediaModule,
+    forwardRef(() => MediaModule),
     MailModule,
     MetadataModule,
     BullModule.registerQueue({

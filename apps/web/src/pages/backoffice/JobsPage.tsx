@@ -15,6 +15,9 @@ const TAB_LABELS: Record<JobKind, string> = {
   DOWNLOAD_TO_NAS: 'Transferts',
   DELETE_FROM_SEEDBOX: 'Suppressions seedbox',
   DELETE_FROM_JELLYFIN: 'Suppressions Jellyfin',
+  DELETE_FROM_NAS: 'Suppressions NAS',
+  DELETE_FROM_RADARR: 'Suppressions Radarr',
+  DELETE_FROM_SONARR: 'Suppressions Sonarr',
 };
 
 const STATUS_VARIANT: Record<string, 'success' | 'destructive' | 'secondary' | 'default'> = {

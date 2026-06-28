@@ -1,5 +1,5 @@
 import { useParams, Link } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, resolveApiUrl } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
@@ -14,15 +14,18 @@ type SeasonsSectionProps = {
   media: MediaDetailResponse;
   mediaTitle: string;
   isMember: boolean;
+  isAdmin: boolean;
   nasOnline: boolean;
   loadingId: string | null;
   handleDownload: (fetchUrl: () => Promise<{ url: string }>, filename: string, key: string) => void;
+  onDeleteEpisode: (episodeId: number) => void;
+  deletingEpisodeId: number | null;
 };
 
 const isEpOnNas = (ep: EpisodeResponse) => !!ep.nasPath && !ep.nasDeletedAt;
 const isEpAvailable = (ep: EpisodeResponse) => isEpOnNas(ep) || !!ep.jellyfinItemId;
 
-function SeasonsSection({ media, mediaTitle, isMember, nasOnline, loadingId, handleDownload }: SeasonsSectionProps) {
+function SeasonsSection({ media, mediaTitle, isMember, isAdmin, nasOnline, loadingId, handleDownload, onDeleteEpisode, deletingEpisodeId }: SeasonsSectionProps) {
   // Sort seasons descending, keep only seasons that have at least one available episode
   const sortedSeasons = [...(media.seasons ?? [])]
     .sort((a, b) => b.seasonNumber - a.seasonNumber)
@@ -118,6 +121,16 @@ function SeasonsSection({ media, mediaTitle, isMember, nasOnline, loadingId, han
                           {loadingId === `dl-${epKey}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                         </button>
                       )}
+                      {isAdmin && (
+                        <button
+                          disabled={deletingEpisodeId === ep.id}
+                          onClick={() => onDeleteEpisode(ep.id)}
+                          className="p-1.5 rounded bg-zinc-800 hover:bg-red-950 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-red-400 transition-colors border border-zinc-700"
+                          title="Supprimer cet épisode (NAS + Jellyfin + Sonarr)"
+                        >
+                          {deletingEpisodeId === ep.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -140,11 +153,22 @@ export default function MediaDetailPage() {
   const [copied, setCopied] = useState(false);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
+  const queryClient = useQueryClient();
   const { data: media, isLoading } = useQuery({
     queryKey: ['media', id],
     queryFn: () => api.getMediaById(Number(id)),
     enabled: !!id,
   });
+
+  const deleteEpisodeMutation = useMutation({
+    mutationFn: (episodeId: number) => api.deleteEpisode(Number(id), episodeId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['media', id] }),
+  });
+
+  const handleDeleteEpisode = (episodeId: number) => {
+    if (!confirm('Supprimer cet épisode (NAS + Jellyfin + Sonarr) ? Cette action lance des jobs en arrière-plan.')) return;
+    deleteEpisodeMutation.mutate(episodeId);
+  };
 
   const { data: nasStatus } = useQuery({
     queryKey: ['nas-status'],
@@ -365,9 +389,12 @@ export default function MediaDetailPage() {
               media={media}
               mediaTitle={mediaTitle}
               isMember={isMember}
+              isAdmin={isAdmin}
               nasOnline={nasOnline}
               loadingId={loadingId}
               handleDownload={handleDownload}
+              onDeleteEpisode={handleDeleteEpisode}
+              deletingEpisodeId={deleteEpisodeMutation.isPending ? (deleteEpisodeMutation.variables ?? null) : null}
             />
           )}
         </div>
@@ -391,21 +418,6 @@ function SourcesBlock({ media, onAction }: { media: MediaDetailResponse; onActio
     try {
       const r = await api.triggerManualTransfer({ mediaId: media.id });
       setMsg(`Transfert lancé (job #${r.jobId})`);
-      onAction();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Erreur');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const triggerJellyfinDelete = async () => {
-    if (!confirm('Supprimer ce média de Jellyfin ? (NAS et seedbox ne sont pas affectés)')) return;
-    setBusy('del-jf');
-    setMsg(null);
-    try {
-      const r = await api.triggerJellyfinDelete(media.id);
-      setMsg(`Suppression Jellyfin programmée (job #${r.jobId})`);
       onAction();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Erreur');
@@ -440,16 +452,6 @@ function SourcesBlock({ media, onAction }: { media: MediaDetailResponse; onActio
             >
               {busy === 'transfer' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
               Télécharger sur le NAS
-            </button>
-          )}
-          {onJellyfin && (
-            <button
-              disabled={busy === 'del-jf'}
-              onClick={triggerJellyfinDelete}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-violet-800 hover:bg-violet-700 disabled:opacity-40 text-xs text-white"
-            >
-              {busy === 'del-jf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Supprimer de Jellyfin
             </button>
           )}
         </div>

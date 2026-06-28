@@ -1,4 +1,11 @@
-export const JOB_KINDS = ['DOWNLOAD_TO_NAS', 'DELETE_FROM_SEEDBOX', 'DELETE_FROM_JELLYFIN'] as const;
+export const JOB_KINDS = [
+  'DOWNLOAD_TO_NAS',
+  'DELETE_FROM_SEEDBOX',
+  'DELETE_FROM_JELLYFIN',
+  'DELETE_FROM_NAS',
+  'DELETE_FROM_RADARR',
+  'DELETE_FROM_SONARR',
+] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 export const JOB_SOURCES = ['RADARR', 'SONARR', 'MANUAL', 'NAS_SYNC'] as const;
