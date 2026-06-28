@@ -237,9 +237,9 @@ export class MediaService {
       }
     };
 
-    // 1. Fichiers NAS
+    // 1. Fichiers NAS (skip si déjà marqués supprimés → la sync NAS l'a vu disparaître)
     if (media.type === MediaType.MOVIE) {
-      if (media.nasPath) {
+      if (media.nasPath && !media.nasDeletedAt) {
         await safeEnqueue('DELETE_FROM_NAS', () =>
           this.jobsService.createNasDeletionJob({
             cineClubId,
@@ -253,7 +253,7 @@ export class MediaService {
     } else {
       for (const season of media.seasons) {
         for (const ep of season.episodes) {
-          if (ep.nasPath) {
+          if (ep.nasPath && !ep.nasDeletedAt) {
             await safeEnqueue('DELETE_FROM_NAS', () =>
               this.jobsService.createNasDeletionJob({
                 cineClubId,
@@ -348,7 +348,7 @@ export class MediaService {
       }
     };
 
-    if (episode.nasPath) {
+    if (episode.nasPath && !episode.nasDeletedAt) {
       await safeEnqueue('DELETE_FROM_NAS', () =>
         this.jobsService.createNasDeletionJob({
           cineClubId,

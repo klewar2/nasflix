@@ -9,6 +9,7 @@ import { parseMediaFilename, ParsedMediaInfo } from '../common/media-parser';
 import { METADATA_SYNC_QUEUE } from './sync.constants';
 import { SyncGateway } from './sync.gateway';
 import { JobsService } from '../jobs/jobs.service';
+import { MediaService } from '../media/media.service';
 
 @Injectable()
 export class SyncService {
@@ -22,6 +23,7 @@ export class SyncService {
     @InjectQueue(METADATA_SYNC_QUEUE) private readonly metadataQueue: Queue,
     @Inject(forwardRef(() => SyncGateway)) private readonly syncGateway: SyncGateway,
     private readonly jobsService: JobsService,
+    private readonly mediaService: MediaService,
   ) {}
 
   async fullSync(cineClubId: number, nasUsername: string, nasPassword: string, triggeredBy = 'manual') {
@@ -1153,6 +1155,72 @@ export class SyncService {
         delayMs,
         triggeredBy: 'nas-sync',
       });
+    }
+
+    // Cascade complète : pour chaque média/épisode disparu, on déclenche
+    // la même suppression que le bouton backoffice (Jellyfin + Radarr/Sonarr + DB).
+    // DELETE_FROM_NAS est auto-skippé par MediaService car nasDeletedAt est déjà set.
+    await this.cascadeFullDeletion(cineClubId, mediasToMark, episodesToMark);
+  }
+
+  /**
+   * Pour chaque fichier disparu du NAS, déclenche la cascade complète identique
+   * au bouton "Supprimer" du backoffice :
+   *  - Films (MOVIE) → suppression Media DB + Jellyfin + Radarr
+   *  - Épisodes      → suppression Episode DB + Jellyfin (per-ep) + Sonarr episodefile
+   *  - Si une série se retrouve à 0 épisode après les suppressions → suppression
+   *    de la série entière (Media DB + Sonarr series).
+   */
+  private async cascadeFullDeletion(
+    cineClubId: number,
+    mediasToMark: Array<{ id: number }>,
+    episodesToMark: Array<{ id: number }>,
+  ): Promise<void> {
+    const triggeredBy = 'nas-sync';
+    const affectedSeriesIds = new Set<number>();
+
+    // 1. Films : cascade complète Media (la ligne Media est supprimée).
+    for (const m of mediasToMark) {
+      const media = await this.prisma.media.findUnique({ where: { id: m.id }, select: { id: true, type: true } });
+      if (!media) continue;
+      if (media.type !== MediaType.MOVIE) continue; // Series Media row is just an anchor — ne pas la cascade ici
+      try {
+        await this.mediaService.delete(media.id, cineClubId, triggeredBy);
+      } catch (err) {
+        this.logger.warn(`Cascade nas-sync échouée pour Media ${media.id}: ${err}`);
+      }
+    }
+
+    // 2. Épisodes : cascade épisode + on note l'ID de série pour le post-process.
+    for (const e of episodesToMark) {
+      const ep = await this.prisma.episode.findUnique({
+        where: { id: e.id },
+        select: { id: true, season: { select: { mediaId: true } } },
+      });
+      if (!ep) continue;
+      affectedSeriesIds.add(ep.season.mediaId);
+      try {
+        await this.mediaService.deleteEpisode(ep.season.mediaId, ep.id, cineClubId, triggeredBy);
+      } catch (err) {
+        this.logger.warn(`Cascade nas-sync échouée pour Episode ${ep.id}: ${err}`);
+      }
+    }
+
+    // 3. Post-process : pour chaque série affectée, si plus aucun Episode ne reste
+    // (ou aucun avec un fichier NAS), on supprime la série entière (cascade Sonarr series).
+    for (const seriesId of affectedSeriesIds) {
+      const series = await this.prisma.media.findUnique({
+        where: { id: seriesId },
+        select: { id: true, type: true, seasons: { select: { episodes: { select: { id: true } } } } },
+      });
+      if (!series || series.type !== MediaType.SERIES) continue;
+      const remaining = series.seasons.reduce((acc, s) => acc + s.episodes.length, 0);
+      if (remaining > 0) continue;
+      try {
+        await this.mediaService.delete(series.id, cineClubId, triggeredBy);
+      } catch (err) {
+        this.logger.warn(`Cascade nas-sync échouée pour série vide ${series.id}: ${err}`);
+      }
     }
   }
 

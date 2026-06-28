@@ -1523,11 +1523,14 @@ export class NasService implements OnModuleInit {
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {
+    // SYNO.FileStation.Delete attend `path` comme JSON array (même pour un seul fichier),
+    // sinon Synology cherche un fichier nommé littéralement comme la chaîne et renvoie 408.
+    // method=delete est synchrone : success=true ne remonte que si le fichier est réellement supprimé.
     const result = await this.request(session.baseUrl, {
       api: 'SYNO.FileStation.Delete',
       version: '2',
-      method: 'start',
-      path,
+      method: 'delete',
+      path: JSON.stringify([path]),
       _sid: session.sid,
     });
 
