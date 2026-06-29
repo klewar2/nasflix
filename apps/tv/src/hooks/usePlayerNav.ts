@@ -156,7 +156,10 @@ export function usePlayerNav({
   const maxTransportIdx = hasNextEpisode ? 4 : 3;
 
   const hasTracks = effectiveAudioTracks.length > 0;
-  const hasMenu = effectiveAudioTracks.length > 1 || effectiveSubtitles.length > 0;
+  // Le menu (Audio / Sous-titres) doit toujours être ouvrable : le sondage des pistes peut
+  // arriver en différé (NAS) et la section Sous-titres reste utile même avec une seule piste audio.
+  // Sans ça, DOWN depuis la barre de transport ne fait rien → navigation « bloquée » sur le scrub.
+  const hasMenu = true;
   const currentItems: TrackItem[] = menuSection === 'audio'
     ? effectiveAudioTracks
     : [{ index: -1, title: 'Désactivés', language: '', codec: '' }, ...effectiveSubtitles];

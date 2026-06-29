@@ -292,7 +292,11 @@ export default function VideoPlayer({
             ))}
             <div style={{ flex: 1 }} />
             <span className="chip" style={{ fontSize: '0.3rem' }}>
-              {nav.seekMode ? '◀▶ ±30s · OK valider · BACK annuler' : '↑ Scrub · ↓ Transport · ←→ ±10s'}
+              {nav.seekMode
+                ? '◀▶ ±30s · OK valider · BACK annuler'
+                : nav.menuOpen
+                  ? '↑↓ Choisir · ←→ Audio / Sous-titres · OK valider'
+                  : '↑ Scrub · ↓ Audio / Sous-titres · ←→ ±10s'}
             </span>
           </div>
 
