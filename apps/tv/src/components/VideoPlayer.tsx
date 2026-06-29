@@ -5,7 +5,7 @@ import { useVideoCore } from '../hooks/useVideoCore';
 import { useVideoTracks } from '../hooks/useVideoTracks';
 import { useWatchProgress } from '../hooks/useWatchProgress';
 import { usePlayerNav } from '../hooks/usePlayerNav';
-import { channelLabel, formatTime, langName } from '../hooks/utils';
+import { channelLabel, formatTime, isTextSubtitleCodec, langName } from '../hooks/utils';
 
 interface Props {
   url: string;
@@ -337,6 +337,11 @@ export default function VideoPlayer({
                       {audioItem && audioItem.codec && (
                         <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'var(--text-dim)', marginTop: '1px' }}>
                           {[audioItem.codec, (audioItem.channels ?? 0) > 0 ? channelLabel(audioItem.channels!) : ''].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
+                      {!audioItem && item.index !== -1 && item.codec && (
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: isTextSubtitleCodec(item.codec) ? 'var(--text-dim)' : 'var(--accent)', marginTop: '1px' }}>
+                          {item.codec}{isTextSubtitleCodec(item.codec) ? '' : ' · image, non supporté'}
                         </div>
                       )}
                     </div>

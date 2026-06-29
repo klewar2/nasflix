@@ -180,9 +180,9 @@ export function useVideoTracks({
       //    nativement : chargement direct par la TV depuis le NAS, sans Railway ni FFmpeg.
       if (nativeSubtitleTracks.length > 0) return nativeSubtitleTracks;
       // 2) Sinon : liste via le sondage FFmpeg (Railway), VTT extrait à la demande.
-      //    nasTrackIdx = index FFmpeg réel (0:s:N).
+      //    nasTrackIdx = index FFmpeg réel (0:s:N). On liste TOUTES les pistes détectées
+      //    (y compris image/PGS) — le codec est affiché dans le menu pour diagnostic.
       return (tracks?.subtitles ?? [])
-        .filter(t => isTextSubtitleCodec(t.codec))
         .map((t, i) => ({
           index: i,
           nasTrackIdx: t.index,
@@ -262,6 +262,13 @@ export function useVideoTracks({
     // NAS via sondage FFmpeg : VTT extrait à la demande côté backend (lent la 1re fois, puis caché).
     // Les pistes natives webOS (sans nasTrackIdx) retombent plus bas sur le rendu natif.
     if (sourceType === 'NAS' && track.nasTrackIdx !== undefined) {
+      // Sous-titre image (PGS/VOBSUB) : non convertible en VTT sans OCR → on n'extrait pas.
+      if (!isTextSubtitleCodec(track.codec)) {
+        console.warn(`[NasflixTV] subtitle track ${track.nasTrackIdx} codec=${track.codec} (image) non supporté`);
+        setSubtitleCues([]);
+        setActiveSubtitle(index);
+        return;
+      }
       const cacheKey = track.nasTrackIdx ?? index;
       const cached = cueCacheRef.current.get(cacheKey);
       if (cached) {
