@@ -220,24 +220,32 @@ export class NasController {
     return { saved: true };
   }
 
-  // ── NAS subtitle cache ─────────────────────────────────────────────────────
+  // ── NAS subtitle cache (extraction VTT d'une piste à la demande) ────────────
 
-  @Get('subtitles/episode/:episodeId')
-  async getEpisodeSubtitles(
+  @Get('subtitles/episode/:episodeId/track/:trackIdx')
+  async getEpisodeSubtitleTrack(
     @Param('episodeId', ParseIntPipe) episodeId: number,
+    @Param('trackIdx', ParseIntPipe) trackIdx: number,
+    @Query('lang') lang: string | undefined,
+    @Query('title') title: string | undefined,
+    @Query('codec') codec: string | undefined,
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    return this.nasService.getNasSubtitlesForEpisode(episodeId, req.user.sub, req.user.cineClubId);
+    return this.nasService.getNasSubtitleTrackForEpisode(episodeId, trackIdx, req.user.sub, req.user.cineClubId, { language: lang, title, codec });
   }
 
-  @Get('subtitles/:mediaId')
-  async getMediaSubtitles(
+  @Get('subtitles/:mediaId/track/:trackIdx')
+  async getMediaSubtitleTrack(
     @Param('mediaId', ParseIntPipe) mediaId: number,
+    @Param('trackIdx', ParseIntPipe) trackIdx: number,
+    @Query('lang') lang: string | undefined,
+    @Query('title') title: string | undefined,
+    @Query('codec') codec: string | undefined,
     @Req() req: { user: JwtPayload },
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
-    return this.nasService.getNasSubtitlesForMedia(mediaId, req.user.sub, req.user.cineClubId);
+    return this.nasService.getNasSubtitleTrackForMedia(mediaId, trackIdx, req.user.sub, req.user.cineClubId, { language: lang, title, codec });
   }
 
   // ── Track probing ──────────────────────────────────────────────────────────

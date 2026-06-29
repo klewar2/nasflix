@@ -19,6 +19,7 @@ interface Return {
   videoRef: RefObject<HTMLVideoElement | null>;
   hlsRef: MutableRefObject<Hls | null>;
   playing: boolean;
+  paused: boolean;
   currentTime: number;
   isBuffering: boolean;
   videoError: { code: number; message: string } | null;
@@ -37,6 +38,7 @@ export function useVideoCore({ url, isHls, mediaId, episodeId, savedProgress }: 
   const hlsRef = useRef<Hls | null>(null);
 
   const [playing, setPlaying] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isBuffering, setIsBuffering] = useState(true);
   const [videoError, setVideoError] = useState<{ code: number; message: string } | null>(null);
@@ -61,10 +63,15 @@ export function useVideoCore({ url, isHls, mediaId, episodeId, savedProgress }: 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
+    const onPlay = () => { setPlaying(true); setPaused(false); };
+    const onPause = () => { setPlaying(false); setPaused(true); };
     let lastUpdate = 0;
+    let lastTime = video.currentTime;
     const onTime = () => {
+      // Frames qui avancent ⇒ aucun buffering : rattrape un waiting/stalled parasite resté affiché
+      // (sinon le loader reste bloqué jusqu'à un cycle pause→lecture).
+      if (!video.paused && video.currentTime > lastTime + 0.01) setIsBuffering(false);
+      lastTime = video.currentTime;
       const now = Date.now();
       if (now - lastUpdate > 500) { lastUpdate = now; setCurrentTime(video.currentTime); }
     };
@@ -163,7 +170,7 @@ export function useVideoCore({ url, isHls, mediaId, episodeId, savedProgress }: 
   }, [url, isHls]);
 
   return {
-    videoRef, hlsRef, playing, currentTime, isBuffering, videoError,
+    videoRef, hlsRef, playing, paused, currentTime, isBuffering, videoError,
     hlsAudioTracks, setHlsAudioTracks, activeAudio, setActiveAudio,
     urlChangeKey, debugLogs, dlog, tvLog,
   };

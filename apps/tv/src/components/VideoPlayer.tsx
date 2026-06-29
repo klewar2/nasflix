@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { MediaTracks, NasSubtitleTrack } from '../lib/api';
+import type { MediaTracks } from '../lib/api';
 import { watchProgress } from '../lib/progress';
 import { useVideoCore } from '../hooks/useVideoCore';
 import { useVideoTracks } from '../hooks/useVideoTracks';
@@ -19,7 +19,6 @@ interface Props {
   jellyfinItemId?: string;
   jellyfinBaseUrl?: string;
   jellyfinApiToken?: string;
-  nasSubtitleCache?: NasSubtitleTrack[];
   videoQuality?: string;
   hdr?: boolean;
   onBack: () => void;
@@ -29,7 +28,7 @@ interface Props {
 
 export default function VideoPlayer({
   url, isHls, durationSeconds, title, tracks, mediaId, episodeId,
-  sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken, nasSubtitleCache,
+  sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
   videoQuality, hdr, onBack, onNextEpisode, onPrevEpisode,
 }: Props) {
   // savedProgress computed once (synchronous localStorage read)
@@ -37,7 +36,7 @@ export default function VideoPlayer({
   const savedProgress = savedProgressRef.current;
 
   const {
-    videoRef, hlsRef, playing, currentTime, isBuffering, videoError,
+    videoRef, hlsRef, playing, paused, currentTime, isBuffering, videoError,
     hlsAudioTracks, setHlsAudioTracks, activeAudio, setActiveAudio,
     urlChangeKey, debugLogs, tvLog: _tvLog,
   } = useVideoCore({ url, isHls, mediaId, episodeId, durationSeconds, savedProgress });
@@ -53,7 +52,7 @@ export default function VideoPlayer({
   } = useVideoTracks({
     videoRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
     tracks, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
-    currentTime, mediaId, episodeId, urlChangeKey, nasSubtitleCache,
+    currentTime, mediaId, episodeId, urlChangeKey,
   });
 
   const nav = usePlayerNav({
@@ -85,7 +84,7 @@ export default function VideoPlayer({
               background: "transparent",
               maxWidth: '100%',
             }}
-            // VTT may contain <b>/<i> — sourced from our own Jellyfin server
+            // VTT may contain <b>/<i> — sourced from our own NAS/Jellyfin extraction
             // eslint-disable-next-line react/no-danger
             dangerouslySetInnerHTML={{ __html: activeCueHtml }}
           />
@@ -105,8 +104,8 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {/* ── Buffering loader ─────────────────────────────────────────── */}
-      {isBuffering && !videoError && !showResume && (
+      {/* ── Buffering loader (jamais en pause) ───────────────────────── */}
+      {isBuffering && !paused && !videoError && !showResume && (
         <div style={{
           position: 'absolute', inset: 0,
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',

@@ -25,6 +25,12 @@ export function formatTime(s: number): string {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+// Sous-titres texte (convertibles en WebVTT) vs image (PGS/VOBSUB → OCR requis, non supporté).
+const TEXT_SUBTITLE_CODECS = ['SUBRIP', 'SRT', 'ASS', 'SSA', 'MOV_TEXT', 'WEBVTT', 'VTT', 'TEXT'];
+export function isTextSubtitleCodec(codec: string): boolean {
+  return TEXT_SUBTITLE_CODECS.includes((codec || '').toUpperCase());
+}
+
 export function channelLabel(n: number): string {
   if (n >= 8) return '7.1';
   if (n >= 6) return '5.1';

@@ -124,12 +124,24 @@ export function getEpisodeTracks(episodeId: number) {
   return request<MediaTracks>(`/nas/tracks/episode/${episodeId}`);
 }
 
-export function getNasSubtitles(mediaId: number) {
-  return request<NasSubtitleTrack[]>(`/nas/subtitles/${mediaId}`);
+type SubtitleMeta = { language?: string; title?: string; codec?: string };
+
+function subtitleMetaQuery(meta: SubtitleMeta = {}): string {
+  const q = new URLSearchParams();
+  if (meta.language) q.set('lang', meta.language);
+  if (meta.title) q.set('title', meta.title);
+  if (meta.codec) q.set('codec', meta.codec);
+  const s = q.toString();
+  return s ? `?${s}` : '';
 }
 
-export function getNasEpisodeSubtitles(episodeId: number) {
-  return request<NasSubtitleTrack[]>(`/nas/subtitles/episode/${episodeId}`);
+/** Extraction VTT d'une seule piste sous-titre NAS (à la demande, cachée côté backend). */
+export function getNasSubtitleTrack(mediaId: number, trackIdx: number, meta?: SubtitleMeta) {
+  return request<NasSubtitleTrack>(`/nas/subtitles/${mediaId}/track/${trackIdx}${subtitleMetaQuery(meta)}`);
+}
+
+export function getNasEpisodeSubtitleTrack(episodeId: number, trackIdx: number, meta?: SubtitleMeta) {
+  return request<NasSubtitleTrack>(`/nas/subtitles/episode/${episodeId}/track/${trackIdx}${subtitleMetaQuery(meta)}`);
 }
 
 export function getPreferences() {

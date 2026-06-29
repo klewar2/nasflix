@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
 import Hls from 'hls.js';
-import { getStreamUrl, getEpisodeStreamUrl } from '../lib/api';
-import type { MediaTracks, NasSubtitleTrack } from '../lib/api';
-import { HLS_CONFIG, langName, parseVTT } from './utils';
+import { getStreamUrl, getEpisodeStreamUrl, getNasSubtitleTrack, getNasEpisodeSubtitleTrack } from '../lib/api';
+import type { MediaTracks } from '../lib/api';
+import { HLS_CONFIG, isTextSubtitleCodec, langName, parseVTT } from './utils';
 import type { AudioTrack, SubtitleTrack } from './utils';
 import type { HlsAudioTrack } from './useVideoCore';
 
@@ -24,7 +24,6 @@ interface Params {
   mediaId: number;
   episodeId: number | undefined;
   urlChangeKey: number;
-  nasSubtitleCache?: NasSubtitleTrack[];
 }
 
 interface Return {
@@ -42,7 +41,7 @@ interface Return {
 export function useVideoTracks({
   videoRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
   tracks, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
-  currentTime, mediaId, episodeId, urlChangeKey, nasSubtitleCache,
+  currentTime, mediaId, episodeId, urlChangeKey,
 }: Params): Return {
   const [nativeAudioTracks, setNativeAudioTracks] = useState<AudioTrack[]>([]);
   const [nativeSubtitleTracks, setNativeSubtitleTracks] = useState<SubtitleTrack[]>([]);
@@ -61,15 +60,32 @@ export function useVideoTracks({
     cueCacheRef.current = new Map();
   }, [urlChangeKey]);
 
-  // Populate cue cache from NAS subtitle cache prop (VTT already extracted by backend)
+  // NAS : extraction VTT d'une piste à la demande (backend), mise en cache locale par index FFmpeg.
+  const fetchNasTrackCues = useCallback(async (track: SubtitleTrack) => {
+    const key = track.nasTrackIdx ?? track.index;
+    const existing = cueCacheRef.current.get(key);
+    if (existing) return existing;
+    const meta = { language: track.language, title: track.title, codec: track.codec };
+    const res = episodeId
+      ? await getNasEpisodeSubtitleTrack(episodeId, key, meta)
+      : await getNasSubtitleTrack(mediaId, key, meta);
+    const cues = parseVTT(res.vttContent);
+    cueCacheRef.current.set(key, cues);
+    return cues;
+  }, [episodeId, mediaId]);
+
+  // Background-preload preferred subtitle (fr > en) for NAS sources
   useEffect(() => {
-    if (sourceType !== 'NAS' || !nasSubtitleCache || nasSubtitleCache.length === 0) return;
-    for (const sub of nasSubtitleCache) {
-      if (!cueCacheRef.current.has(sub.trackIdx)) {
-        cueCacheRef.current.set(sub.trackIdx, parseVTT(sub.vttContent));
-      }
-    }
-  }, [sourceType, nasSubtitleCache]);
+    if (sourceType !== 'NAS') return;
+    const subs = (tracks?.subtitles ?? []).filter(t => isTextSubtitleCodec(t.codec));
+    if (subs.length === 0) return;
+    const preferred = subs.find(t => ['fr', 'fra', 'fre'].includes(t.language.toLowerCase()))
+      ?? subs.find(t => ['en', 'eng'].includes(t.language.toLowerCase()))
+      ?? subs[0];
+    if (!preferred || cueCacheRef.current.has(preferred.index)) return;
+    fetchNasTrackCues({ index: preferred.index, nasTrackIdx: preferred.index, language: preferred.language, title: preferred.title, codec: preferred.codec })
+      .catch(() => { /* préchargement best-effort */ });
+  }, [sourceType, tracks, fetchNasTrackCues]);
 
   // Background-preload preferred subtitle (fr > en) for SEEDBOX sources
   useEffect(() => {
@@ -158,18 +174,22 @@ export function useVideoTracks({
     : nativeAudioTracks.length > 0 ? nativeAudioTracks : (tracks?.audio ?? []);
 
   const effectiveSubtitles: SubtitleTrack[] = useMemo(() => {
-    if (sourceType === 'NAS' && nasSubtitleCache && nasSubtitleCache.length > 0) {
-      return nasSubtitleCache.map((t, i) => ({
-        index: i,
-        nasTrackIdx: t.trackIdx,
-        language: t.language,
-        title: t.title,
-        codec: t.codec,
-      }));
+    // NAS : liste issue du sondage rapide des pistes (filtrée aux sous-titres texte),
+    // le VTT est extrait à la demande. nasTrackIdx = index FFmpeg réel (0:s:N).
+    if (sourceType === 'NAS') {
+      return (tracks?.subtitles ?? [])
+        .filter(t => isTextSubtitleCodec(t.codec))
+        .map((t, i) => ({
+          index: i,
+          nasTrackIdx: t.index,
+          language: t.language,
+          title: t.title,
+          codec: t.codec,
+        }));
     }
     if (nativeSubtitleTracks.length > 0) return nativeSubtitleTracks;
     return tracks?.subtitles ?? [];
-  }, [sourceType, nasSubtitleCache, nativeSubtitleTracks, tracks]);
+  }, [sourceType, nativeSubtitleTracks, tracks]);
 
   const activeCueHtml = useMemo(() => {
     if (activeSubtitle === -1 || subtitleCues.length === 0) return null;
@@ -235,15 +255,27 @@ export function useVideoTracks({
     const track = effectiveSubtitles[index];
     if (!track) return;
 
-    // NAS: cues pre-loaded from backend extraction, served from cache
+    // NAS: VTT extrait à la demande côté backend (lent la 1re fois, puis caché), en parallèle de la vidéo
     if (sourceType === 'NAS') {
       const cacheKey = track.nasTrackIdx ?? index;
       const cached = cueCacheRef.current.get(cacheKey);
       if (cached) {
         setSubtitleCues(cached);
         setActiveSubtitle(index);
+        return;
       }
-      // If not in cache yet (extraction still in progress backend-side): no-op
+      setSubtitleLoading(true);
+      try {
+        const cues = await fetchNasTrackCues(track);
+        setSubtitleCues(cues);
+        setActiveSubtitle(index);
+        console.info(`[NasflixTV] NAS subtitles loaded ${JSON.stringify({ lang: track.language })}`);
+      } catch (e) {
+        console.error('[VideoPlayer] NAS subtitle fetch failed', e);
+        setSubtitleCues([]);
+      } finally {
+        setSubtitleLoading(false);
+      }
       return;
     }
 
@@ -281,7 +313,7 @@ export function useVideoTracks({
       for (let i = 0; i < tt.length; i++) tt[i].mode = (i === index) ? 'showing' : 'disabled';
     }
     setActiveSubtitle(index);
-  }, [videoRef, effectiveSubtitles, sourceType, jellyfinBaseUrl, jellyfinItemId, jellyfinApiToken]);
+  }, [videoRef, effectiveSubtitles, sourceType, jellyfinBaseUrl, jellyfinItemId, jellyfinApiToken, fetchNasTrackCues]);
 
   return {
     effectiveAudioTracks, effectiveSubtitles, activeSubtitle, activeCueHtml,

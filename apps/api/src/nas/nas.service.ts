@@ -1479,47 +1479,46 @@ export class NasService implements OnModuleInit {
     });
   }
 
-  private async extractAndCacheSubtitles(
-    nasFileUrl: string,
+  /**
+   * Extraction d'UNE piste sous-titre à la demande (cache-first).
+   * La liste des pistes est fournie côté client par le sondage rapide (`probeMediaTracks`) ;
+   * ici on n'extrait le VTT — opération lente qui lit tout le fichier depuis le NAS — que pour
+   * la piste réellement sélectionnée, puis on la met en cache DB pour les lectures suivantes.
+   */
+  private async getNasSubtitleTrack(
     filter: { mediaId?: number; episodeId?: number },
-  ): Promise<NasSubtitleTrack[]> {
-    const tracks = await this.probeMediaTracks(nasFileUrl);
-    if (tracks.subtitles.length === 0) return [];
-
-    const results: NasSubtitleTrack[] = [];
-    for (const sub of tracks.subtitles) {
-      try {
-        const vttContent = await this.extractSubtitleTrack(nasFileUrl, sub.index);
-        await this.prisma.subtitleCache.create({
-          data: { ...filter, trackIdx: sub.index, language: sub.language, title: sub.title, codec: sub.codec, vttContent },
-        });
-        results.push({ trackIdx: sub.index, language: sub.language, title: sub.title, codec: sub.codec, vttContent });
-        this.logger.log(`[subtitles] track ${sub.index} (${sub.language}) cached`);
-      } catch (err) {
-        this.logger.warn(`[subtitles] Failed to extract track ${sub.index}: ${err}`);
-      }
+    trackIdx: number,
+    nasUrlFactory: () => Promise<string>,
+    meta: { language?: string; title?: string; codec?: string },
+  ): Promise<NasSubtitleTrack> {
+    const cached = await this.prisma.subtitleCache.findFirst({ where: { ...filter, trackIdx } });
+    if (cached) {
+      this.logger.log(`[subtitles] cache hit ${JSON.stringify(filter)} track ${trackIdx}`);
+      return { trackIdx: cached.trackIdx, language: cached.language, title: cached.title, codec: cached.codec, vttContent: cached.vttContent };
     }
-    return results;
+
+    const nasUrl = await nasUrlFactory();
+    const vttContent = await this.extractSubtitleTrack(nasUrl, trackIdx);
+    const language = meta.language || 'und';
+    const title = meta.title || '';
+    const codec = meta.codec || '';
+    await this.prisma.subtitleCache.create({ data: { ...filter, trackIdx, language, title, codec, vttContent } });
+    this.logger.log(`[subtitles] track ${trackIdx} (${language}) extracted & cached ${JSON.stringify(filter)}`);
+    return { trackIdx, language, title, codec, vttContent };
   }
 
-  async getNasSubtitlesForMedia(mediaId: number, userId: number, cineClubId: number): Promise<NasSubtitleTrack[]> {
-    const cached = await this.prisma.subtitleCache.findMany({ where: { mediaId }, orderBy: { trackIdx: 'asc' } });
-    if (cached.length > 0) {
-      this.logger.log(`[subtitles] cache hit media #${mediaId} (${cached.length} tracks)`);
-      return cached.map(c => ({ trackIdx: c.trackIdx, language: c.language, title: c.title, codec: c.codec, vttContent: c.vttContent }));
-    }
-    const nasUrl = await this.getMediaFileUrl(mediaId, userId, cineClubId);
-    return this.extractAndCacheSubtitles(nasUrl, { mediaId });
+  async getNasSubtitleTrackForMedia(
+    mediaId: number, trackIdx: number, userId: number, cineClubId: number,
+    meta: { language?: string; title?: string; codec?: string } = {},
+  ): Promise<NasSubtitleTrack> {
+    return this.getNasSubtitleTrack({ mediaId }, trackIdx, () => this.getMediaFileUrl(mediaId, userId, cineClubId), meta);
   }
 
-  async getNasSubtitlesForEpisode(episodeId: number, userId: number, cineClubId: number): Promise<NasSubtitleTrack[]> {
-    const cached = await this.prisma.subtitleCache.findMany({ where: { episodeId }, orderBy: { trackIdx: 'asc' } });
-    if (cached.length > 0) {
-      this.logger.log(`[subtitles] cache hit episode #${episodeId} (${cached.length} tracks)`);
-      return cached.map(c => ({ trackIdx: c.trackIdx, language: c.language, title: c.title, codec: c.codec, vttContent: c.vttContent }));
-    }
-    const nasUrl = await this.getEpisodeFileUrl(episodeId, userId, cineClubId);
-    return this.extractAndCacheSubtitles(nasUrl, { episodeId });
+  async getNasSubtitleTrackForEpisode(
+    episodeId: number, trackIdx: number, userId: number, cineClubId: number,
+    meta: { language?: string; title?: string; codec?: string } = {},
+  ): Promise<NasSubtitleTrack> {
+    return this.getNasSubtitleTrack({ episodeId }, trackIdx, () => this.getEpisodeFileUrl(episodeId, userId, cineClubId), meta);
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {
