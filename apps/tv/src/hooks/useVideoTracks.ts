@@ -74,9 +74,10 @@ export function useVideoTracks({
     return cues;
   }, [episodeId, mediaId]);
 
-  // Background-preload preferred subtitle (fr > en) for NAS sources
+  // Background-preload preferred subtitle (fr > en) for NAS sources.
+  // Sauté si webOS expose déjà les pistes intégrées (rendu natif, aucun Railway nécessaire).
   useEffect(() => {
-    if (sourceType !== 'NAS') return;
+    if (sourceType !== 'NAS' || nativeSubtitleTracks.length > 0) return;
     const subs = (tracks?.subtitles ?? []).filter(t => isTextSubtitleCodec(t.codec));
     if (subs.length === 0) return;
     const preferred = subs.find(t => ['fr', 'fra', 'fre'].includes(t.language.toLowerCase()))
@@ -85,7 +86,7 @@ export function useVideoTracks({
     if (!preferred || cueCacheRef.current.has(preferred.index)) return;
     fetchNasTrackCues({ index: preferred.index, nasTrackIdx: preferred.index, language: preferred.language, title: preferred.title, codec: preferred.codec })
       .catch(() => { /* préchargement best-effort */ });
-  }, [sourceType, tracks, fetchNasTrackCues]);
+  }, [sourceType, tracks, nativeSubtitleTracks, fetchNasTrackCues]);
 
   // Background-preload preferred subtitle (fr > en) for SEEDBOX sources
   useEffect(() => {
@@ -174,9 +175,12 @@ export function useVideoTracks({
     : nativeAudioTracks.length > 0 ? nativeAudioTracks : (tracks?.audio ?? []);
 
   const effectiveSubtitles: SubtitleTrack[] = useMemo(() => {
-    // NAS : liste issue du sondage rapide des pistes (filtrée aux sous-titres texte),
-    // le VTT est extrait à la demande. nasTrackIdx = index FFmpeg réel (0:s:N).
     if (sourceType === 'NAS') {
+      // 1) Si webOS expose les pistes sous-titres intégrées au .mkv (textTracks), on les rend
+      //    nativement : chargement direct par la TV depuis le NAS, sans Railway ni FFmpeg.
+      if (nativeSubtitleTracks.length > 0) return nativeSubtitleTracks;
+      // 2) Sinon : liste via le sondage FFmpeg (Railway), VTT extrait à la demande.
+      //    nasTrackIdx = index FFmpeg réel (0:s:N).
       return (tracks?.subtitles ?? [])
         .filter(t => isTextSubtitleCodec(t.codec))
         .map((t, i) => ({
@@ -255,8 +259,9 @@ export function useVideoTracks({
     const track = effectiveSubtitles[index];
     if (!track) return;
 
-    // NAS: VTT extrait à la demande côté backend (lent la 1re fois, puis caché), en parallèle de la vidéo
-    if (sourceType === 'NAS') {
+    // NAS via sondage FFmpeg : VTT extrait à la demande côté backend (lent la 1re fois, puis caché).
+    // Les pistes natives webOS (sans nasTrackIdx) retombent plus bas sur le rendu natif.
+    if (sourceType === 'NAS' && track.nasTrackIdx !== undefined) {
       const cacheKey = track.nasTrackIdx ?? index;
       const cached = cueCacheRef.current.get(cacheKey);
       if (cached) {
@@ -307,10 +312,10 @@ export function useVideoTracks({
       return;
     }
 
-    // Native text tracks (browser renders them — non-HLS, embedded tracks)
+    // Pistes natives (webOS / navigateur rendent les sous-titres intégrés lui-même — aucun Railway)
     if (video) {
       const tt = video.textTracks;
-      for (let i = 0; i < tt.length; i++) tt[i].mode = (i === index) ? 'showing' : 'disabled';
+      for (let i = 0; i < tt.length; i++) tt[i].mode = (i === track.index) ? 'showing' : 'disabled';
     }
     setActiveSubtitle(index);
   }, [videoRef, effectiveSubtitles, sourceType, jellyfinBaseUrl, jellyfinItemId, jellyfinApiToken, fetchNasTrackCues]);
