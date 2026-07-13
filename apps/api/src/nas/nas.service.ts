@@ -86,6 +86,10 @@ export interface NasSubtitleTrack {
   title: string;
   codec: string;
   vttContent: string;
+  /** Extraction encore en cours : le client re-sonde le endpoint jusqu'au VTT. */
+  pending?: boolean;
+  /** Progression de l'extraction (% du fichier lu depuis le NAS). */
+  progressPercent?: number;
 }
 
 
@@ -1508,12 +1512,27 @@ export class NasService implements OnModuleInit {
 
   // ── NAS subtitle extraction & cache ────────────────────────────────────────
 
-  private async extractSubtitleTrack(nasFileUrl: string, trackIdx: number): Promise<string> {
+  private async extractSubtitleTrack(
+    nasFileUrl: string,
+    trackIdx: number,
+    onProgress?: (percent: number) => void,
+  ): Promise<string> {
     // Comme probeMediaTracks : lecture via Node pipée dans stdin (le build Linux de
     // ffmpeg-static ne peut pas ouvrir l'URL https lui-même). Les paquets sous-titres
     // étant entrelacés sur tout le conteneur, FFmpeg doit démuxer le fichier entier —
     // plusieurs minutes pour un gros média, d'où le timeout large. Résultat caché en DB.
     const nasRes = await this.openNasFileStream(nasFileUrl, 15_000);
+
+    const totalBytes = Number(nasRes.headers['content-length']) || 0;
+    if (onProgress && totalBytes > 0) {
+      let readBytes = 0;
+      let lastPercent = 0;
+      nasRes.on('data', (chunk: Buffer) => {
+        readBytes += chunk.length;
+        const percent = Math.min(99, Math.floor((readBytes / totalBytes) * 100));
+        if (percent > lastPercent) { lastPercent = percent; onProgress(percent); }
+      });
+    }
 
     return new Promise((resolve, reject) => {
       const proc = spawn(ffmpegPath, [
@@ -1550,9 +1569,12 @@ export class NasService implements OnModuleInit {
    * ici on n'extrait le VTT — opération lente qui lit tout le fichier depuis le NAS — que pour
    * la piste réellement sélectionnée, puis on la met en cache DB pour les lectures suivantes.
    */
-  // Extraction en cours par média/piste : un retry client (préchargement TV + sélection,
-  // timeout HTTP…) rejoint l'extraction déjà lancée au lieu de relire tout le fichier.
-  private subtitleExtractInFlight = new Map<string, Promise<NasSubtitleTrack>>();
+  // Extraction en arrière-plan par média/piste : le endpoint répond immédiatement
+  // « pending » + progression, et le client re-sonde jusqu'au VTT — aucune connexion
+  // HTTP longue (l'edge Railway coupe les requêtes qui durent plusieurs minutes).
+  private subtitleExtractInFlight = new Map<string, { progressPercent: number }>();
+  // Échec d'extraction conservé jusqu'au poll suivant, qui le remonte en erreur HTTP.
+  private subtitleExtractErrors = new Map<string, string>();
 
   private async getNasSubtitleTrack(
     filter: { mediaId?: number; episodeId?: number },
@@ -1567,25 +1589,40 @@ export class NasService implements OnModuleInit {
     }
 
     const key = `${filter.mediaId ?? `ep${filter.episodeId}`}:${trackIdx}`;
-    const inFlight = this.subtitleExtractInFlight.get(key);
-    if (inFlight) {
-      this.logger.log(`[subtitles] extraction déjà en cours ${key} — attente du résultat`);
-      return inFlight;
+    const language = meta.language || 'und';
+    const title = meta.title || '';
+    const codec = meta.codec || '';
+    const pendingResponse = (progressPercent: number): NasSubtitleTrack =>
+      ({ trackIdx, language, title, codec, vttContent: '', pending: true, progressPercent });
+
+    const failure = this.subtitleExtractErrors.get(key);
+    if (failure !== undefined) {
+      this.subtitleExtractErrors.delete(key);
+      throw new BadRequestException(`Extraction sous-titre échouée : ${failure}`);
     }
 
-    const task = (async (): Promise<NasSubtitleTrack> => {
+    const inFlight = this.subtitleExtractInFlight.get(key);
+    if (inFlight) return pendingResponse(inFlight.progressPercent);
+
+    const entry = { progressPercent: 0 };
+    this.subtitleExtractInFlight.set(key, entry);
+    this.logger.log(`[subtitles] extraction start ${key} (${language})`);
+
+    void (async () => {
       const nasUrl = await nasUrlFactory();
-      const vttContent = await this.extractSubtitleTrack(nasUrl, trackIdx);
-      const language = meta.language || 'und';
-      const title = meta.title || '';
-      const codec = meta.codec || '';
+      const vttContent = await this.extractSubtitleTrack(nasUrl, trackIdx, (p) => { entry.progressPercent = p; });
       await this.prisma.subtitleCache.create({ data: { ...filter, trackIdx, language, title, codec, vttContent } });
       this.logger.log(`[subtitles] track ${trackIdx} (${language}) extracted & cached ${JSON.stringify(filter)}`);
-      return { trackIdx, language, title, codec, vttContent };
-    })().finally(() => this.subtitleExtractInFlight.delete(key));
+    })()
+      .catch((err: Error & { code?: string }) => {
+        // AggregateError réseau (ECONNREFUSED…) : message vide, le code est plus parlant
+        const message = err?.message || err?.code || String(err);
+        this.logger.error(`[subtitles] extraction ${key} échouée : ${message}`);
+        this.subtitleExtractErrors.set(key, message);
+      })
+      .finally(() => this.subtitleExtractInFlight.delete(key));
 
-    this.subtitleExtractInFlight.set(key, task);
-    return task;
+    return pendingResponse(0);
   }
 
   async getNasSubtitleTrackForMedia(

@@ -47,7 +47,7 @@ export default function VideoPlayer({
 
   const {
     effectiveAudioTracks, effectiveSubtitles, activeSubtitle,
-    activeCueHtml, subtitleLoading, nativeAudioTracks, nativeSubtitleTracks,
+    activeCueHtml, subtitleLoading, subtitleProgress, nativeAudioTracks, nativeSubtitleTracks,
     applyAudioTrack, applySubtitle,
   } = useVideoTracks({
     videoRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
@@ -100,7 +100,7 @@ export default function VideoPlayer({
           fontFamily: 'var(--mono)', fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)',
           pointerEvents: 'none',
         }}>
-          Chargement sous-titres…
+          Chargement sous-titres…{subtitleProgress !== null ? ` ${subtitleProgress}%` : ''}
         </div>
       )}
 

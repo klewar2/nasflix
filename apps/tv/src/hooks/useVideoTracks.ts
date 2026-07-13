@@ -32,6 +32,7 @@ interface Return {
   activeSubtitle: number;
   activeCueHtml: string | null;
   subtitleLoading: boolean;
+  subtitleProgress: number | null;
   nativeAudioTracks: AudioTrack[];
   nativeSubtitleTracks: SubtitleTrack[];
   applyAudioTrack: (index: number) => Promise<void>;
@@ -48,30 +49,51 @@ export function useVideoTracks({
   const [activeSubtitle, setActiveSubtitle] = useState(-1);
   const [subtitleCues, setSubtitleCues] = useState<Array<{ start: number; end: number; html: string }>>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [subtitleProgress, setSubtitleProgress] = useState<number | null>(null);
 
   // Unified cue cache: key → cues[]
   // NAS: key = nasTrackIdx, SEEDBOX: key = jellyfinIndex
   const cueCacheRef = useRef<Map<number, Array<{ start: number; end: number; html: string }>>>(new Map());
+  // Génération de polling : incrémentée au changement de média pour stopper les sondages en cours
+  const pollGenRef = useRef(0);
 
   // Reset all subtitle state on media change
   useEffect(() => {
     setActiveSubtitle(-1);
     setSubtitleCues([]);
+    setSubtitleProgress(null);
     cueCacheRef.current = new Map();
+    pollGenRef.current += 1;
   }, [urlChangeKey]);
 
   // NAS : extraction VTT d'une piste à la demande (backend), mise en cache locale par index FFmpeg.
+  // L'extraction API est asynchrone (réponse immédiate pending + progression) : on re-sonde
+  // toutes les 4 s jusqu'au VTT — jamais de requête HTTP longue à travers l'edge Railway.
   const fetchNasTrackCues = useCallback(async (track: SubtitleTrack) => {
     const key = track.nasTrackIdx ?? track.index;
     const existing = cueCacheRef.current.get(key);
     if (existing) return existing;
     const meta = { language: track.language, title: track.title, codec: track.codec };
-    const res = episodeId
-      ? await getNasEpisodeSubtitleTrack(episodeId, key, meta)
-      : await getNasSubtitleTrack(mediaId, key, meta);
-    const cues = parseVTT(res.vttContent);
-    cueCacheRef.current.set(key, cues);
-    return cues;
+    const call = () => episodeId
+      ? getNasEpisodeSubtitleTrack(episodeId, key, meta)
+      : getNasSubtitleTrack(mediaId, key, meta);
+
+    const gen = pollGenRef.current;
+    try {
+      let res = await call();
+      for (let attempt = 0; res.pending; attempt++) {
+        if (attempt > 225) throw new Error('extraction sous-titres : timeout'); // ~15 min
+        setSubtitleProgress(res.progressPercent ?? 0);
+        await new Promise((r) => setTimeout(r, 4000));
+        if (pollGenRef.current !== gen) throw new Error('extraction sous-titres : annulée (changement de média)');
+        res = await call();
+      }
+      const cues = parseVTT(res.vttContent);
+      cueCacheRef.current.set(key, cues);
+      return cues;
+    } finally {
+      setSubtitleProgress(null);
+    }
   }, [episodeId, mediaId]);
 
   // Background-preload preferred subtitle (fr > en) for NAS sources.
@@ -329,6 +351,6 @@ export function useVideoTracks({
 
   return {
     effectiveAudioTracks, effectiveSubtitles, activeSubtitle, activeCueHtml,
-    subtitleLoading, nativeAudioTracks, nativeSubtitleTracks, applyAudioTrack, applySubtitle,
+    subtitleLoading, subtitleProgress, nativeAudioTracks, nativeSubtitleTracks, applyAudioTrack, applySubtitle,
   };
 }

@@ -39,4 +39,8 @@ export interface NasSubtitleTrack {
   title: string;
   codec: string;
   vttContent: string;
+  /** Extraction encore en cours côté API : re-sonder le endpoint jusqu'à obtenir le VTT. */
+  pending?: boolean;
+  /** Progression de l'extraction (% du fichier lu depuis le NAS). */
+  progressPercent?: number;
 }
