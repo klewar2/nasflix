@@ -6,7 +6,9 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID }
 import { spawn } from 'node:child_process';
 import * as https from 'node:https';
 import * as http from 'node:http';
+import { Client as SshClient } from 'ssh2';
 import { PrismaService } from '../common/prisma.service';
+import { CryptoService } from '../common/crypto.service';
 import { parseMediaFilename } from '../common/media-parser';
 import { NasGateway } from './nas.gateway';
 
@@ -46,6 +48,13 @@ function fetchInsecure(url: string, init: FetchInit = {}, timeoutMs = 10000): Pr
 }
  
 const ffmpegPath: string = require('ffmpeg-static');
+
+// Même échappement shell que jobs.processor (rsync) — sûr pour sh/bash/busybox
+function shellEscape(s: string): string {
+  if (s === '') return "''";
+  if (/^[a-zA-Z0-9_\-./@:=,]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
 
 interface SynoResponse<T = unknown> {
   success: boolean;
@@ -122,6 +131,7 @@ export class NasService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly nasGateway: NasGateway,
+    private readonly crypto: CryptoService,
   ) {}
 
   /**
@@ -1569,6 +1579,128 @@ export class NasService implements OnModuleInit {
    * ici on n'extrait le VTT — opération lente qui lit tout le fichier depuis le NAS — que pour
    * la piste réellement sélectionnée, puis on la met en cache DB pour les lectures suivantes.
    */
+  /**
+   * Exécution d'une commande sur la seedbox via SSH (clé en DB), avec timeout dur.
+   * Utilisée pour l'extraction sous-titres NAS ; équivalent simplifié de
+   * JobsProcessor.execSsh (rsync), avec accès au flux stderr pour la progression.
+   */
+  private execSeedboxSsh(p: {
+    host: string;
+    port: number;
+    user: string;
+    privateKey: string;
+    passphrase?: string;
+    command: string;
+    timeoutMs: number;
+    onStderr?: (chunk: string) => void;
+  }): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const client = new SshClient();
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const done = (fn: () => void) => { if (!settled) { settled = true; clearTimeout(kill); fn(); } };
+      const kill = setTimeout(() => {
+        done(() => { client.end(); reject(new Error(`Timeout SSH (${p.timeoutMs}ms)`)); });
+      }, p.timeoutMs);
+
+      client
+        .on('ready', () => {
+          client.exec(p.command, (err, stream) => {
+            if (err) { done(() => { client.end(); reject(err); }); return; }
+            stream
+              .on('close', (code: number | null) => {
+                client.end();
+                done(() => resolve({ code: code ?? -1, stdout, stderr }));
+              })
+              .on('data', (data: Buffer) => { stdout += data.toString('utf8'); })
+              .stderr.on('data', (data: Buffer) => {
+                const chunk = data.toString('utf8');
+                stderr = (stderr + chunk).slice(-4000);
+                p.onStderr?.(chunk);
+              });
+          });
+        })
+        .on('error', (err) => done(() => reject(err)))
+        .connect({
+          host: p.host,
+          port: p.port,
+          username: p.user,
+          privateKey: p.privateKey,
+          passphrase: p.passphrase,
+          readyTimeout: 30_000,
+        });
+    });
+  }
+
+  /** Chemins physiques candidats sur le NAS pour un nasPath File Station (/video/… → /volumeN/video/…). */
+  private physicalPathCandidates(nasPath: string): string[] {
+    const trimmed = nasPath.trim();
+    const clean = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+    if (/^\/volume\d+\//i.test(clean)) return [clean];
+    return ['/volume1', '/volume2', '/volume3', '/volume4'].map((v) => `${v}${clean}`).concat([clean]);
+  }
+
+  /**
+   * Extraction d'une piste sous-titre en exécutant FFmpeg SUR le NAS (lecture disque
+   * locale, quelques dizaines de secondes) via la chaîne SSH déjà utilisée par rsync :
+   * Railway → seedbox (clé en DB) → NAS (clé seedboxToNasKeyPath). Seul le VTT (~100 Ko)
+   * transite par le réseau, au lieu de relire tout le fichier à travers Internet.
+   */
+  private async extractSubtitleTrackViaNasSsh(
+    cineClubId: number,
+    nasPath: string,
+    trackIdx: number,
+    durationSeconds: number,
+    onProgress: (percent: number) => void,
+  ): Promise<string> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
+    if (!club?.seedboxSshHost || !club.seedboxSshUser || !club.seedboxSshPrivateKey || !club.nasSshHost || !club.nasSshUser) {
+      throw new Error('chaîne SSH seedbox→NAS non configurée pour ce CineClub');
+    }
+
+    // Script exécuté sur le NAS : détection du binaire FFmpeg DSM + du chemin physique,
+    // puis extraction VTT vers stdout. -progress pipe:2 → progression sur stderr.
+    const innerScript = [
+      'FF=""; for c in ffmpeg /usr/bin/ffmpeg /var/packages/VideoStation/target/bin/ffmpeg /var/packages/MediaServer/target/bin/ffmpeg /var/packages/CodecPack/target/bin/ffmpeg41 /var/packages/ffmpeg6/target/bin/ffmpeg /var/packages/ffmpeg/target/bin/ffmpeg; do command -v "$c" >/dev/null 2>&1 && { FF="$c"; break; }; done',
+      '[ -n "$FF" ] || { echo NOFFMPEG >&2; exit 42; }',
+      `F=""; for p in ${this.physicalPathCandidates(nasPath).map(shellEscape).join(' ')}; do [ -f "$p" ] && { F="$p"; break; }; done`,
+      '[ -n "$F" ] || { echo NOFILE >&2; exit 43; }',
+      `exec "$FF" -nostdin -v error -progress pipe:2 -i "$F" -map 0:s:${trackIdx} -c:s webvtt -f webvtt pipe:1`,
+    ].join('\n');
+
+    const sshOpts = ['-o StrictHostKeyChecking=accept-new', `-p ${club.nasSshPort}`];
+    if (club.seedboxToNasKeyPath) {
+      sshOpts.push(`-o IdentityFile=${shellEscape(club.seedboxToNasKeyPath)}`, '-o IdentitiesOnly=yes');
+    }
+    const command = `ssh ${sshOpts.join(' ')} ${shellEscape(`${club.nasSshUser}@${club.nasSshHost}`)} ${shellEscape(innerScript)}`;
+
+    const result = await this.execSeedboxSsh({
+      host: club.seedboxSshHost,
+      port: club.seedboxSshPort,
+      user: club.seedboxSshUser,
+      privateKey: this.crypto.decrypt(club.seedboxSshPrivateKey),
+      passphrase: club.seedboxSshPassphrase ? this.crypto.decrypt(club.seedboxSshPassphrase) : undefined,
+      command,
+      timeoutMs: 10 * 60_000,
+      onStderr: (chunk) => {
+        // Lignes -progress : out_time=HH:MM:SS.micros — position de démux dans le fichier
+        const m = chunk.match(/out_time=(\d+):(\d+):(\d+)/g);
+        if (!m || durationSeconds <= 0) return;
+        const last = m[m.length - 1].match(/out_time=(\d+):(\d+):(\d+)/);
+        if (!last) return;
+        const seconds = Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]);
+        onProgress(Math.min(99, Math.floor((seconds / durationSeconds) * 100)));
+      },
+    });
+
+    const vtt = result.stdout.trim();
+    if (result.code !== 0 || !vtt.startsWith('WEBVTT')) {
+      throw new Error(`FFmpeg NAS exit=${result.code} — stderr: ${result.stderr.replace(/\s+/g, ' ').slice(-300)}`);
+    }
+    return vtt;
+  }
+
   // Extraction en arrière-plan par média/piste : le endpoint répond immédiatement
   // « pending » + progression, et le client re-sonde jusqu'au VTT — aucune connexion
   // HTTP longue (l'edge Railway coupe les requêtes qui durent plusieurs minutes).
@@ -1579,7 +1711,12 @@ export class NasService implements OnModuleInit {
   private async getNasSubtitleTrack(
     filter: { mediaId?: number; episodeId?: number },
     trackIdx: number,
-    nasUrlFactory: () => Promise<string>,
+    source: {
+      cineClubId: number;
+      nasPath: string | null;
+      durationSeconds: number;
+      nasUrlFactory: () => Promise<string>;
+    },
     meta: { language?: string; title?: string; codec?: string },
   ): Promise<NasSubtitleTrack> {
     const cached = await this.prisma.subtitleCache.findFirst({ where: { ...filter, trackIdx } });
@@ -1609,8 +1746,27 @@ export class NasService implements OnModuleInit {
     this.logger.log(`[subtitles] extraction start ${key} (${language})`);
 
     void (async () => {
-      const nasUrl = await nasUrlFactory();
-      const vttContent = await this.extractSubtitleTrack(nasUrl, trackIdx, (p) => { entry.progressPercent = p; });
+      const onProgress = (p: number) => { entry.progressPercent = p; };
+
+      // 1) FFmpeg sur le NAS via SSH (rapide : lecture disque locale, seul le VTT transite)
+      let vttContent: string | null = null;
+      if (source.nasPath) {
+        try {
+          vttContent = await this.extractSubtitleTrackViaNasSsh(source.cineClubId, source.nasPath, trackIdx, source.durationSeconds, onProgress);
+          this.logger.log(`[subtitles] extraction NAS-side OK ${key}`);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`[subtitles] extraction NAS-side impossible (${message}) — fallback HTTP ${key}`);
+          entry.progressPercent = 0;
+        }
+      }
+
+      // 2) Fallback : FFmpeg sur Railway en relisant le fichier via HTTP (lent)
+      if (!vttContent) {
+        const nasUrl = await source.nasUrlFactory();
+        vttContent = await this.extractSubtitleTrack(nasUrl, trackIdx, onProgress);
+      }
+
       await this.prisma.subtitleCache.create({ data: { ...filter, trackIdx, language, title, codec, vttContent } });
       this.logger.log(`[subtitles] track ${trackIdx} (${language}) extracted & cached ${JSON.stringify(filter)}`);
     })()
@@ -1629,14 +1785,32 @@ export class NasService implements OnModuleInit {
     mediaId: number, trackIdx: number, userId: number, cineClubId: number,
     meta: { language?: string; title?: string; codec?: string } = {},
   ): Promise<NasSubtitleTrack> {
-    return this.getNasSubtitleTrack({ mediaId }, trackIdx, () => this.getMediaFileUrl(mediaId, userId, cineClubId), meta);
+    const media = await this.prisma.media.findFirst({
+      where: { id: mediaId, cineClubId },
+      select: { nasPath: true, runtime: true },
+    });
+    return this.getNasSubtitleTrack({ mediaId }, trackIdx, {
+      cineClubId,
+      nasPath: media?.nasPath ?? null,
+      durationSeconds: (media?.runtime ?? 0) * 60,
+      nasUrlFactory: () => this.getMediaFileUrl(mediaId, userId, cineClubId),
+    }, meta);
   }
 
   async getNasSubtitleTrackForEpisode(
     episodeId: number, trackIdx: number, userId: number, cineClubId: number,
     meta: { language?: string; title?: string; codec?: string } = {},
   ): Promise<NasSubtitleTrack> {
-    return this.getNasSubtitleTrack({ episodeId }, trackIdx, () => this.getEpisodeFileUrl(episodeId, userId, cineClubId), meta);
+    const episode = await this.prisma.episode.findFirst({
+      where: { id: episodeId, season: { media: { cineClubId } } },
+      select: { nasPath: true, runtime: true },
+    });
+    return this.getNasSubtitleTrack({ episodeId }, trackIdx, {
+      cineClubId,
+      nasPath: episode?.nasPath ?? null,
+      durationSeconds: (episode?.runtime ?? 0) * 60,
+      nasUrlFactory: () => this.getEpisodeFileUrl(episodeId, userId, cineClubId),
+    }, meta);
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {
