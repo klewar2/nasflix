@@ -295,7 +295,9 @@ export class NasController {
 
     if (passthrough && sourceType !== 'SEEDBOX') {
       this.logger.log(`[stream] passthrough direct ${refLabel} nasHost=${new URL(nasUrl).host}`);
-      return { url: nasUrl, isHls: false, durationSeconds: passthroughDuration };
+      // sourceType est indispensable côté TV : sans lui, useVideoTracks ne déclenche
+      // jamais le préchargement ni le chargement des sous-titres NAS.
+      return { url: nasUrl, isHls: false, durationSeconds: passthroughDuration, sourceType: 'NAS' };
     }
     this.logger.log(`[stream] mode=${mode} isHls=${isHls} client=${clientType} sourceType=${sourceType ?? 'NAS'} ${refLabel} nasUrl=${nasUrl.slice(0, 80)}`);
 

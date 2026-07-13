@@ -493,6 +493,7 @@ export class NasService implements OnModuleInit {
         nasUrl: this.buildFileStationUrl(club.nasBaseUrl!, media.nasPath, session.sid, 'stream'),
         durationSeconds,
         isHls: false,
+        sourceType: 'NAS',
       };
     }
 
@@ -603,6 +604,7 @@ export class NasService implements OnModuleInit {
         nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream'),
         durationSeconds,
         isHls: false,
+        sourceType: 'NAS',
       };
     }
 
@@ -1100,21 +1102,73 @@ export class NasService implements OnModuleInit {
     return this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'download');
   }
 
+  /**
+   * Ouvre un flux de lecture HTTP(S) vers le NAS (cert auto-signé toléré) destiné à être
+   * pipé dans stdin de FFmpeg. Indispensable : le build Linux de ffmpeg-static (Railway)
+   * ne connaît pas l'option -tls_verify et échoue à ouvrir lui-même l'URL https du NAS —
+   * en dev macOS le build accepte le flag, d'où un bug invisible en local.
+   */
+  private openNasFileStream(nasFileUrl: string, timeoutMs: number): Promise<import('node:http').IncomingMessage> {
+    return new Promise((resolve, reject) => {
+      const parsed = new URL(nasFileUrl);
+      const isHttps = parsed.protocol === 'https:';
+      const lib = isHttps ? https : http;
+      const req = lib.request({
+        hostname: parsed.hostname,
+        port: Number(parsed.port) || (isHttps ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method: 'GET',
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Nasflix/1.0)', Accept: '*/*' },
+        rejectUnauthorized: false,
+        timeout: timeoutMs,
+      }, (res) => {
+        const status = res.statusCode ?? 0;
+        if (status >= 300) {
+          res.resume();
+          reject(new Error(`NAS a répondu ${status} (SID expiré ?) sur ${parsed.hostname}`));
+          return;
+        }
+        resolve(res);
+      });
+      req.on('timeout', () => req.destroy(new Error(`Timeout connexion NAS (${timeoutMs}ms)`)));
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
   async probeMediaTracks(nasFileUrl: string): Promise<MediaTracks> {
+    // Lecture du début du fichier via Node pipée dans stdin (cf. openNasFileStream) ;
+    // FFmpeg n'analyse que quelques Mo avant d'afficher les pistes puis ferme stdin.
+    let nasRes: import('node:http').IncomingMessage;
+    try {
+      nasRes = await this.openNasFileStream(nasFileUrl, 10_000);
+    } catch (err) {
+      this.logger.warn(`[probe] ouverture flux NAS échouée : ${err}`);
+      return { audio: [], subtitles: [] };
+    }
+
     return new Promise((resolve) => {
-      // ffmpeg -i <url> prints stream info to stderr then exits with error (no output specified)
-      const proc = spawn(ffmpegPath, [
-        '-reconnect', '1', '-reconnect_streamed', '1', '-tls_verify', '0',
-        '-i', nasFileUrl,
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+      // ffmpeg -i sans sortie : affiche les infos de streams sur stderr puis sort en erreur
+      const proc = spawn(ffmpegPath, ['-i', 'pipe:0'], { stdio: ['pipe', 'ignore', 'pipe'] });
 
       let stderr = '';
       proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      // EPIPE attendu : ffmpeg ferme stdin dès l'analyse terminée
+      proc.stdin?.on('error', () => {});
+      nasRes.on('error', () => {});
+      nasRes.pipe(proc.stdin!);
 
-      const kill = setTimeout(() => proc.kill('SIGKILL'), 12_000);
-      const done = () => { clearTimeout(kill); resolve(this.parseFfmpegStreamInfo(stderr)); };
-      proc.on('close', done);
-      proc.on('error', () => { clearTimeout(kill); resolve({ audio: [], subtitles: [] }); });
+      const kill = setTimeout(() => proc.kill('SIGKILL'), 15_000);
+      proc.on('close', () => {
+        clearTimeout(kill);
+        nasRes.destroy();
+        const tracks = this.parseFfmpegStreamInfo(stderr);
+        if (tracks.audio.length === 0 && tracks.subtitles.length === 0) {
+          this.logger.warn(`[probe] aucune piste détectée — fin stderr FFmpeg : ${stderr.slice(-600).replace(/\s+/g, ' ')}`);
+        }
+        resolve(tracks);
+      });
+      proc.on('error', () => { clearTimeout(kill); nasRes.destroy(); resolve({ audio: [], subtitles: [] }); });
     });
   }
 
@@ -1454,28 +1508,39 @@ export class NasService implements OnModuleInit {
 
   // ── NAS subtitle extraction & cache ────────────────────────────────────────
 
-  private extractSubtitleTrack(nasFileUrl: string, trackIdx: number): Promise<string> {
+  private async extractSubtitleTrack(nasFileUrl: string, trackIdx: number): Promise<string> {
+    // Comme probeMediaTracks : lecture via Node pipée dans stdin (le build Linux de
+    // ffmpeg-static ne peut pas ouvrir l'URL https lui-même). Les paquets sous-titres
+    // étant entrelacés sur tout le conteneur, FFmpeg doit démuxer le fichier entier —
+    // plusieurs minutes pour un gros média, d'où le timeout large. Résultat caché en DB.
+    const nasRes = await this.openNasFileStream(nasFileUrl, 15_000);
+
     return new Promise((resolve, reject) => {
       const proc = spawn(ffmpegPath, [
-        '-reconnect', '1', '-reconnect_streamed', '1', '-tls_verify', '0',
-        '-i', nasFileUrl,
+        '-i', 'pipe:0',
         '-map', `0:s:${trackIdx}`,
         '-c:s', 'webvtt',
         '-f', 'webvtt',
         'pipe:1',
-      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
       const chunks: Buffer[] = [];
       proc.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
+      let stderrTail = '';
+      proc.stderr?.on('data', (chunk: Buffer) => { stderrTail = (stderrTail + chunk.toString()).slice(-1000); });
+      proc.stdin?.on('error', () => {});
+      nasRes.on('error', () => {});
+      nasRes.pipe(proc.stdin!);
 
-      const kill = setTimeout(() => proc.kill('SIGKILL'), 90_000);
+      const kill = setTimeout(() => proc.kill('SIGKILL'), 15 * 60_000);
       proc.on('close', (code) => {
         clearTimeout(kill);
+        nasRes.destroy();
         const text = Buffer.concat(chunks).toString('utf-8').trim();
         if (text.startsWith('WEBVTT')) resolve(text);
-        else reject(new Error(`FFmpeg subtitle extraction empty (code ${code})`));
+        else reject(new Error(`FFmpeg subtitle extraction empty (code ${code}) — stderr: ${stderrTail.replace(/\s+/g, ' ').slice(-400)}`));
       });
-      proc.on('error', (err) => { clearTimeout(kill); reject(err); });
+      proc.on('error', (err) => { clearTimeout(kill); nasRes.destroy(); reject(err); });
     });
   }
 
@@ -1485,6 +1550,10 @@ export class NasService implements OnModuleInit {
    * ici on n'extrait le VTT — opération lente qui lit tout le fichier depuis le NAS — que pour
    * la piste réellement sélectionnée, puis on la met en cache DB pour les lectures suivantes.
    */
+  // Extraction en cours par média/piste : un retry client (préchargement TV + sélection,
+  // timeout HTTP…) rejoint l'extraction déjà lancée au lieu de relire tout le fichier.
+  private subtitleExtractInFlight = new Map<string, Promise<NasSubtitleTrack>>();
+
   private async getNasSubtitleTrack(
     filter: { mediaId?: number; episodeId?: number },
     trackIdx: number,
@@ -1497,14 +1566,26 @@ export class NasService implements OnModuleInit {
       return { trackIdx: cached.trackIdx, language: cached.language, title: cached.title, codec: cached.codec, vttContent: cached.vttContent };
     }
 
-    const nasUrl = await nasUrlFactory();
-    const vttContent = await this.extractSubtitleTrack(nasUrl, trackIdx);
-    const language = meta.language || 'und';
-    const title = meta.title || '';
-    const codec = meta.codec || '';
-    await this.prisma.subtitleCache.create({ data: { ...filter, trackIdx, language, title, codec, vttContent } });
-    this.logger.log(`[subtitles] track ${trackIdx} (${language}) extracted & cached ${JSON.stringify(filter)}`);
-    return { trackIdx, language, title, codec, vttContent };
+    const key = `${filter.mediaId ?? `ep${filter.episodeId}`}:${trackIdx}`;
+    const inFlight = this.subtitleExtractInFlight.get(key);
+    if (inFlight) {
+      this.logger.log(`[subtitles] extraction déjà en cours ${key} — attente du résultat`);
+      return inFlight;
+    }
+
+    const task = (async (): Promise<NasSubtitleTrack> => {
+      const nasUrl = await nasUrlFactory();
+      const vttContent = await this.extractSubtitleTrack(nasUrl, trackIdx);
+      const language = meta.language || 'und';
+      const title = meta.title || '';
+      const codec = meta.codec || '';
+      await this.prisma.subtitleCache.create({ data: { ...filter, trackIdx, language, title, codec, vttContent } });
+      this.logger.log(`[subtitles] track ${trackIdx} (${language}) extracted & cached ${JSON.stringify(filter)}`);
+      return { trackIdx, language, title, codec, vttContent };
+    })().finally(() => this.subtitleExtractInFlight.delete(key));
+
+    this.subtitleExtractInFlight.set(key, task);
+    return task;
   }
 
   async getNasSubtitleTrackForMedia(
