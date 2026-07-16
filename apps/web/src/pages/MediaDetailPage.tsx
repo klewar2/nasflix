@@ -114,7 +114,7 @@ function SeasonsSection({ media, mediaTitle, isMember, isAdmin, nasOnline, loadi
                       {isMember && (epOnNas || epOnJellyfin) && (
                         <button
                           disabled={(epOnNas && !nasOnline) || loadingId === `dl-${epKey}`}
-                          onClick={() => handleDownload(() => api.getEpisodeStreamUrl(ep.id, 'download'), ep.nasFilename || epTitle, `dl-${epKey}`)}
+                          onClick={() => handleDownload(() => api.getEpisodeDownloadUrl(ep.id), ep.nasFilename || epTitle, `dl-${epKey}`)}
                           className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-zinc-400 hover:text-white transition-colors border border-zinc-700"
                           title="Télécharger"
                         >
@@ -318,7 +318,7 @@ export default function MediaDetailPage() {
 
                     <button
                       disabled={(movieOnNas && !nasOnline) || loadingId === `dl-${id}`}
-                      onClick={() => handleDownload(() => api.getStreamUrl(Number(id), 'download'), media.nasFilename || mediaTitle, `dl-${id}`)}
+                      onClick={() => handleDownload(() => api.getDownloadUrl(Number(id)), media.nasFilename || mediaTitle, `dl-${id}`)}
                       className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-white text-sm transition-colors border border-zinc-700"
                     >
                       {loadingId === `dl-${id}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}

@@ -2,14 +2,13 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Unauthorize
 import { ConfigService } from '@nestjs/config';
 import { createSocket } from 'node:dgram';
 import { lookup } from 'node:dns/promises';
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import * as https from 'node:https';
 import * as http from 'node:http';
 import { Client as SshClient } from 'ssh2';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
-import { parseMediaFilename } from '../common/media-parser';
 import { NasGateway } from './nas.gateway';
 
 interface FetchInit {
@@ -60,12 +59,6 @@ interface SynoResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: { code: number };
-}
-
-interface VideoStationFile {
-  id: string;
-  path: string;
-  size?: number;
 }
 
 export interface AudioTrackInfo {
@@ -122,7 +115,7 @@ export interface NasSession {
 export class NasService implements OnModuleInit {
   private readonly logger = new Logger(NasService.name);
 
-  /** Évite deux logins FileStation concurrents (même NAS / même user) : la 2ᵉ session invalide souvent la 1ʳᵉ → 404 sur fileproxy. */
+  /** Évite deux logins FileStation concurrents (même NAS / même user) : la 2ᵉ session invalide souvent la 1ʳᵉ → 404 sur les URLs signées. */
   private readonly fileStationSessionTtlMs = 4 * 60 * 1000;
   private fileStationSidByKey = new Map<string, { sid: string; expiresAt: number }>();
   private fileStationLoginInFlight = new Map<string, Promise<NasSession>>();
@@ -244,33 +237,6 @@ export class NasService implements OnModuleInit {
     const url = new URL('/webapi/entry.cgi', baseUrl);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     const response = await fetch(url.toString(), { signal: AbortSignal.timeout(10000) });
-    return response.json() as Promise<SynoResponse<T>>;
-  }
-
-  /**
-   * POST form-urlencoded — format utilisé par VideoStation web pour les paramètres complexes.
-   * Les valeurs objet/tableau sont sérialisées en JSON string dans le body.
-   * Le _sid est envoyé en query param URL (obligatoire pour les APIs Synology).
-   */
-  private async requestFormPost<T>(
-    baseUrl: string,
-    sid: string,
-    fields: Record<string, unknown>,
-  ): Promise<SynoResponse<T>> {
-    const url = new URL('/webapi/entry.cgi', baseUrl);
-    url.searchParams.set('_sid', sid);
-
-    const body = new URLSearchParams();
-    for (const [k, v] of Object.entries(fields)) {
-      body.set(k, typeof v === 'string' ? v : JSON.stringify(v));
-    }
-
-    const response = await fetch(url.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-      signal: AbortSignal.timeout(15000),
-    });
     return response.json() as Promise<SynoResponse<T>>;
   }
 
@@ -442,32 +408,34 @@ export class NasService implements OnModuleInit {
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
-    audioTrack = 1,
     clientType: 'web' | 'tv' = 'web',
-  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
-    const [member, media, club, user] = await Promise.all([
+  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string }> {
+    const [member, media, club] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.media.findFirst({ where: { id: mediaId, cineClubId } }),
       this.prisma.cineClub.findUnique({ where: { id: cineClubId } }),
-      this.prisma.user.findUnique({ where: { id: userId }, select: { streamingQuality: true } }),
     ]);
-    const streamingQuality = user?.streamingQuality ?? 'NATIVE';
 
     if (!media?.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
     if (!club) throw new BadRequestException('CineClub introuvable');
 
     const durationSeconds = (media.runtime ?? 0) * 60;
 
-    // Streaming TV : OBLIGATOIREMENT depuis le NAS (cf. exigence produit).
-    // Si le média n'est pas sur le NAS, on refuse explicitement plutôt que de tomber
-    // sur Jellyfin (qui ne stream pas HDR/DV de manière fiable côté TV).
-    if (mode === 'stream' && clientType === 'tv' && media.sourceType !== 'NAS') {
-      throw new BadRequestException(
-        'Streaming TV requiert le NAS — ce média doit d\'abord être transféré sur le NAS',
-      );
+    // Streaming : app TV uniquement, et OBLIGATOIREMENT depuis le NAS (cf. exigence produit).
+    // Le web ne fait que du téléchargement, en direct — la vidéo ne doit jamais
+    // transiter par Railway (égress facturé).
+    if (mode === 'stream') {
+      if (clientType !== 'tv') {
+        throw new BadRequestException('Le streaming web est désactivé — utilisez le téléchargement');
+      }
+      if (media.sourceType !== 'NAS') {
+        throw new BadRequestException(
+          'Streaming TV requiert le NAS — ce média doit d\'abord être transféré sur le NAS',
+        );
+      }
     }
 
-    // ── Source SEEDBOX → Jellyfin ─────────────────────────────────────────────
+    // ── Source SEEDBOX → téléchargement direct Jellyfin ───────────────────────
     if (media.sourceType === 'SEEDBOX') {
       if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) {
         throw new BadRequestException('Jellyfin non configuré pour ce CineClub');
@@ -475,75 +443,24 @@ export class NasService implements OnModuleInit {
       if (!media.jellyfinItemId) {
         throw new NotFoundException('jellyfinItemId manquant sur ce média');
       }
-      if (mode === 'download') {
-        const base = club.jellyfinBaseUrl.replace(/\/$/, '');
-        const downloadUrl = `${base}/Items/${media.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
-        return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
-      }
-      // TV: PlaybackInfo → stream HDR10 natif sans Dolby Vision (comme l'app Jellyfin native).
-      if (clientType === 'tv') {
-        const { url, isHls } = await this.getJellyfinTvStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId, streamingQuality as 'NATIVE' | 'DIRECT');
-        this.logger.log(`[Stream #${mediaId}] Jellyfin TV quality=${streamingQuality} isHls=${isHls} → ${url.slice(0, 80)}…`);
-        return { nasUrl: url, durationSeconds, isHls, sourceType: 'SEEDBOX', jellyfinItemId: media.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
-      }
-      // Web: HLS transcode via Jellyfin (navigateurs = codecs limités).
-      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, media.jellyfinItemId, clientType);
-      this.logger.log(`[Stream #${mediaId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
-      return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: media.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
+      const base = club.jellyfinBaseUrl.replace(/\/$/, '');
+      const downloadUrl = `${base}/Items/${media.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
+      return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
     }
-    // ── FIN branchement SEEDBOX ───────────────────────────────────────────────
 
     if (!member?.nasUsername || !member?.nasPassword) {
       throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
     }
     if (!club.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
 
-    // TV: direct play via FileStation (skip VideoStation HLS qui transcode côté Synology).
-    // Le controller (passthrough=1) convertira l'URL en /nas/fileproxy pour bypasser le cert auto-signé.
-    if (mode === 'stream' && clientType === 'tv') {
-      const session = await this.getFileStationSession(club.nasBaseUrl!, member.nasUsername, member.nasPassword);
-      this.logger.log(`[Stream #${mediaId}] NAS direct-play (FileStation open)`);
-      return {
-        nasUrl: this.buildFileStationUrl(club.nasBaseUrl!, media.nasPath, session.sid, 'stream'),
-        durationSeconds,
-        isHls: false,
-        sourceType: 'NAS',
-      };
-    }
-
-    if (mode === 'stream') {
-      try {
-        const vsSession = await this.login(club.nasBaseUrl!, member.nasUsername, member.nasPassword, 'VideoStation');
-        this.logger.debug(`[Stream #${mediaId}] VideoStation login OK (sid=${vsSession.sid.slice(0, 8)}…)`);
-
-        const { title: pttTitle } = parseMediaFilename(media.nasFilename);
-        const titleHints = [pttTitle, media.titleVf, media.titleOriginal].filter(Boolean) as string[];
-        this.logger.debug(`[Stream #${mediaId}] nasPath="${media.nasPath}" nasFilename="${media.nasFilename}" pttTitle="${pttTitle}" hints=${JSON.stringify(titleHints)}`);
-
-        const vsVideo = await this.findVideoStationVideo(vsSession, media.nasPath, titleHints, 'movie');
-        if (vsVideo) {
-          this.logger.debug(`[Stream #${mediaId}] VS video found (id=${vsVideo.videoId} fileId=${vsVideo.fileId}), opening stream…`);
-          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId, audioTrack);
-          if (hlsUrl) {
-            this.logger.log(`[Stream #${mediaId}] VideoStation HLS OK → ${hlsUrl.slice(0, 80)}…`);
-            return { nasUrl: hlsUrl, durationSeconds, isHls: true };
-          }
-          this.logger.warn(`[Stream #${mediaId}] VS video found but stream open returned null`);
-        } else {
-          this.logger.warn(`[Stream #${mediaId}] No VideoStation match → fallback FFmpeg`);
-        }
-      } catch (err) {
-        this.logger.warn(`[Stream #${mediaId}] VideoStation error → fallback FFmpeg: ${err}`);
-      }
-    }
-
-    const session = await this.getFileStationSession(club.nasBaseUrl!, member.nasUsername, member.nasPassword);
-    const fsMode = mode === 'download' ? 'download' : 'stream';
+    const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
+    if (mode === 'stream') this.logger.log(`[Stream #${mediaId}] NAS direct-play (FileStation open)`);
     return {
-      // stream → mode=open (lecture / transcode) ; download → mode=download (fichier brut, cf. getMediaFileUrl)
-      nasUrl: this.buildFileStationUrl(club.nasBaseUrl!, media.nasPath, session.sid, fsMode),
+      // stream (TV) → mode=open (direct play) ; download → mode=download (fichier brut + Content-Disposition)
+      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, media.nasPath, session.sid, mode),
       durationSeconds,
       isHls: false,
+      sourceType: 'NAS',
     };
   }
 
@@ -552,34 +469,36 @@ export class NasService implements OnModuleInit {
     userId: number,
     cineClubId: number,
     mode: 'stream' | 'download',
-    audioTrack = 1,
     clientType: 'web' | 'tv' = 'web',
-  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string; jellyfinItemId?: string; jellyfinBaseUrl?: string; jellyfinApiToken?: string }> {
-    const [member, episode, userPref] = await Promise.all([
+  ): Promise<{ nasUrl: string; durationSeconds: number; isHls: boolean; sourceType?: string }> {
+    const [member, episode, club] = await Promise.all([
       this.prisma.cineClubMember.findUnique({ where: { userId_cineClubId: { userId, cineClubId } } }),
       this.prisma.episode.findFirst({
         where: { id: episodeId, season: { media: { cineClubId } } },
-        select: { nasPath: true, nasFilename: true, runtime: true, sourceType: true, jellyfinItemId: true, season: { select: { media: { select: { titleVf: true, titleOriginal: true } } } } },
+        select: { nasPath: true, runtime: true, sourceType: true, jellyfinItemId: true },
       }),
-      this.prisma.user.findUnique({ where: { id: userId }, select: { streamingQuality: true } }),
+      this.prisma.cineClub.findUnique({ where: { id: cineClubId } }),
     ]);
-    const streamingQuality = userPref?.streamingQuality ?? 'NATIVE';
 
     if (!episode) throw new NotFoundException('Épisode introuvable');
-
-    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
     if (!club) throw new BadRequestException('CineClub introuvable');
 
     const durationSeconds = (episode.runtime ?? 0) * 60;
 
-    // Streaming TV : OBLIGATOIREMENT depuis le NAS.
-    if (mode === 'stream' && clientType === 'tv' && episode.sourceType !== 'NAS') {
-      throw new BadRequestException(
-        'Streaming TV requiert le NAS — cet épisode doit d\'abord être transféré sur le NAS',
-      );
+    // Streaming : app TV uniquement, et OBLIGATOIREMENT depuis le NAS.
+    // Le web ne fait que du téléchargement, en direct (jamais via Railway).
+    if (mode === 'stream') {
+      if (clientType !== 'tv') {
+        throw new BadRequestException('Le streaming web est désactivé — utilisez le téléchargement');
+      }
+      if (episode.sourceType !== 'NAS') {
+        throw new BadRequestException(
+          'Streaming TV requiert le NAS — cet épisode doit d\'abord être transféré sur le NAS',
+        );
+      }
     }
 
-    // ── Source SEEDBOX → Jellyfin ─────────────────────────────────────────────
+    // ── Source SEEDBOX → téléchargement direct Jellyfin ───────────────────────
     if (episode.sourceType === 'SEEDBOX') {
       if (!club.jellyfinBaseUrl || !club.jellyfinApiToken) {
         throw new BadRequestException('Jellyfin non configuré pour ce CineClub');
@@ -587,22 +506,10 @@ export class NasService implements OnModuleInit {
       if (!episode.jellyfinItemId) {
         throw new NotFoundException('jellyfinItemId manquant sur cet épisode');
       }
-      if (mode === 'download') {
-        const base = club.jellyfinBaseUrl.replace(/\/$/, '');
-        const downloadUrl = `${base}/Items/${episode.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
-        return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
-      }
-      // TV: PlaybackInfo → stream HDR10 natif sans Dolby Vision (comme l'app Jellyfin native).
-      if (clientType === 'tv') {
-        const { url, isHls } = await this.getJellyfinTvStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId, streamingQuality as 'NATIVE' | 'DIRECT');
-        this.logger.log(`[Stream ep#${episodeId}] Jellyfin TV quality=${streamingQuality} isHls=${isHls} → ${url.slice(0, 80)}…`);
-        return { nasUrl: url, durationSeconds, isHls, sourceType: 'SEEDBOX', jellyfinItemId: episode.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
-      }
-      const url = this.buildJellyfinStreamUrl(club.jellyfinBaseUrl, club.jellyfinApiToken, episode.jellyfinItemId, clientType);
-      this.logger.log(`[Stream ep#${episodeId}] Jellyfin passthrough → ${url.slice(0, 80)}…`);
-      return { nasUrl: url, durationSeconds, isHls: true, sourceType: 'SEEDBOX', jellyfinItemId: episode.jellyfinItemId, jellyfinBaseUrl: club.jellyfinBaseUrl, jellyfinApiToken: club.jellyfinApiToken };
+      const base = club.jellyfinBaseUrl.replace(/\/$/, '');
+      const downloadUrl = `${base}/Items/${episode.jellyfinItemId}/Download?api_key=${club.jellyfinApiToken}`;
+      return { nasUrl: downloadUrl, durationSeconds, isHls: false, sourceType: 'SEEDBOX' };
     }
-    // ── FIN branchement SEEDBOX ───────────────────────────────────────────────
 
     if (!member?.nasUsername || !member?.nasPassword) {
       throw new UnauthorizedException('Credentials NAS non configurés pour ce membre');
@@ -610,52 +517,13 @@ export class NasService implements OnModuleInit {
     if (!episode.nasPath) throw new NotFoundException('Fichier épisode introuvable sur le NAS');
     if (!club.nasBaseUrl) throw new BadRequestException('NAS non configuré pour ce CineClub');
 
-    // TV: direct play via FileStation (skip VideoStation HLS qui transcode côté Synology).
-    if (mode === 'stream' && clientType === 'tv') {
-      const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-      this.logger.log(`[Stream ep#${episodeId}] NAS direct-play (FileStation open)`);
-      return {
-        nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, 'stream'),
-        durationSeconds,
-        isHls: false,
-        sourceType: 'NAS',
-      };
-    }
-
-    if (mode === 'stream') {
-      try {
-        const vsSession = await this.login(club.nasBaseUrl, member.nasUsername, member.nasPassword, 'VideoStation');
-        this.logger.debug(`[Stream ep#${episodeId}] VideoStation login OK (sid=${vsSession.sid.slice(0, 8)}…)`);
-
-        const nasFilename = episode.nasFilename ?? episode.nasPath.split('/').pop() ?? '';
-        const { title: pttTitle } = parseMediaFilename(nasFilename);
-        const seriesMedia = episode.season?.media;
-        const titleHints = [pttTitle, seriesMedia?.titleVf, seriesMedia?.titleOriginal].filter(Boolean) as string[];
-        this.logger.debug(`[Stream ep#${episodeId}] nasPath="${episode.nasPath}" nasFilename="${nasFilename}" pttTitle="${pttTitle}" hints=${JSON.stringify(titleHints)}`);
-
-        const vsVideo = await this.findVideoStationVideo(vsSession, episode.nasPath, titleHints, 'episode');
-        if (vsVideo) {
-          this.logger.debug(`[Stream ep#${episodeId}] VS video found (id=${vsVideo.videoId} fileId=${vsVideo.fileId}), opening stream…`);
-          const hlsUrl = await this.openVideoStationStream(vsSession, vsVideo.videoId, vsVideo.fileId, audioTrack);
-          if (hlsUrl) {
-            this.logger.log(`[Stream ep#${episodeId}] VideoStation HLS OK → ${hlsUrl.slice(0, 80)}…`);
-            return { nasUrl: hlsUrl, durationSeconds, isHls: true };
-          }
-          this.logger.warn(`[Stream ep#${episodeId}] VS video found but stream open returned null`);
-        } else {
-          this.logger.warn(`[Stream ep#${episodeId}] No VideoStation match → fallback FFmpeg`);
-        }
-      } catch (err) {
-        this.logger.warn(`[Stream ep#${episodeId}] VideoStation error → fallback FFmpeg: ${err}`);
-      }
-    }
-
     const session = await this.getFileStationSession(club.nasBaseUrl, member.nasUsername, member.nasPassword);
-    const fsMode = mode === 'download' ? 'download' : 'stream';
+    if (mode === 'stream') this.logger.log(`[Stream ep#${episodeId}] NAS direct-play (FileStation open)`);
     return {
-      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, fsMode),
+      nasUrl: this.buildFileStationUrl(club.nasBaseUrl, episode.nasPath, session.sid, mode),
       durationSeconds,
       isHls: false,
+      sourceType: 'NAS',
     };
   }
 
@@ -901,189 +769,6 @@ export class NasService implements OnModuleInit {
     return Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]).toString('utf8');
   }
 
-  // ── VideoStation ──────────────────────────────────────────────────────────
-
-  private async findVideoStationVideo(
-    session: NasSession,
-    nasPath: string,
-    titleHints: string[],
-    mediaType: 'movie' | 'episode',
-  ): Promise<{ videoId: number; fileId?: string } | null> {
-    if (mediaType === 'movie') {
-      return this.findVsMovie(session, nasPath, titleHints);
-    }
-    return this.findVsEpisode(session, nasPath);
-  }
-
-  /**
-   * Movie search: keyword-based via SYNO.VideoStation2.Movie (DSM 7+)
-   * then SYNO.VideoStation.Movie (DSM 6).
-   * Tries each title hint until a result is found.
-   */
-  private async findVsMovie(
-    session: NasSession,
-    nasPath: string,
-    titleHints: string[],
-  ): Promise<{ videoId: number; fileId?: string } | null> {
-    type VSMovie = { id: number; mapper_id?: number; title?: string; file?: VideoStationFile[] };
-
-    const movieApis = ['SYNO.VideoStation2.Movie'];
-
-    for (const api of movieApis) {
-      for (const keyword of titleHints) {
-        try {
-          this.logger.debug(`[VideoStation] ${api} keyword="${keyword}"…`);
-          const result = await this.request<{ total: number; movie?: VSMovie[] }>(
-            session.baseUrl,
-            { api, version: '1', method: 'list', library_id: '0', keyword, offset: '0', limit: '10', _sid: session.sid },
-          );
-
-          if (!result.success) {
-            this.logger.debug(`[VideoStation] ${api} error=${JSON.stringify(result.error)} — skipping API`);
-            break;
-          }
-
-          const movies = result.data?.movie ?? [];
-          this.logger.debug(`[VideoStation] ${api} keyword="${keyword}" → ${movies.length} résultat(s)`);
-
-          if (movies.length === 0) continue;
-
-          const pickMovie = (movie: VSMovie) => {
-            // mapper_id est l'identifiant du fichier utilisé par SYNO.VideoStation2.Streaming
-            const fileId = movie.mapper_id != null ? String(movie.mapper_id) : movie.file?.[0]?.id;
-            this.logger.debug(`[VideoStation] movie.id=${movie.id} mapper_id=${movie.mapper_id} file[0]=${JSON.stringify(movie.file?.[0])} → fileId=${fileId}`);
-            return { videoId: movie.id, fileId };
-          };
-
-          // Correspondance par chemin (le plus fiable)
-          for (const movie of movies) {
-            if ((movie.file ?? []).some((f) => f.path === nasPath)) {
-              this.logger.log(`[VideoStation] ✅ Film trouvé par chemin: "${movie.title}" (id=${movie.id})`);
-              return pickMovie(movie);
-            }
-          }
-
-          // Un seul résultat → on fait confiance au keyword
-          if (movies.length === 1) {
-            this.logger.log(`[VideoStation] ✅ Film trouvé par keyword (résultat unique): "${movies[0].title}" (id=${movies[0].id})`);
-            return pickMovie(movies[0]);
-          }
-
-          this.logger.debug(`[VideoStation] ${movies.length} résultats pour "${keyword}", aucun avec ce chemin: ${movies.map((m) => `"${m.title}"`).join(', ')}`);
-        } catch (err) {
-          this.logger.debug(`[VideoStation] ${api} search exception: ${err}`);
-          break;
-        }
-      }
-    }
-
-    this.logger.debug(`[VideoStation] Aucun film trouvé pour nasPath="${nasPath}"`);
-    return null;
-  }
-
-  /**
-   * Episode search: path-based via SYNO.VideoStation2.TVShowEpisode (DSM 7+)
-   * then SYNO.VideoStation.TVShowEpisode (DSM 6).
-   */
-  private async findVsEpisode(
-    session: NasSession,
-    nasPath: string,
-  ): Promise<{ videoId: number; fileId?: string } | null> {
-    type VSEpisode = { id: number; title?: string; file?: VideoStationFile[] };
-
-    const episodeApis = ['SYNO.VideoStation2.TVShowEpisode'];
-
-    for (const api of episodeApis) {
-      try {
-        this.logger.debug(`[VideoStation] ${api} list (recherche par chemin)… nasPath="${nasPath}"`);
-        const result = await this.request<{ total: number; episode?: VSEpisode[] }>(
-          session.baseUrl,
-          { api, version: '1', method: 'list', offset: '0', limit: '5000', additional: '["file"]', _sid: session.sid },
-        );
-
-        if (!result.success) {
-          this.logger.debug(`[VideoStation] ${api} error=${JSON.stringify(result.error)}`);
-          continue;
-        }
-
-        const episodes = result.data?.episode ?? [];
-        this.logger.debug(`[VideoStation] ${api} → ${episodes.length} épisode(s)`);
-
-        for (const ep of episodes) {
-          if ((ep.file ?? []).some((f) => f.path === nasPath)) {
-            const fileId = ep.file?.[0]?.id;
-            this.logger.log(`[VideoStation] ✅ Épisode trouvé par chemin: "${ep.title}" (id=${ep.id}) fileId=${fileId}`);
-            return { videoId: ep.id, fileId };
-          }
-        }
-
-        const samplePaths = episodes.flatMap((e) => (e.file ?? []).map((f) => f.path)).slice(0, 5);
-        this.logger.debug(`[VideoStation] Aucun épisode correspondant. Exemples de chemins VS: ${JSON.stringify(samplePaths)}`);
-        return null;
-      } catch (err) {
-        this.logger.debug(`[VideoStation] ${api} exception: ${err}`);
-      }
-    }
-
-    return null;
-  }
-
-  private async openVideoStationStream(
-    session: NasSession,
-    videoId: number,
-    fileId?: string,
-    audioTrack = 1,
-  ): Promise<string | null> {
-    // Essayer différentes combinaisons de paramètres pour VideoStation2 vs VideoStation1
-    // VS2 (DSM 7+) attend `file=<fileId>`, VS1 attend `id=<videoId>`
-    const fidNum = fileId != null ? Number(fileId) : videoId;
-
-    // Format exact découvert via DevTools VideoStation :
-    // file={"id":<mapper_id>}, hls_remux={"hls_header":true,"audio_track":1}, pin="", version=2
-    // Essayer d'abord hls_remux (pas de ré-encodage), puis transcode (compatible plus de formats)
-    const variants: Array<{ label: string; body: Record<string, unknown> }> = [
-      // VS 3.x (DSM 7.2+) — fileId direct + version 3
-      { label: 'v3_hls_remux', body: { api: 'SYNO.VideoStation2.Streaming', version: 3, method: 'open', fileId: fidNum, pin: '', hls_remux: { hls_header: true, audio_track: audioTrack } } },
-      { label: 'v3_transcode', body: { api: 'SYNO.VideoStation2.Streaming', version: 3, method: 'open', fileId: fidNum, pin: '', transcode: { video_codec: 'h264', audio_codec: 'aac' } } },
-      // VS 2.x (DSM 7.0-7.1) — file:{id} + version 2
-      { label: 'v2_hls_remux', body: { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '', hls_remux: { hls_header: true, audio_track: audioTrack } } },
-      { label: 'v2_transcode', body: { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '', transcode: { video_codec: 'h264', audio_codec: 'aac' } } },
-      { label: 'v2_bare',     body: { api: 'SYNO.VideoStation2.Streaming', version: 2, method: 'open', file: { id: fidNum }, pin: '' } },
-    ];
-
-    for (const { label, body } of variants) {
-      const extra = body;
-      this.logger.debug(`[VideoStation] POST Streaming [${label}] fileId=${fidNum}`);
-      try {
-        const result = await this.requestFormPost<{ playlist_url?: string }>(session.baseUrl, session.sid, extra);
-        if (result.success && result.data?.playlist_url) {
-          let url = result.data.playlist_url;
-          if (url.startsWith('/')) url = `${session.baseUrl.replace(/\/$/, '')}${url}`;
-          this.logger.log(`[VideoStation] ✅ Stream ouvert [${label}] → ${url.slice(0, 80)}…`);
-          return url;
-        }
-        this.logger.debug(`[VideoStation] [${label}]: success=${result.success} error=${JSON.stringify(result.error)}`);
-      } catch (err) {
-        this.logger.debug(`[VideoStation] [${label}] exception: ${err}`);
-      }
-    }
-
-    return null;
-  }
-
-  async getMediaDuration(mediaId: number, cineClubId: number): Promise<number> {
-    const media = await this.prisma.media.findFirst({ where: { id: mediaId, cineClubId }, select: { runtime: true } });
-    return (media?.runtime ?? 0) * 60;
-  }
-
-  async getEpisodeDuration(episodeId: number, cineClubId: number): Promise<number> {
-    const episode = await this.prisma.episode.findFirst({
-      where: { id: episodeId, season: { media: { cineClubId } } },
-      select: { runtime: true },
-    });
-    return (episode?.runtime ?? 0) * 60;
-  }
-
   // ── Track probing ──────────────────────────────────────────────────────────
 
   async getMediaFileUrl(mediaId: number, userId: number, cineClubId: number): Promise<string> {
@@ -1237,161 +922,6 @@ export class NasService implements OnModuleInit {
   }
 
   // ── Jellyfin / Seedbox ────────────────────────────────────────────────────────
-
-  private buildJellyfinStreamUrl(
-    jellyfinBaseUrl: string,
-    jellyfinApiToken: string,
-    jellyfinItemId: string,
-    clientType: 'web' | 'tv' = 'web',
-  ): string {
-    const base = jellyfinBaseUrl.replace(/\/$/, '');
-    // PlaySessionId: client-generated UUID required by Jellyfin to track the HLS session.
-    // MediaSourceId: equals the item ID for single-file items (Jellyfin returns it via PlaybackInfo too).
-    // Web-only: TV utilise buildJellyfinDirectStreamUrl (direct play sans transcode).
-    const params = new URLSearchParams({
-      api_key: jellyfinApiToken,
-      DeviceId: `nasflix-${clientType}`,
-      MediaSourceId: jellyfinItemId,
-      PlaySessionId: randomUUID(),
-      Container: 'ts',
-      TranscodingContainer: 'ts',
-      SegmentContainer: 'ts',
-      MinSegments: '1',
-      static: 'false',
-      // Web: transcode HEVC → H.264 (browsers can't decode HEVC/Dolby), high bitrate for 4K quality
-      VideoCodec: 'h264,hevc,vp9',
-      AudioCodec: 'aac',
-      AllowVideoStreamCopy: 'true',
-      AllowAudioStreamCopy: 'false',
-      MaxStreamingBitrate: '120000000',
-    });
-    return `${base}/Videos/${jellyfinItemId}/master.m3u8?${params.toString()}`;
-  }
-
-  /**
-   * Interroge l'API PlaybackInfo de Jellyfin avec un device profile sans codecs Dolby Vision.
-   * Jellyfin répond alors avec la couche HDR10 compatible pour les fichiers DV Profile 8,
-   * exactement comme l'app native Jellyfin TV.
-   *
-   * Retourne le meilleur stream disponible :
-   *   - Direct Play  → Static=true (fichier brut, isHls=false)
-   *   - Direct Stream → HLS fMP4 sans ré-encodage (isHls=true, TV se connecte directement)
-   *   - Fallback      → Static=true si l'API est injoignable
-   */
-  private async getJellyfinTvStreamUrl(
-    jellyfinBaseUrl: string,
-    jellyfinApiToken: string,
-    jellyfinItemId: string,
-    streamingQuality: 'NATIVE' | 'DIRECT' = 'NATIVE',
-  ): Promise<{ url: string; isHls: boolean }> {
-    const base = jellyfinBaseUrl.replace(/\/$/, '');
-    const deviceId = 'nasflix-tv';
-
-    const staticFallback = (): { url: string; isHls: boolean } => {
-      const p = new URLSearchParams({
-        api_key: jellyfinApiToken, Static: 'true',
-        DeviceId: deviceId, MediaSourceId: jellyfinItemId,
-        PlaySessionId: randomUUID(),
-      });
-      return { url: `${base}/Videos/${jellyfinItemId}/stream?${p}`, isHls: false };
-    };
-
-    // Un API key serveur Jellyfin n'a pas de "moi" → /Users/Me retourne 400.
-    // On liste tous les utilisateurs et on prend l'admin (ou le premier).
-    let userId: string;
-    try {
-      const r = await fetch(`${base}/Users?api_key=${jellyfinApiToken}`, { signal: AbortSignal.timeout(10_000) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const users = await r.json() as Array<{ Id: string; Policy?: { IsAdministrator?: boolean } }>;
-      if (!users.length) throw new Error('No users');
-      userId = (users.find(u => u.Policy?.IsAdministrator) ?? users[0]).Id;
-    } catch (e) {
-      this.logger.warn(`[jellyfin-tv] /Users failed: ${e} — Static fallback`);
-      return staticFallback();
-    }
-
-    // NATIVE : DirectPlayProfiles vide → force HLS, Jellyfin ne sert jamais le fichier DV brut.
-    // DIRECT : DirectPlayProfiles complet → Jellyfin sert le fichier tel quel (DV visible sur TV).
-    const deviceProfile = streamingQuality === 'DIRECT'
-      ? {
-          MaxStreamingBitrate: 200_000_000,
-          DirectPlayProfiles: [{
-            Container: 'mp4,m4v,mkv,mov,ts,avi',
-            Type: 'Video',
-            VideoCodec: 'h264,hevc,dvhe,dvh1,vp9,av1',
-            AudioCodec: 'aac,ac3,eac3,truehd,dts,flac,mp3,opus,alac',
-          }],
-          TranscodingProfiles: [{
-            Container: 'mp4', Type: 'Video', Protocol: 'hls',
-            VideoCodec: 'hevc,h264,dvhe,dvh1', AudioCodec: 'aac,ac3,eac3',
-            Context: 'Streaming', MinSegments: 1, BreakOnNonKeyFrames: true,
-          }],
-          SubtitleProfiles: [{ Format: 'srt', Method: 'External' }, { Format: 'vtt', Method: 'External' }],
-        }
-      : {
-          MaxStreamingBitrate: 200_000_000,
-          DirectPlayProfiles: [],
-          TranscodingProfiles: [{
-            Container: 'mp4', Type: 'Video', Protocol: 'hls',
-            VideoCodec: 'hevc,h264,dvhe,dvh1,vp9,av1',
-            AudioCodec: 'aac,ac3,eac3,truehd,dts,flac,mp3,opus,alac',
-            Context: 'Streaming', MinSegments: 1, BreakOnNonKeyFrames: true,
-          }],
-          SubtitleProfiles: [{ Format: 'srt', Method: 'External' }, { Format: 'vtt', Method: 'External' }],
-        };
-
-    type JfSource = {
-      Id?: string;
-      SupportsDirectPlay?: boolean;
-      SupportsDirectStream?: boolean;
-      TranscodingUrl?: string;
-      TranscodingSubProtocol?: string;
-    };
-    let source: JfSource | undefined;
-    try {
-      const r = await fetch(
-        `${base}/Items/${jellyfinItemId}/PlaybackInfo?userId=${userId}&DeviceId=${deviceId}&api_key=${jellyfinApiToken}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ DeviceProfile: deviceProfile, UserId: userId }),
-          signal: AbortSignal.timeout(15_000),
-        },
-      );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      source = (await r.json() as { MediaSources?: JfSource[] }).MediaSources?.[0];
-    } catch (e) {
-      this.logger.warn(`[jellyfin-tv] PlaybackInfo failed: ${e} — Static fallback`);
-      return staticFallback();
-    }
-
-    if (!source) {
-      this.logger.warn(`[jellyfin-tv] PlaybackInfo: no MediaSources — Static fallback`);
-      return staticFallback();
-    }
-
-    // Direct Play : le fichier peut être servi tel quel (HEVC HDR10, pas de DV selon Jellyfin)
-    if (source.SupportsDirectPlay) {
-      const p = new URLSearchParams({
-        api_key: jellyfinApiToken, Static: 'true',
-        DeviceId: deviceId, MediaSourceId: source.Id ?? jellyfinItemId,
-        PlaySessionId: randomUUID(),
-      });
-      this.logger.log(`[jellyfin-tv] Direct Play → ${jellyfinItemId}`);
-      return { url: `${base}/Videos/${jellyfinItemId}/stream?${p}`, isHls: false };
-    }
-
-    // Direct Stream ou Transcode : URL HLS calculée par Jellyfin
-    if (source.TranscodingUrl) {
-      const isHls = (source.TranscodingSubProtocol ?? '').toLowerCase() === 'hls';
-      const url = source.TranscodingUrl.startsWith('http') ? source.TranscodingUrl : `${base}${source.TranscodingUrl}`;
-      this.logger.log(`[jellyfin-tv] ${source.SupportsDirectStream ? 'DirectStream' : 'Transcode'} isHls=${isHls} → ${url.slice(0, 80)}…`);
-      return { url, isHls };
-    }
-
-    this.logger.warn(`[jellyfin-tv] PlaybackInfo: no usable URL — Static fallback`);
-    return staticFallback();
-  }
 
   async getJellyfinPlaybackInfo(
     jellyfinBaseUrl: string,

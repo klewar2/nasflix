@@ -1,12 +1,6 @@
-import type { PaginatedResponse, AuthTokens, GenreResponse, HealthResponse, JobKind, JobResponse, JobSource, JobStatus, LoginResponse, MediaDetailResponse, MediaResponse, MediaType, RadarrLibraryItem, SonarrLibraryItem, StreamMode, StreamUrlResponse, SyncLogResponse, SyncStatus, UserResponse, CineClubResponse, CineClubMemberResponse, RecommendationResponse, RecommendationType, FeedbackVote, NasStatusResponse } from '@nasflix/shared';
+import type { PaginatedResponse, AuthTokens, GenreResponse, HealthResponse, JobKind, JobResponse, JobSource, JobStatus, LoginResponse, MediaDetailResponse, MediaResponse, MediaType, RadarrLibraryItem, SonarrLibraryItem, StreamUrlResponse, SyncLogResponse, SyncStatus, UserResponse, CineClubResponse, CineClubMemberResponse, RecommendationResponse, RecommendationType, FeedbackVote, NasStatusResponse } from '@nasflix/shared';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
-
-function detectClient(): 'web' | 'tv' {
-  if (typeof navigator === 'undefined') return 'web';
-  const ua = navigator.userAgent ?? '';
-  return /SmartTV|SMART-TV|Tizen|Web0S|WebOS|GoogleTV|AndroidTV|HbbTV|AppleTV|CrKey|Roku/i.test(ua) ? 'tv' : 'web';
-}
 
 export function resolveApiUrl(url: string): string {
   if (url.startsWith('http')) return url;
@@ -82,17 +76,6 @@ class ApiClient {
 
   selectCineClub(cineClubId: number) {
     return this.fetch<AuthTokens>(`/auth/cineclubs/${cineClubId}/select`, { method: 'POST' });
-  }
-
-  getPreferences() {
-    return this.fetch<{ streamingQuality: 'NATIVE' | 'DIRECT' }>('/auth/me/preferences');
-  }
-
-  updatePreferences(streamingQuality: 'NATIVE' | 'DIRECT') {
-    return this.fetch<{ streamingQuality: 'NATIVE' | 'DIRECT' }>('/auth/me/preferences', {
-      method: 'PATCH',
-      body: JSON.stringify({ streamingQuality }),
-    });
   }
 
   // CineClubs
@@ -288,12 +271,13 @@ class ApiClient {
     });
   }
 
-  getStreamUrl(mediaId: number, mode: StreamMode = 'stream') {
-    return this.fetch<StreamUrlResponse>(`/nas/stream/${mediaId}?mode=${mode}&client=${detectClient()}`);
+  // Le web ne stream pas : téléchargement uniquement, via URL directe (NAS/Jellyfin)
+  getDownloadUrl(mediaId: number) {
+    return this.fetch<StreamUrlResponse>(`/nas/stream/${mediaId}?mode=download&client=web`);
   }
 
-  getEpisodeStreamUrl(episodeId: number, mode: StreamMode = 'stream') {
-    return this.fetch<StreamUrlResponse>(`/nas/stream/episode/${episodeId}?mode=${mode}&client=${detectClient()}`);
+  getEpisodeDownloadUrl(episodeId: number) {
+    return this.fetch<StreamUrlResponse>(`/nas/stream/episode/${episodeId}?mode=download&client=web`);
   }
 
   // Health

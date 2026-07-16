@@ -1,5 +1,3 @@
-export type StreamMode = 'stream' | 'download';
-export type StreamClient = 'web' | 'tv';
 export type StreamSourceType = 'NAS' | 'SEEDBOX';
 
 export interface StreamUrlResponse {
@@ -7,6 +5,7 @@ export interface StreamUrlResponse {
   isHls: boolean;
   durationSeconds: number;
   sourceType?: StreamSourceType;
+  /** Champs Jellyfin : plus renvoyés par l'API (streaming SEEDBOX supprimé), conservés pour l'app TV déployée. */
   jellyfinItemId?: string;
   jellyfinBaseUrl?: string;
   jellyfinApiToken?: string;
