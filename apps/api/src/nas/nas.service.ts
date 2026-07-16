@@ -1817,11 +1817,14 @@ export class NasService implements OnModuleInit {
     // SYNO.FileStation.Delete attend `path` comme JSON array (même pour un seul fichier),
     // sinon Synology cherche un fichier nommé littéralement comme la chaîne et renvoie 408.
     // method=delete est synchrone : success=true ne remonte que si le fichier est réellement supprimé.
+    // Le chemin doit être relatif au dossier partagé (/video/…) : un chemin physique
+    // /volume1/video/… fait chercher un dossier partagé « volume1 » → 408 alors que le fichier existe.
+    const fsPath = this.normalizeFileStationPath(path);
     const result = await this.request(session.baseUrl, {
       api: 'SYNO.FileStation.Delete',
       version: '2',
       method: 'delete',
-      path: JSON.stringify([path]),
+      path: JSON.stringify([fsPath]),
       _sid: session.sid,
     });
 

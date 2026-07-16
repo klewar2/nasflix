@@ -317,7 +317,7 @@ export class JobsProcessor extends WorkerHost {
       const msg = err instanceof Error ? err.message : String(err);
       // Synology FileStation error code 408 = "No such file or directory" — déjà supprimé, on tolère.
       if (/"code":\s*408/.test(msg) || /no such file/i.test(msg)) {
-        this.logger.log(`Job ${job.id} NAS delete: fichier déjà absent (${job.sourcePath})`);
+        this.logger.warn(`Job ${job.id} NAS delete: fichier déjà absent (${job.sourcePath})`);
       } else {
         throw err;
       }
