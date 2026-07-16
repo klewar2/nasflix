@@ -16,7 +16,7 @@ Application web personnelle de type Netflix pour cataloguer les films et séries
 | Base de données | PostgreSQL 16 |
 | Auth | JWT (access + refresh token), bcrypt |
 | Métadonnées | TMDB API v3 (`language=fr-FR`) |
-| Streaming | VideoStation API (Synology) avec fallback FFmpeg |
+| Vidéo | Téléchargement direct NAS/Jellyfin (web) · streaming direct FileStation (app TV LG webOS) |
 | Temps réel | Socket.IO (WebSocket) |
 | Queue | BullMQ + Redis |
 | Monorepo | pnpm workspaces + Turborepo |
@@ -33,13 +33,12 @@ Application web personnelle de type Netflix pour cataloguer les films et séries
 - Recherche par titre
 - Section "Dernièrement ajouté"
 
-### Streaming vidéo (membres authentifiés)
+### Vidéo (membres authentifiés)
 
-- Lecture directe depuis le NAS via VideoStation API — le navigateur se connecte directement au NAS (zéro transit par le serveur)
-- Flux HLS segmenté : seek natif, démarrage rapide, transcodage hardware Synology
-- Fallback automatique sur proxy FFmpeg si VideoStation n'est pas disponible
-- Téléchargement direct du fichier original
-- Recherche du fichier dans VideoStation par chemin (`nasPath`) puis par titre extrait du nom de fichier
+La vidéo ne transite **jamais** par le serveur Railway (égress facturé) — toutes les URLs servies sont directes :
+
+- **Web : téléchargement uniquement** — fichier original téléchargé directement depuis le NAS (File Station `mode=download`) ou depuis Jellyfin pour les médias seedbox
+- **App TV (LG webOS) : streaming direct** depuis le NAS — direct play File Station, pistes audio/sous-titres extraites à la demande
 
 ### Backoffice (admin JWT)
 
@@ -78,9 +77,10 @@ nasflix/
 │   │       ├── cineclubs/  # Gestion des CineClubs et membres
 │   │       ├── media/      # Catalogue films/séries
 │   │       ├── metadata/   # Client TMDB
-│   │       ├── nas/        # Streaming, WoL, VideoStation, FileStation
+│   │       ├── nas/        # URLs vidéo directes, WoL, FileStation, Jellyfin, Freebox
 │   │       └── sync/       # Scan NAS, queue BullMQ, gateway WebSocket
-│   └── web/                # Frontend React + Vite (port 5173)
+│   ├── web/                # Frontend React + Vite (port 5173)
+│   └── tv/                 # App TV LG webOS (port 5174, .ipk via build:ipk)
 ├── packages/
 │   └── shared/             # Types TypeScript partagés (API + Web)
 ├── scripts/
@@ -101,7 +101,6 @@ nasflix/
 - **Docker Desktop** (PostgreSQL + Redis local)
 - **Clé API TMDB** gratuite sur [themoviedb.org](https://www.themoviedb.org/settings/api)
 - **NAS Synology** avec DSM 6 ou 7, File Station activé
-- **VideoStation** installé sur le NAS pour le streaming optimisé (optionnel — fallback FFmpeg sinon)
 
 ---
 
@@ -171,15 +170,7 @@ pnpm db:migrate     # Appliquer les migrations
 
 DSM → **Panneau de configuration** → **Services de fichiers** → **File Station** → cocher **Activer File Station**.
 
-### 2. Activer VideoStation (recommandé pour le streaming)
-
-1. Installer **VideoStation** depuis le Centre de paquets DSM
-2. Ouvrir VideoStation → **Paramètres** → **Bibliothèque** → ajouter les dossiers contenant vos fichiers vidéo
-3. Laisser VideoStation indexer la bibliothèque (peut prendre quelques minutes)
-
-> Sans VideoStation, le streaming passe par un proxy FFmpeg hébergé sur Railway — plus lent et avec des limitations de seek sur certains codecs.
-
-### 3. Configurer les scripts de synchronisation
+### 2. Configurer les scripts de synchronisation
 
 Les scripts `scripts/nas/` doivent être installés sur le NAS et configurés dans le **Planificateur de tâches DSM** (Panneau de configuration → Planificateur de tâches).
 

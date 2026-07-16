@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Nasflix: a personal Netflix-style catalog + streaming app for movies/series stored on a Synology NAS. Metadata comes from TMDB (`language=fr-FR`) and lives in PostgreSQL, so the catalog stays browsable when the NAS is off. Multi-tenant: data is scoped by **CineClub** (a club owns media, members, NAS config, secrets). Deployed on Railway.
+Nasflix: a personal Netflix-style catalog app for movies/series stored on a Synology NAS. Metadata comes from TMDB (`language=fr-FR`) and lives in PostgreSQL, so the catalog stays browsable when the NAS is off. Multi-tenant: data is scoped by **CineClub** (a club owns media, members, NAS config, secrets). Deployed on Railway.
+
+**Video rule (product requirement)**: video bytes must NEVER transit through the Railway API (metered egress) — every video URL served is direct (NAS File Station or Jellyfin). The web app only offers **download**; only the TV app **streams**, and only from the NAS.
 
 UI text, code comments, and commit messages are in **French** (conventional-commit style, e.g. `feat(tv): …`, `fix(deletion): …`).
 
@@ -39,13 +41,13 @@ pnpm workspaces + Turborepo.
 
 - `apps/api` — NestJS 11 + Prisma 6. All routes prefixed `/api` (global prefix in `main.ts`). BigInt is monkey-patched to serialize as string in JSON.
 - `apps/web` — React 19 + Vite SPA (React Router v7 in `src/router.tsx`, TanStack Query 5, ShadCN/ui, Tailwind v4). Public catalog pages + `/admin/*` backoffice.
-- `apps/tv` — React app for LG webOS TVs (remote-control navigation, hls.js player). Talks to the same API via `src/lib/api.ts`; `VITE_API_URL` points at the deployed API.
+- `apps/tv` — React app for LG webOS TVs (remote-control navigation; direct-play `<video>` from the NAS, hls.js still bundled for legacy HLS URLs). Talks to the same API via `src/lib/api.ts`; `VITE_API_URL` points at the deployed API.
 - `packages/shared` — TypeScript types shared by all apps (`@nasflix/shared`), consumed directly from source (no build step).
 - `scripts/nas` — shell scripts installed in Synology DSM Task Scheduler: `sync-on-boot.sh` (boot webhook) and `watch-downloads.sh` (5-min file diff → webhook).
 
 ## Backend architecture (apps/api/src)
 
-NestJS modules, one directory each: `auth`, `users`, `cineclubs`, `media`, `metadata` (TMDB client), `nas` (streaming, File Station/VideoStation, Wake-on-LAN, Freebox), `sync` (NAS scan + reconciliation), `jobs` (download/deletion pipeline), `recommendations` (AI recos via Anthropic SDK), `mail` (Gmail via nodemailer), `health`, `common` (Prisma module, filename parser).
+NestJS modules, one directory each: `auth`, `users`, `cineclubs`, `media`, `metadata` (TMDB client), `nas` (direct video URLs, File Station, Wake-on-LAN, Jellyfin, Freebox), `sync` (NAS scan + reconciliation), `jobs` (download/deletion pipeline), `recommendations` (AI recos via Anthropic SDK), `mail` (Gmail via nodemailer), `health`, `common` (Prisma module, filename parser).
 
 **Auth**: JWT access + refresh (Passport). The JWT payload carries `sub` (user id) and `cineClubId` — most endpoints resolve tenant scope from the token. Guards/decorators in `auth/guards`: `@Public()` skips auth, `@Roles()` + RolesGuard checks CineClub membership role (ADMIN/VIEWER), SuperAdminGuard checks `User.isSuperAdmin` (cross-club administration, user management).
 
@@ -53,7 +55,7 @@ NestJS modules, one directory each: `auth`, `users`, `cineclubs`, `media`, `meta
 
 **Sync pipeline**: NAS webhook (`POST /api/sync/webhook`) or manual trigger → File Station recursive scan → `parse-torrent-title` + custom parser extract title/year/S­xxEyy/quality/HDR/Atmos → TMDB search with scoring → upsert Media (keyed on `[cineClubId, nasPath]`). Series episodes are deduplicated into one Media with Seasons/Episodes. The webhook authenticates via per-CineClub `webhookSecret` (header `X-Sync-Secret`), which also identifies the tenant; env `SYNC_WEBHOOK_SECRET` is legacy.
 
-**Streaming** (`nas/nas.service.ts`): preferred path is Synology VideoStation HLS — the browser talks to the NAS directly (media found by `nasPath`, fallback by title). If VideoStation is unavailable, falls back to an FFmpeg proxy through the API (`ffmpeg-static`). Subtitles are extracted from the media file and cached as VTT in `SubtitleCache`. Also here: Wake-on-LAN magic packets (admin-only; wake state persisted on CineClub) and Freebox integration.
+**Video URLs** (`nas/nas.service.ts` + `nas.controller.ts`): `GET /api/nas/stream/:mediaId` (and `/stream/episode/:episodeId`) returns a **direct** URL — never a proxy. `mode=download` (web) → File Station `mode=download` URL signed with the member's `_sid` (Jellyfin `/Items/…/Download` for SEEDBOX items); `mode=stream` is TV-only (`client=tv`) and NAS-only → File Station `mode=open` direct-play URL (web stream requests and SEEDBOX TV streams are rejected with 400). Track probing runs FFmpeg (`ffmpeg-static`) on the API by piping the NAS file into stdin (the Linux build can't open https URLs); SEEDBOX tracks come from Jellyfin PlaybackInfo. Subtitles are extracted (preferably via SSH on the NAS itself) and cached as VTT in `SubtitleCache`. Also here: Wake-on-LAN magic packets (admin-only; wake state persisted on CineClub) and Freebox integration.
 
 **Jobs pipeline** (`jobs/`): tracks media lifecycle across external systems — Radarr/Sonarr grabs → seedbox download → rsync over SSH from seedbox to NAS (`ssh2`; CineClub stores seedbox and NAS SSH credentials) → deletion cascades (seedbox with grace period, Jellyfin, Radarr/Sonarr, NAS). Job rows in Postgres drive state (`JobKind`/`JobStatus`); BullMQ executes.
 
