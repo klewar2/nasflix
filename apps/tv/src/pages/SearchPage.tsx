@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 import { searchMedia } from '../lib/api';
 import type { Screen } from '../App';
+import { scrollIntoView } from '../lib/scroll';
 
 const COLS = 4;
 
@@ -56,7 +57,7 @@ export default function SearchPage({ navigate, navFocused, onFocusNav }: Props) 
   // Auto-scroll focused card into view
   useEffect(() => {
     if (zone === 'grid') {
-      focusedCardRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      scrollIntoView(focusedCardRef.current, { block: 'nearest', behavior: 'smooth' });
     }
   }, [focusedIdx, zone]);
 

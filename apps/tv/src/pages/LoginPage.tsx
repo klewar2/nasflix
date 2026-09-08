@@ -77,14 +77,14 @@ export default function LoginPage({ onLogin }: Props) {
     }}>
       {/* Background radials */}
       <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none',
+        position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, pointerEvents: 'none',
         background:
           'radial-gradient(ellipse at 75% 25%, rgba(201,59,59,0.12), transparent 50%),' +
           'radial-gradient(ellipse at 25% 75%, rgba(58,150,144,0.06), transparent 50%)',
       }} />
       {/* Film grain */}
       <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none',
+        position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, pointerEvents: 'none',
         backgroundImage: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.012) 0 8px, transparent 8px 16px)',
       }} />
 

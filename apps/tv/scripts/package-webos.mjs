@@ -131,13 +131,13 @@ copyFileSync(icon130, resolve(distIcons, 'icon130x130.png'));
 // ── ares-package ────────────────────────────────────────────────────────────
 
 try {
-  execSync(`ares-package "${dist}" -o "${build}"`, { stdio: 'inherit' });
+  execSync(`ares-package --no-minify "${dist}" -o "${build}"`, { stdio: 'inherit' });
   console.log('\n✅  IPK créé dans apps/tv/build/');
   console.log('👉  Pour installer : ares-install apps/tv/build/com.nasflix.tv_1.0.0_all.ipk --device lgtv');
   console.log('👉  Pour lancer   : ares-launch com.nasflix.tv --device lgtv');
-} catch {
-  console.error('\n❌  ares-package introuvable. Installez le SDK WebOS :');
-  console.error('    npm install -g @webosose/ares-cli');
-  console.error('\nLe build Vite est prêt dans apps/tv/dist/ — packaging échoué seulement.');
+} catch (error) {
+  console.error('\n❌  Échec du packaging WebOS.');
+  console.error(error);
+  console.error('\nLe build Vite est prêt dans apps/tv/dist/ — packaging échoué.');
   process.exit(1);
 }

@@ -59,7 +59,7 @@ function MediaCard({ media, focused, onFocus, onSelect }: Props) {
 
       {/* Netflix-style overlay: always shows type badge, on focus shows full info */}
       <div style={{
-        position: 'absolute', inset: 0,
+        position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
         background: focused
           ? 'linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.4) 50%, transparent 100%)'
           : 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 50%)',

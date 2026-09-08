@@ -98,7 +98,7 @@ export default function PlayerPage({ mediaId, episodeId, title, seriesTitle, vid
       <div
         style={{
           position: 'fixed',
-          inset: 0,
+          top: 0, right: 0, bottom: 0, left: 0,
           background: '#000',
           display: 'flex',
           alignItems: 'center',
@@ -128,7 +128,7 @@ export default function PlayerPage({ mediaId, episodeId, title, seriesTitle, vid
       <div
         style={{
           position: 'fixed',
-          inset: 0,
+          top: 0, right: 0, bottom: 0, left: 0,
           background: '#000',
           display: 'flex',
           alignItems: 'center',

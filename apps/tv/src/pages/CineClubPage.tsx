@@ -141,7 +141,7 @@ export default function CineClubPage({ onSelect }: Props) {
     }}>
       {/* Background glow */}
       <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none',
+        position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, pointerEvents: 'none',
         background: 'radial-gradient(ellipse at 70% 0%, rgba(201,59,59,0.08), transparent 60%)',
       }} />
 

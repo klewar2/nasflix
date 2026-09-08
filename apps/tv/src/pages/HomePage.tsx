@@ -6,6 +6,7 @@ import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 import { getRecentMedia, getMedia, getGenres, getQualityMedia, getMediaById } from '../lib/api';
 import { watchProgress } from '../lib/progress';
 import type { Screen } from '../App';
+import { scrollIntoView, scrollTo } from '../lib/scroll';
 
 // Hauteur approximative d'une MediaRow (poster 2:3 + titre + marges).
 // Sert de placeholder à LazyMount pour préserver le scroll position.
@@ -96,7 +97,7 @@ function ContinueCard({
 
         {/* Dark gradient overlay */}
         <div style={{
-          position: 'absolute', inset: 0,
+          position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
           background: 'linear-gradient(to top, rgba(7,7,10,0.9) 0%, rgba(7,7,10,0.3) 50%, transparent 100%)',
         }} />
 
@@ -271,7 +272,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
     if (!mountedRef.current) { mountedRef.current = true; return; }
     if (!active) return;
     if (navFocused) {
-      scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollTo(scrollContainerRef.current, { top: 0, behavior: 'smooth' });
       return;
     }
     let el: HTMLDivElement | null = null;
@@ -281,7 +282,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
       const rowIdx = hasResume ? focusedZone - 1 : focusedZone;
       el = rowSectionRefs.current[rowIdx] ?? null;
     }
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrollIntoView(el, { behavior: 'smooth', block: 'center' });
   }, [focusedZone, navFocused, active, hasResume]);
 
   useRemoteKeys((e) => {
@@ -315,7 +316,7 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
           <div
             key={backdropKey}
             style={{
-              position: 'absolute', inset: 0,
+              position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
               backgroundImage: `url(${currentBackdrop})`,
               backgroundSize: 'cover', backgroundPosition: 'center',
               opacity: 1,
@@ -325,18 +326,18 @@ export default function HomePage({ navigate, active, navFocused, onFocusNav }: P
           />
         ) : (
           <div style={{
-            position: 'absolute', inset: 0,
+            position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
             background: 'radial-gradient(ellipse 80% 60% at 30% 40%, #1a1a2e 0%, var(--bg-deep) 70%)',
           }} />
         )}
 
         {/* Gradient overlays */}
         <div style={{
-          position: 'absolute', inset: 0,
+          position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
           background: 'linear-gradient(180deg, rgba(7,7,10,0.6) 0%, transparent 30%, rgba(7,7,10,0.4) 65%, var(--bg-base) 100%)',
         }} />
         <div style={{
-          position: 'absolute', inset: 0,
+          position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
           background: 'linear-gradient(90deg, rgba(7,7,10,0.92) 0%, rgba(7,7,10,0.6) 35%, transparent 70%)',
         }} />
 

@@ -85,6 +85,20 @@ export default function App() {
   };
 
   if (screen.name === 'splash') {
+    // Le splash s'efface au bout de 3 s : s'il reste affiché après ça (session
+    // en cours de vérification, ou requête qui n'aboutit pas), on montrerait un
+    // écran noir. On bascule sur un état de chargement explicite.
+    if (splashDone) {
+      return (
+        <div style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0, left: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: '#07070a', color: 'var(--text-muted)', fontSize: '0.55rem',
+        }}>
+          Vérification de la session…
+        </div>
+      );
+    }
     return <SplashScreen onDone={handleSplashDone} />;
   }
 

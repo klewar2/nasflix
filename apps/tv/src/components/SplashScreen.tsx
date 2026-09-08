@@ -16,7 +16,7 @@ export default function SplashScreen({ onDone }: Props) {
 
   return (
     <div style={{
-      position: 'fixed', inset: 0,
+      position: 'fixed', top: 0, right: 0, bottom: 0, left: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'radial-gradient(ellipse at center, #14141c 0%, #07070a 70%)',
       overflow: 'hidden',
@@ -32,7 +32,7 @@ export default function SplashScreen({ onDone }: Props) {
       }} />
 
       {/* Concentric rings */}
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
         {([8.125, 11.875, 16.25, 21.875] as number[]).map((r, i) => (
           <div key={r} style={{
             position: 'absolute',
@@ -96,7 +96,7 @@ export default function SplashScreen({ onDone }: Props) {
         transition: 'opacity 0.4s ease 0.3s',
       }}>
         <span style={{ fontFamily: 'var(--mono)', fontSize: '0.34rem', color: 'rgba(255,255,255,0.25)' }}>
-          v 2.4.0 · webOS 6+
+          v 2.4.0 · webOS 4+
         </span>
         <span style={{ fontFamily: 'var(--mono)', fontSize: '0.34rem', color: 'rgba(255,255,255,0.25)' }}>
           nas.synology · DS920+

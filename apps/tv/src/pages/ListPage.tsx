@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getMedia } from '../lib/api';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 import type { Screen } from '../App';
+import { scrollIntoView } from '../lib/scroll';
 
 interface GridCardProps {
   media: {
@@ -179,10 +180,10 @@ export default function ListPage({ kind, navigate, navFocused, onFocusNav }: Pro
   // Auto-scroll focused card/letter into view
   useEffect(() => {
     if (zone === 'grid') {
-      focusedCardRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      scrollIntoView(focusedCardRef.current, { block: 'nearest', behavior: 'smooth' });
     }
     if (zone === 'az') {
-      focusedLetterRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      scrollIntoView(focusedLetterRef.current, { block: 'nearest', behavior: 'smooth' });
     }
   }, [focusedIdx, zone, focusedLetter]);
 

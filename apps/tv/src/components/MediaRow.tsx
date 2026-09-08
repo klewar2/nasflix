@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import MediaCard from './MediaCard';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
+import { scrollIntoView } from '../lib/scroll';
 
 interface Media {
   id: number;
@@ -31,7 +32,7 @@ export default function MediaRow({ title, items, rowFocused, onSelect, onPreview
   useEffect(() => {
     if (!rowFocused || !scrollRef.current) return;
     const cards = scrollRef.current.querySelectorAll<HTMLElement>('[data-card]');
-    cards[focusedIdx]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    scrollIntoView(cards[focusedIdx], { behavior: 'smooth', block: 'nearest', inline: 'center' });
   }, [focusedIdx, rowFocused]);
 
   // Notify parent of preview change when row is focused

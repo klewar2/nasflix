@@ -64,7 +64,7 @@ export default function VideoPlayer({
   const DEBUG = import.meta.env.VITE_DEBUG === 'true';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
+    <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, left: 0, background: '#000' }}>
       <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline />
 
       {/* ── Subtitle overlay (TV-optimised) ─────────────────────────── */}
@@ -107,7 +107,7 @@ export default function VideoPlayer({
       {/* ── Buffering loader (jamais en pause) ───────────────────────── */}
       {isBuffering && !paused && !videoError && !showResume && (
         <div style={{
-          position: 'absolute', inset: 0,
+          position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           gap: '0.625rem', pointerEvents: 'none', background: 'rgba(0,0,0,0.35)',
         }}>
@@ -150,7 +150,7 @@ export default function VideoPlayer({
       {/* ── Resume prompt ───────────────────────────────────────────── */}
       {showResume && savedProgress && (
         <div style={{
-          position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)',
+          position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, background: 'rgba(0,0,0,0.55)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
@@ -211,7 +211,7 @@ export default function VideoPlayer({
 
       {/* ── Controls overlay ──────────────────────────────────────────── */}
       <div style={{
-        position: 'absolute', inset: 0,
+        position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
         opacity: nav.showControls ? 1 : 0, transition: 'opacity 0.3s',
         pointerEvents: nav.showControls ? 'auto' : 'none',
       }}>
@@ -492,7 +492,7 @@ export default function VideoPlayer({
       {/* ── Error overlay ────────────────────────────────────────────── */}
       {videoError && (
         <div style={{
-          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center', gap: '0.75rem',
           background: 'rgba(0,0,0,0.88)',
         }}>

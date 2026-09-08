@@ -4,6 +4,7 @@ import { getMediaById } from '../lib/api';
 import { KEY, useRemoteKeys } from '../hooks/useRemoteKeys';
 import { watchProgress } from '../lib/progress';
 import type { Screen } from '../App';
+import { scrollIntoView } from '../lib/scroll';
 
 interface Props {
   mediaId: number;
@@ -128,10 +129,10 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
   // Auto-scroll focused episode / tab into view
   useEffect(() => {
     if (typeof focused === 'object' && focused.zone === 'episode' && focusedEpisodeRef.current && episodeListRef.current) {
-      focusedEpisodeRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      scrollIntoView(focusedEpisodeRef.current, { block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     }
     if (typeof focused === 'object' && focused.zone === 'tab' && focusedTabRef.current && tabBarRef.current) {
-      focusedTabRef.current.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      scrollIntoView(focusedTabRef.current, { block: 'nearest', inline: 'center', behavior: 'smooth' });
     }
   }, [focused]);
 
@@ -149,16 +150,16 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '720px', overflow: 'hidden' }}>
         {backdropUrl ? (
           <div style={{
-            position: 'absolute', inset: 0,
+            position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
             backgroundImage: `url(${backdropUrl})`,
             backgroundSize: 'cover', backgroundPosition: 'center top',
           }} />
         ) : (
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, #1a1a2e, #16213e)' }} />
+          <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, background: 'linear-gradient(135deg, #1a1a2e, #16213e)' }} />
         )}
         {/* Gradient overlays */}
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(7,7,10,0.45) 0%, rgba(7,7,10,0.85) 60%, var(--bg-deep) 100%)' }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(7,7,10,0.0) 40%, rgba(7,7,10,0.9) 100%)' }} />
+        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, background: 'linear-gradient(to bottom, rgba(7,7,10,0.45) 0%, rgba(7,7,10,0.85) 60%, var(--bg-deep) 100%)' }} />
+        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, background: 'linear-gradient(to right, rgba(7,7,10,0.0) 40%, rgba(7,7,10,0.9) 100%)' }} />
       </div>
       {/* Background fill below backdrop */}
       <div style={{ position: 'absolute', top: '720px', left: 0, right: 0, bottom: 0, background: 'var(--bg-deep)' }} />
@@ -418,7 +419,7 @@ export default function DetailPage({ mediaId, mediaType, navigate, navFocused, o
                           <img
                             src={ep.stillUrl}
                             alt={epTitle}
-                            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                           />
                         )}
                         {/* Episode number badge top-left */}
