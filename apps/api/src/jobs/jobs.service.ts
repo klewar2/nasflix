@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Queue } from 'bullmq';
 import { Job as JobRow, JobKind, JobSource, JobStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
@@ -7,8 +8,10 @@ import { CryptoService } from '../common/crypto.service';
 import { JOBS_QUEUE } from './jobs.constants';
 import { RadarrWebhookPayload, SonarrWebhookPayload } from './dto/webhook-radarr.dto';
 
+const ACTIVE_STATUSES: JobStatus[] = [JobStatus.PENDING, JobStatus.AWAITING_NAS, JobStatus.AWAITING_SEEDBOX, JobStatus.IN_PROGRESS];
+
 @Injectable()
-export class JobsService {
+export class JobsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(JobsService.name);
 
   constructor(
@@ -16,6 +19,49 @@ export class JobsService {
     private readonly crypto: CryptoService,
     @InjectQueue(JOBS_QUEUE) private readonly queue: Queue,
   ) {}
+
+  onApplicationBootstrap() {
+    // Laisse d'abord BullMQ récupérer les jobs "stalled" du process précédent
+    // (lock expiré ~30 s) avant de chercher les orphelins.
+    setTimeout(() => void this.recoverOrphanJobs(), 90_000).unref();
+  }
+
+  /**
+   * Filet de sécurité : tout Job DB non terminé doit avoir un job BullMQ
+   * (actif, en attente ou différé). Sinon (redémarrage pendant un transfert,
+   * job BullMQ perdu, crash seedbox avant le correctif keepalive…) il resterait
+   * bloqué à jamais — on le ré-enfile.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async recoverOrphanJobs(): Promise<number> {
+    try {
+      const rows = await this.prisma.job.findMany({
+        where: {
+          status: { in: ACTIVE_STATUSES },
+          // Laisse le temps à createXxxJob d'enfiler le job qu'il vient de créer.
+          createdAt: { lt: new Date(Date.now() - 2 * 60_000) },
+        },
+        select: { id: true, status: true, scheduledFor: true },
+      });
+      if (rows.length === 0) return 0;
+
+      const queued = await this.queue.getJobs(['active', 'waiting', 'delayed', 'prioritized', 'paused', 'waiting-children']);
+      const queuedIds = new Set(queued.map((j) => (j?.data as { jobId?: number } | undefined)?.jobId));
+
+      let recovered = 0;
+      for (const row of rows) {
+        if (queuedIds.has(row.id)) continue;
+        const delayMs = row.scheduledFor ? Math.max(0, row.scheduledFor.getTime() - Date.now()) : 0;
+        this.logger.warn(`[recover] Job #${row.id} (${row.status}) sans job BullMQ — ré-enfilé (delay=${delayMs}ms)`);
+        await this.enqueueRun(row.id, delayMs);
+        recovered++;
+      }
+      return recovered;
+    } catch (err) {
+      this.logger.error(`[recover] Réconciliation des jobs échouée : ${err}`);
+      return 0;
+    }
+  }
 
   async createDownloadJob(input: {
     cineClubId: number;

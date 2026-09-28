@@ -18,9 +18,30 @@ interface JobRunData {
   jobId: number;
 }
 
+// Erreur réseau/seedbox passagère (seedbox éteinte/crashée, connexion SSH
+// coupée, rsync interrompu) : le job est replanifié au lieu de passer FAILED.
+class TransientSeedboxError extends Error {}
+
+// Codes de sortie rsync liés au réseau / à une interruption (cf. man rsync) :
+// 10 socket I/O, 12 flux protocole, 20 signal reçu, 30 timeout, 35 timeout
+// connexion daemon, 255 échec ssh (NAS injoignable depuis la seedbox).
+const TRANSIENT_RSYNC_CODES = new Set([-1, 10, 12, 20, 30, 35, 255]);
+
+// Replanification : 1, 2, 4, 8, 16 puis 30 min entre chaque tentative,
+// abandon (FAILED + mail) après ~2 jours.
+const MAX_TRANSIENT_ATTEMPTS = 100;
+const retryDelayMs = (attempts: number) => Math.min(30, 2 ** Math.max(0, attempts - 1)) * 60_000;
+
+// Filet de sécurité : rsync --info=progress2 écrit en continu, un silence
+// prolongé signifie une connexion morte que le keepalive n'a pas détectée.
+const RSYNC_IDLE_TIMEOUT_MS = 20 * 60_000;
+
 @Processor(JOBS_QUEUE, { concurrency: 2 })
 export class JobsProcessor extends WorkerHost {
   private readonly logger = new Logger(JobsProcessor.name);
+  // Jobs DB en cours d'exécution dans ce process — évite un double run si le
+  // même job est enfilé deux fois (webhook + réconciliation).
+  private readonly running = new Set<number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -31,6 +52,7 @@ export class JobsProcessor extends WorkerHost {
     private readonly metadataService: MetadataService,
     private readonly gateway: JobsGateway,
     @InjectQueue(METADATA_SYNC_QUEUE) private readonly metadataQueue: Queue,
+    @InjectQueue(JOBS_QUEUE) private readonly jobsQueue: Queue,
   ) {
     super();
   }
@@ -85,6 +107,19 @@ export class JobsProcessor extends WorkerHost {
   async process(bullJob: BullJob<JobRunData>): Promise<void> {
     const { jobId } = bullJob.data;
     this.logger.log(`[processor] BullMQ déclenche job #${jobId}`);
+    if (this.running.has(jobId)) {
+      this.logger.warn(`Job ${jobId} déjà en cours d'exécution — doublon BullMQ ignoré`);
+      return;
+    }
+    this.running.add(jobId);
+    try {
+      await this.processJob(jobId);
+    } finally {
+      this.running.delete(jobId);
+    }
+  }
+
+  private async processJob(jobId: number): Promise<void> {
     const job = await this.prisma.job.findUnique({ where: { id: jobId } });
     if (!job) {
       this.logger.warn(`Job ${jobId} introuvable — skip`);
@@ -120,6 +155,13 @@ export class JobsProcessor extends WorkerHost {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof TransientSeedboxError) {
+        const current = await this.prisma.job.findUnique({ where: { id: jobId } });
+        if (current && current.attempts < MAX_TRANSIENT_ATTEMPTS) {
+          await this.scheduleRetry(current, message);
+          return;
+        }
+      }
       this.logger.error(`Job ${jobId} en échec: ${message}`);
       const stack = err instanceof Error ? err.stack : undefined;
       const updated = await this.markFailed(job, message, stack);
@@ -200,6 +242,7 @@ export class JobsProcessor extends WorkerHost {
       privateKey: this.crypto.decrypt(club.seedboxSshPrivateKey),
       passphrase: club.seedboxSshPassphrase ? this.crypto.decrypt(club.seedboxSshPassphrase) : undefined,
       command: rsyncCmd,
+      idleTimeoutMs: RSYNC_IDLE_TIMEOUT_MS,
       onProgress: async (percent) => {
         await this.prisma.job.update({ where: { id: job.id }, data: { progressPercent: percent } }).catch(() => null);
         this.gateway.emitJobProgress(job.cineClubId, job.id, percent);
@@ -209,19 +252,29 @@ export class JobsProcessor extends WorkerHost {
     if (result.code !== 0) {
       // Log compact (tail) côté Railway pour le diag — la stderr complète va dans l'erreur Job en DB
       this.logger.error(`Job ${job.id} rsync EXIT=${result.code} — tail stderr:\n${result.stderr.slice(-1500)}`);
-      throw new Error(`rsync exit code ${result.code}\nstderr (last 8000):\n${result.stderr.slice(-8000)}`);
+      const message = `rsync exit code ${result.code}\nstderr (last 8000):\n${result.stderr.slice(-8000)}`;
+      // Transfert interrompu (réseau, reboot seedbox/NAS) : --partial permet de
+      // reprendre là où rsync s'est arrêté à la prochaine tentative.
+      if (TRANSIENT_RSYNC_CODES.has(result.code)) throw new TransientSeedboxError(message);
+      throw new Error(message);
     }
 
     // 3. Catalog upsert + jellyfinId
     await this.registerInCatalog(job, targetPath);
 
-    await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date(), progressPercent: 100 });
+    await this.updateStatus(job, JobStatus.COMPLETED, {
+      completedAt: new Date(),
+      progressPercent: 100,
+      scheduledFor: null,
+      errorMessage: null,
+    });
   }
 
   // ── DELETE_FROM_SEEDBOX ───────────────────────────────────────────────────
 
   private async runDeleteSeedbox(job: JobRow): Promise<void> {
-    if (job.scheduledFor && job.scheduledFor.getTime() > Date.now()) {
+    // Marge de 5 s : un job BullMQ retardé peut se déclencher quelques ms avant scheduledFor.
+    if (job.scheduledFor && job.scheduledFor.getTime() > Date.now() + 5_000) {
       this.logger.log(`Job ${job.id} pas encore prêt (scheduledFor=${job.scheduledFor.toISOString()})`);
       return;
     }
@@ -247,7 +300,7 @@ export class JobsProcessor extends WorkerHost {
     if (result.code !== 0) {
       throw new Error(`rm exit code ${result.code}\nstderr:\n${result.stderr.slice(-8000)}`);
     }
-    await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date() });
+    await this.updateStatus(job, JobStatus.COMPLETED, { completedAt: new Date(), errorMessage: null });
   }
 
   // ── DELETE_FROM_JELLYFIN ──────────────────────────────────────────────────
@@ -515,7 +568,14 @@ export class JobsProcessor extends WorkerHost {
     const verbose = process.env.SSH_VERBOSE === '1';
     const sshOpts: string[] = [];
     if (verbose) sshOpts.push('-vvv');
-    sshOpts.push('-o StrictHostKeyChecking=accept-new', `-p ${p.nasPort}`);
+    sshOpts.push(
+      '-o StrictHostKeyChecking=accept-new',
+      // Détecte un NAS disparu en ~2 min au lieu de bloquer indéfiniment.
+      '-o ConnectTimeout=30',
+      '-o ServerAliveInterval=30',
+      '-o ServerAliveCountMax=4',
+      `-p ${p.nasPort}`,
+    );
     if (p.keyPath) {
       // -i et IdentitiesOnly évitent de dépendre de ~/.ssh/config (non lu dans certains contextes non-interactifs)
       sshOpts.push(`-o IdentityFile=${shellEscape(p.keyPath)}`, '-o IdentitiesOnly=yes');
@@ -523,7 +583,8 @@ export class JobsProcessor extends WorkerHost {
     const sshCmd = `ssh ${sshOpts.join(' ')}`;
     const dir = p.targetDir.replace(/\/$/, '');
     const target = `${p.nasUser}@${p.nasHost}:${dir}/`;
-    const parts = ['rsync', '-av', '--partial', '--info=progress2'];
+    // --timeout : rsync abandonne (exit 30) si aucune donnée ne circule pendant 10 min.
+    const parts = ['rsync', '-av', '--partial', '--timeout=600', '--info=progress2'];
     if (p.ensureRemoteDir) {
       // mkdir -p côté NAS avant rsync : --rsync-path est exécuté à la place du
       // rsync distant et permet d'enchaîner un mkdir puis le vrai rsync.
@@ -540,6 +601,7 @@ export class JobsProcessor extends WorkerHost {
     privateKey: string;
     passphrase?: string;
     command: string;
+    idleTimeoutMs?: number;
     onProgress?: (percent: number) => Promise<void>;
   }): Promise<{ code: number; stdout: string; stderr: string }> {
     return await new Promise((resolve, reject) => {
@@ -547,6 +609,28 @@ export class JobsProcessor extends WorkerHost {
       let stdout = '';
       let stderr = '';
       let lastProgress = -1;
+      let settled = false;
+      let idleTimer: NodeJS.Timeout | undefined;
+
+      // Toute issue réseau (erreur, keepalive expiré, fermeture inattendue,
+      // silence prolongé) doit terminer la promesse : sinon le job occupe un
+      // slot du worker pour toujours et bloque toute la file.
+      const finish = (outcome: { code: number } | { error: Error }) => {
+        if (settled) return;
+        settled = true;
+        if (idleTimer) clearTimeout(idleTimer);
+        client.end();
+        if ('error' in outcome) reject(outcome.error);
+        else resolve({ code: outcome.code, stdout, stderr });
+      };
+      const fail = (reason: string) =>
+        finish({ error: new TransientSeedboxError(`Connexion SSH seedbox perdue : ${reason}`) });
+
+      const armIdleTimer = (onIdle: () => void) => {
+        if (!p.idleTimeoutMs) return;
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(onIdle, p.idleTimeoutMs);
+      };
 
       const handleStream = (data: string) => {
         if (!p.onProgress) return;
@@ -564,28 +648,40 @@ export class JobsProcessor extends WorkerHost {
       client
         .on('ready', () => {
           client.exec(p.command, (err, stream) => {
-            if (err) {
-              client.end();
-              return reject(err);
-            }
+            if (err) return fail(err.message);
+            const onIdle = () => {
+              // Tue le process distant (rsync) pour ne pas laisser un orphelin
+              // écrire dans le fichier partiel pendant la prochaine tentative.
+              try { stream.signal('KILL'); } catch { /* sshd trop ancien */ }
+              fail(`aucune sortie depuis ${Math.round(p.idleTimeoutMs! / 60_000)} min`);
+            };
+            armIdleTimer(onIdle);
             stream
-              .on('close', (code: number | null) => {
-                client.end();
-                resolve({ code: code ?? -1, stdout, stderr });
+              .on('close', (code: number | null, signal?: string) => {
+                // code null = process tué par un signal ou canal coupé → -1 (transitoire)
+                if (code == null && signal) stderr += `\n[process distant terminé par ${signal}]`;
+                finish({ code: code ?? -1 });
               })
               .on('data', (data: Buffer) => {
                 const chunk = data.toString('utf8');
                 stdout += chunk;
+                armIdleTimer(onIdle);
                 handleStream(chunk);
               })
               .stderr.on('data', (data: Buffer) => {
                 const chunk = data.toString('utf8');
                 stderr += chunk;
+                armIdleTimer(onIdle);
                 handleStream(chunk);
               });
           });
         })
-        .on('error', (err) => reject(err))
+        .on('error', (err: Error & { level?: string }) => {
+          // Clé refusée = problème de config, pas de la seedbox : échec immédiat.
+          if (err.level === 'client-authentication') finish({ error: err });
+          else fail(err.message);
+        })
+        .on('close', () => fail('connexion fermée par la seedbox'))
         .connect({
           host: p.host,
           port: p.port,
@@ -593,6 +689,10 @@ export class JobsProcessor extends WorkerHost {
           privateKey: p.privateKey,
           passphrase: p.passphrase,
           readyTimeout: 30_000,
+          // Sans keepalive, une seedbox qui crashe laisse la socket TCP ouverte
+          // indéfiniment (pas de FIN/RST) : ssh2 lève une erreur après ~1 min.
+          keepaliveInterval: 15_000,
+          keepaliveCountMax: 4,
         });
     });
   }
@@ -770,6 +870,22 @@ export class JobsProcessor extends WorkerHost {
       data: { status, ...extra },
     });
     this.gateway.emitJobStatus(job.cineClubId, updated);
+  }
+
+  // Seedbox injoignable ou transfert coupé : AWAITING_SEEDBOX + nouvelle
+  // tentative BullMQ différée. Le job reprend tout seul quand la seedbox revient.
+  private async scheduleRetry(job: JobRow, message: string): Promise<void> {
+    const delay = retryDelayMs(job.attempts);
+    const scheduledFor = new Date(Date.now() + delay);
+    this.logger.warn(
+      `Job ${job.id} — seedbox indisponible (tentative ${job.attempts}/${MAX_TRANSIENT_ATTEMPTS}), ` +
+        `nouvel essai à ${scheduledFor.toISOString()} : ${message.split('\n')[0]}`,
+    );
+    await this.updateStatus(job, JobStatus.AWAITING_SEEDBOX, {
+      scheduledFor,
+      errorMessage: `En attente de la seedbox — nouvel essai à ${scheduledFor.toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}\n\n${message}`.slice(0, 2000),
+    });
+    await this.jobsQueue.add('run', { jobId: job.id }, { delay, removeOnComplete: 100, removeOnFail: 500, attempts: 1 });
   }
 
   private async markFailed(job: JobRow, message: string, stack?: string): Promise<JobRow> {
