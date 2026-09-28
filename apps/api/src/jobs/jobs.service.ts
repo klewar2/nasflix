@@ -41,15 +41,31 @@ export class JobsService implements OnApplicationBootstrap {
           // Laisse le temps à createXxxJob d'enfiler le job qu'il vient de créer.
           createdAt: { lt: new Date(Date.now() - 2 * 60_000) },
         },
-        select: { id: true, status: true, scheduledFor: true },
+        select: { id: true, status: true, scheduledFor: true, startedAt: true },
       });
       if (rows.length === 0) return 0;
 
-      const queued = await this.queue.getJobs(['active', 'waiting', 'delayed', 'prioritized', 'paused', 'waiting-children']);
-      const queuedIds = new Set(queued.map((j) => (j?.data as { jobId?: number } | undefined)?.jobId));
+      const dbJobId = (j: { data?: unknown } | undefined) => (j?.data as { jobId?: number } | undefined)?.jobId;
+      const active = await this.queue.getJobs(['active']);
+      const activeIds = new Set(active.map(dbJobId));
+      const queued = await this.queue.getJobs(['waiting', 'delayed', 'prioritized', 'paused', 'waiting-children']);
+      const queuedIds = new Set([...activeIds, ...queued.map(dbJobId)]);
 
       let recovered = 0;
       for (const row of rows) {
+        // Job interrompu (redémarrage, crash seedbox) remis en file mais pas
+        // encore repris : on repasse en PENDING pour que le backoffice ne le
+        // montre pas figé "en cours".
+        const claimsRunning = row.status === JobStatus.IN_PROGRESS || row.status === JobStatus.AWAITING_NAS;
+        if (claimsRunning && !activeIds.has(row.id)) {
+          // Condition sur startedAt : si le worker vient de relancer le job
+          // entre-temps (startedAt mis à jour), on ne touche à rien.
+          await this.prisma.job.updateMany({
+            where: { id: row.id, status: row.status, startedAt: row.startedAt },
+            data: { status: JobStatus.PENDING },
+          });
+          this.logger.warn(`[recover] Job #${row.id} affiché ${row.status} sans exécution active — repassé PENDING`);
+        }
         if (queuedIds.has(row.id)) continue;
         const delayMs = row.scheduledFor ? Math.max(0, row.scheduledFor.getTime() - Date.now()) : 0;
         this.logger.warn(`[recover] Job #${row.id} (${row.status}) sans job BullMQ — ré-enfilé (delay=${delayMs}ms)`);
