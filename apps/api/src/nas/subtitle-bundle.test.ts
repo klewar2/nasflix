@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildBundleExtractionScript, isPgsData, isPgsSubtitleCodec, isTextSubtitleCodec, parseSubtitleBundle, SUBTITLE_BUNDLE_MARKER,
+  buildBundleExtractionScript, buildSingleTrackExtractionScript, isPgsData, isPgsSubtitleCodec, isTextSubtitleCodec,
+  parseExtractionProgress, parseSubtitleBundle, SUBTITLE_BUNDLE_MARKER,
 } from './subtitle-bundle';
 
 describe('codecs', () => {
@@ -84,8 +85,50 @@ describe('buildBundleExtractionScript', () => {
 
   it('abandonne sans rien restituer si FFmpeg échoue (pas de sous-titre tronqué)', () => {
     const lines = buildBundleExtractionScript([{ idx: 0, format: 'vtt' }]);
-    const ffmpegLine = lines.findIndex((l) => l.includes('"$FF"'));
-    expect(lines[ffmpegLine]).toContain('|| exit $?');
-    expect(ffmpegLine).toBeLessThan(lines.findIndex((l) => l.includes('cat "$TMP/0.vtt"')));
+    const exitLine = lines.indexOf('[ "$RC" -eq 0 ] || exit "$RC"');
+    expect(exitLine).toBeGreaterThan(lines.findIndex((l) => l.includes('"$FF"')));
+    expect(exitLine).toBeLessThan(lines.findIndex((l) => l.includes('cat "$TMP/0.vtt"')));
+  });
+
+  it('pré-extraction en priorité basse, publie la position de lecture et tue FFmpeg si la session tombe', () => {
+    const script = buildBundleExtractionScript([{ idx: 0, format: 'sup' }]).join('\n');
+    expect(script).toContain('ionice -c2 -n7');
+    expect(script).toContain('/proc/$PID/fdinfo/');
+    expect(script).toMatch(/trap '.*kill "\$PID".*' EXIT HUP INT TERM PIPE/);
+  });
+});
+
+describe('buildSingleTrackExtractionScript', () => {
+  it('extrait une piste vers stdout, en priorité normale (l\'utilisateur attend)', () => {
+    const script = buildSingleTrackExtractionScript({ idx: 2, format: 'sup' }).join('\n');
+    expect(script).toContain('-map 0:s:2 -c:s copy -f sup pipe:1 &');
+    expect(script).not.toContain('ionice');
+    expect(script).toContain('readpos=');
+  });
+});
+
+describe('parseExtractionProgress', () => {
+  it('utilise la plus grande position de lecture rapportée à la taille du fichier', () => {
+    // fd : stdin/stdout/stderr à 0, sortie .sup (petite), fichier source (grande position)
+    expect(parseExtractionProgress('readpos=0 0 0 1048576 11324314443 /45293257775\n', 6720)).toBe(25);
+  });
+
+  it('prend la dernière mesure d\'un morceau qui en contient plusieurs', () => {
+    expect(parseExtractionProgress('readpos=10 /100\nreadpos=50 /100\n', 0)).toBe(50);
+  });
+
+  it('plafonne à 99 % (100 % = extraction terminée et mise en cache)', () => {
+    expect(parseExtractionProgress('readpos=100 /100\n', 0)).toBe(99);
+  });
+
+  it('retombe sur out_time sans taille connue (stat absent) ou sans readpos', () => {
+    expect(parseExtractionProgress('readpos=500 /\nout_time=00:56:00.000000\n', 6720)).toBe(50);
+    expect(parseExtractionProgress('out_time=00:11:12.000000\nprogress=continue\n', 6720)).toBe(10);
+  });
+
+  it('ignore out_time négatif (aucun paquet encore écrit) et les morceaux sans progression', () => {
+    expect(parseExtractionProgress('out_time=-577014:32:22.775807\n', 6720)).toBeNull();
+    expect(parseExtractionProgress('bitrate=N/A\n', 6720)).toBeNull();
+    expect(parseExtractionProgress('out_time=00:10:00.000000\n', 0)).toBeNull();
   });
 });

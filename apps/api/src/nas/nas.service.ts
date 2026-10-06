@@ -11,7 +11,10 @@ import { MediaType } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
 import { NasGateway } from './nas.gateway';
-import { buildBundleExtractionScript, isPgsData, isPgsSubtitleCodec, isTextSubtitleCodec, parseSubtitleBundle } from './subtitle-bundle';
+import {
+  buildBundleExtractionScript, buildSingleTrackExtractionScript, isPgsData, isPgsSubtitleCodec, isTextSubtitleCodec,
+  parseExtractionProgress, parseSubtitleBundle,
+} from './subtitle-bundle';
 import type { BundleFormat, BundleTrack } from './subtitle-bundle';
 
 interface FetchInit {
@@ -1271,15 +1274,22 @@ export class NasService implements OnModuleInit {
     });
   }
 
-  /** Lignes -progress de FFmpeg : out_time=HH:MM:SS.micros — position de démux dans le fichier. */
-  private ffmpegProgressReporter(durationSeconds: number, onProgress: (percent: number) => void): (chunk: string) => void {
+  /**
+   * Progression depuis stderr : position de lecture du fichier (`readpos=`, scripts
+   * `buildFfmpegWithReadProgress`) ou à défaut `out_time` de FFmpeg rapporté à la durée.
+   * `logKey` : trace chaque palier de 10 % (suivi des longues lectures de remux dans les logs).
+   */
+  private ffmpegProgressReporter(durationSeconds: number, onProgress: (percent: number) => void, logKey?: string): (chunk: string) => void {
+    let lastLogged = -1;
     return (chunk) => {
-      const m = chunk.match(/out_time=(\d+):(\d+):(\d+)/g);
-      if (!m || durationSeconds <= 0) return;
-      const last = m[m.length - 1].match(/out_time=(\d+):(\d+):(\d+)/);
-      if (!last) return;
-      const seconds = Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]);
-      onProgress(Math.min(99, Math.floor((seconds / durationSeconds) * 100)));
+      const percent = parseExtractionProgress(chunk, durationSeconds);
+      if (percent === null) return;
+      onProgress(percent);
+      const step = Math.floor(percent / 10) * 10;
+      if (logKey && step !== lastLogged) {
+        lastLogged = step;
+        this.logger.log(`[subtitles] ${logKey} : ${percent}% du fichier lu`);
+      }
     };
   }
 
@@ -1307,13 +1317,14 @@ export class NasService implements OnModuleInit {
     tracks: BundleTrack[],
     durationSeconds: number,
     onProgress: (percent: number) => void,
+    logKey?: string,
   ): Promise<Map<number, Buffer>> {
     const result = await this.execOnNas({
       cineClubId,
       nasPath,
       script: buildBundleExtractionScript(tracks),
       timeoutMs: NasService.NAS_FULL_READ_TIMEOUT_MS,
-      onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress),
+      onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress, logKey),
       // Plusieurs pistes PGS (quelques Mo à quelques dizaines de Mo chacune)
       maxStdoutBytes: 400 * 1024 * 1024,
     });
@@ -1330,13 +1341,14 @@ export class NasService implements OnModuleInit {
     trackIdx: number,
     durationSeconds: number,
     onProgress: (percent: number) => void,
+    logKey?: string,
   ): Promise<Buffer> {
     const result = await this.execOnNas({
       cineClubId,
       nasPath,
-      script: [`exec "$FF" -nostdin -v error -progress pipe:2 -i "$F" -map 0:s:${trackIdx} -c:s copy -f sup pipe:1`],
+      script: buildSingleTrackExtractionScript({ idx: trackIdx, format: 'sup' }),
       timeoutMs: NasService.NAS_FULL_READ_TIMEOUT_MS,
-      onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress),
+      onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress, logKey),
       maxStdoutBytes: 200 * 1024 * 1024,
     });
     if (result.code !== 0 || !isPgsData(result.stdoutBuffer)) {
@@ -1420,6 +1432,7 @@ export class NasService implements OnModuleInit {
         ],
         source.durationSeconds,
         (p) => { entry.progressPercent = p; },
+        `pré-extraction ${key}`,
       );
 
       // Relecture juste avant écriture : une extraction à la demande a pu cacher une piste entre-temps.
@@ -1676,6 +1689,7 @@ export class NasService implements OnModuleInit {
     void (async () => {
       const data = await this.extractImageSubtitleTrackViaNasSsh(
         source.cineClubId, nasPath, trackIdx, source.durationSeconds, (p) => { entry.progressPercent = p; },
+        `extraction PGS ${key}`,
       );
       await this.prisma.subtitleImageCache.create({ data: { ...filter, trackIdx, language, codec, data: new Uint8Array(data) } });
       this.logger.log(`[subtitles] PGS track ${trackIdx} (${language}, ${Math.round(data.length / 1024)} Ko) extracted & cached ${JSON.stringify(filter)}`);
