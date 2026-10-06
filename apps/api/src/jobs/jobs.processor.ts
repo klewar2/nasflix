@@ -268,6 +268,10 @@ export class JobsProcessor extends WorkerHost {
       scheduledFor: null,
       errorMessage: null,
     });
+
+    // 4. Pré-extraction des sous-titres (best-effort, hors job : ne retarde ni ne fait échouer le
+    // transfert). La TV les trouve déjà en cache ; sinon extraction à la demande en secours.
+    void this.nasService.prefetchSubtitlesForNasPath(job.cineClubId, targetPath);
   }
 
   // ── DELETE_FROM_SEEDBOX ───────────────────────────────────────────────────

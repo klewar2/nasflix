@@ -6,10 +6,13 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:
 import { spawn } from 'node:child_process';
 import * as https from 'node:https';
 import * as http from 'node:http';
+import { StringDecoder } from 'node:string_decoder';
 import { Client as SshClient } from 'ssh2';
+import { MediaType } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
 import { NasGateway } from './nas.gateway';
+import { buildBundleExtractionScript, isTextSubtitleCodec, parseSubtitleBundle } from './subtitle-bundle';
 
 interface FetchInit {
   method?: string;
@@ -1128,6 +1131,8 @@ export class NasService implements OnModuleInit {
       const client = new SshClient();
       let stdout = '';
       let stderr = '';
+      // Décodeur à état : un caractère UTF-8 multi-octets coupé entre deux paquets ne doit pas être corrompu
+      const stdoutDecoder = new StringDecoder('utf8');
       let settled = false;
       const done = (fn: () => void) => { if (!settled) { settled = true; clearTimeout(kill); fn(); } };
       const kill = setTimeout(() => {
@@ -1141,9 +1146,10 @@ export class NasService implements OnModuleInit {
             stream
               .on('close', (code: number | null) => {
                 client.end();
+                stdout += stdoutDecoder.end();
                 done(() => resolve({ code: code ?? -1, stdout, stderr }));
               })
-              .on('data', (data: Buffer) => { stdout += data.toString('utf8'); })
+              .on('data', (data: Buffer) => { stdout += stdoutDecoder.write(data); })
               .stderr.on('data', (data: Buffer) => {
                 const chunk = data.toString('utf8');
                 stderr = (stderr + chunk).slice(-4000);
@@ -1184,44 +1190,13 @@ export class NasService implements OnModuleInit {
     durationSeconds: number,
     onProgress: (percent: number) => void,
   ): Promise<string> {
-    const club = await this.prisma.cineClub.findUnique({ where: { id: cineClubId } });
-    if (!club?.seedboxSshHost || !club.seedboxSshUser || !club.seedboxSshPrivateKey || !club.nasSshHost || !club.nasSshUser) {
-      throw new Error('chaîne SSH seedbox→NAS non configurée pour ce CineClub');
-    }
-
-    // Script exécuté sur le NAS : détection du binaire FFmpeg DSM + du chemin physique,
-    // puis extraction VTT vers stdout. -progress pipe:2 → progression sur stderr.
-    const innerScript = [
-      'FF=""; for c in ffmpeg /usr/bin/ffmpeg /var/packages/VideoStation/target/bin/ffmpeg /var/packages/MediaServer/target/bin/ffmpeg /var/packages/CodecPack/target/bin/ffmpeg41 /var/packages/ffmpeg6/target/bin/ffmpeg /var/packages/ffmpeg/target/bin/ffmpeg; do command -v "$c" >/dev/null 2>&1 && { FF="$c"; break; }; done',
-      '[ -n "$FF" ] || { echo NOFFMPEG >&2; exit 42; }',
-      `F=""; for p in ${this.physicalPathCandidates(nasPath).map(shellEscape).join(' ')}; do [ -f "$p" ] && { F="$p"; break; }; done`,
-      '[ -n "$F" ] || { echo NOFILE >&2; exit 43; }',
-      `exec "$FF" -nostdin -v error -progress pipe:2 -i "$F" -map 0:s:${trackIdx} -c:s webvtt -f webvtt pipe:1`,
-    ].join('\n');
-
-    const sshOpts = ['-o StrictHostKeyChecking=accept-new', `-p ${club.nasSshPort}`];
-    if (club.seedboxToNasKeyPath) {
-      sshOpts.push(`-o IdentityFile=${shellEscape(club.seedboxToNasKeyPath)}`, '-o IdentitiesOnly=yes');
-    }
-    const command = `ssh ${sshOpts.join(' ')} ${shellEscape(`${club.nasSshUser}@${club.nasSshHost}`)} ${shellEscape(innerScript)}`;
-
-    const result = await this.execSeedboxSsh({
-      host: club.seedboxSshHost,
-      port: club.seedboxSshPort,
-      user: club.seedboxSshUser,
-      privateKey: this.crypto.decrypt(club.seedboxSshPrivateKey),
-      passphrase: club.seedboxSshPassphrase ? this.crypto.decrypt(club.seedboxSshPassphrase) : undefined,
-      command,
+    // -progress pipe:2 → progression sur stderr
+    const result = await this.execOnNas({
+      cineClubId,
+      nasPath,
+      script: [`exec "$FF" -nostdin -v error -progress pipe:2 -i "$F" -map 0:s:${trackIdx} -c:s webvtt -f webvtt pipe:1`],
       timeoutMs: 10 * 60_000,
-      onStderr: (chunk) => {
-        // Lignes -progress : out_time=HH:MM:SS.micros — position de démux dans le fichier
-        const m = chunk.match(/out_time=(\d+):(\d+):(\d+)/g);
-        if (!m || durationSeconds <= 0) return;
-        const last = m[m.length - 1].match(/out_time=(\d+):(\d+):(\d+)/);
-        if (!last) return;
-        const seconds = Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]);
-        onProgress(Math.min(99, Math.floor((seconds / durationSeconds) * 100)));
-      },
+      onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress),
     });
 
     const vtt = result.stdout.trim();
@@ -1231,12 +1206,233 @@ export class NasService implements OnModuleInit {
     return vtt;
   }
 
+  /**
+   * Exécute un script sur le NAS (seedbox → NAS en SSH) après détection du binaire FFmpeg DSM
+   * (`$FF`) et du chemin physique du fichier (`$F`).
+   */
+  private async execOnNas(p: {
+    cineClubId: number;
+    nasPath: string;
+    script: string[];
+    timeoutMs: number;
+    onStderr?: (chunk: string) => void;
+  }): Promise<{ code: number; stdout: string; stderr: string }> {
+    const club = await this.prisma.cineClub.findUnique({ where: { id: p.cineClubId } });
+    if (!club?.seedboxSshHost || !club.seedboxSshUser || !club.seedboxSshPrivateKey || !club.nasSshHost || !club.nasSshUser) {
+      throw new Error('chaîne SSH seedbox→NAS non configurée pour ce CineClub');
+    }
+
+    const innerScript = [
+      'FF=""; for c in ffmpeg /usr/bin/ffmpeg /var/packages/VideoStation/target/bin/ffmpeg /var/packages/MediaServer/target/bin/ffmpeg /var/packages/CodecPack/target/bin/ffmpeg41 /var/packages/ffmpeg6/target/bin/ffmpeg /var/packages/ffmpeg/target/bin/ffmpeg; do command -v "$c" >/dev/null 2>&1 && { FF="$c"; break; }; done',
+      '[ -n "$FF" ] || { echo NOFFMPEG >&2; exit 42; }',
+      `F=""; for p in ${this.physicalPathCandidates(p.nasPath).map(shellEscape).join(' ')}; do [ -f "$p" ] && { F="$p"; break; }; done`,
+      '[ -n "$F" ] || { echo NOFILE >&2; exit 43; }',
+      ...p.script,
+    ].join('\n');
+
+    const sshOpts = ['-o StrictHostKeyChecking=accept-new', `-p ${club.nasSshPort}`];
+    if (club.seedboxToNasKeyPath) {
+      sshOpts.push(`-o IdentityFile=${shellEscape(club.seedboxToNasKeyPath)}`, '-o IdentitiesOnly=yes');
+    }
+    const command = `ssh ${sshOpts.join(' ')} ${shellEscape(`${club.nasSshUser}@${club.nasSshHost}`)} ${shellEscape(innerScript)}`;
+
+    return this.execSeedboxSsh({
+      host: club.seedboxSshHost,
+      port: club.seedboxSshPort,
+      user: club.seedboxSshUser,
+      privateKey: this.crypto.decrypt(club.seedboxSshPrivateKey),
+      passphrase: club.seedboxSshPassphrase ? this.crypto.decrypt(club.seedboxSshPassphrase) : undefined,
+      command,
+      timeoutMs: p.timeoutMs,
+      onStderr: p.onStderr,
+    });
+  }
+
+  /** Lignes -progress de FFmpeg : out_time=HH:MM:SS.micros — position de démux dans le fichier. */
+  private ffmpegProgressReporter(durationSeconds: number, onProgress: (percent: number) => void): (chunk: string) => void {
+    return (chunk) => {
+      const m = chunk.match(/out_time=(\d+):(\d+):(\d+)/g);
+      if (!m || durationSeconds <= 0) return;
+      const last = m[m.length - 1].match(/out_time=(\d+):(\d+):(\d+)/);
+      if (!last) return;
+      const seconds = Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]);
+      onProgress(Math.min(99, Math.floor((seconds / durationSeconds) * 100)));
+    };
+  }
+
+  /** Sondage des pistes en exécutant FFmpeg sur le NAS (pas d'URL ni de session File Station requises). */
+  private async probeTracksViaNasSsh(cineClubId: number, nasPath: string): Promise<MediaTracks> {
+    // ffmpeg -i sans sortie affiche les streams sur stderr (redirigé vers stdout) puis sort en erreur
+    const result = await this.execOnNas({
+      cineClubId,
+      nasPath,
+      script: ['"$FF" -nostdin -hide_banner -i "$F" 2>&1 >/dev/null </dev/null; exit 0'],
+      timeoutMs: 60_000,
+    });
+    if (result.code !== 0) {
+      throw new Error(`sondage NAS exit=${result.code} — stderr: ${result.stderr.replace(/\s+/g, ' ').slice(-300)}`);
+    }
+    return this.parseFfmpegStreamInfo(result.stdout);
+  }
+
+  private async extractSubtitleBundleViaNasSsh(
+    cineClubId: number,
+    nasPath: string,
+    trackIdxs: number[],
+    durationSeconds: number,
+    onProgress: (percent: number) => void,
+  ): Promise<Map<number, string>> {
+    const result = await this.execOnNas({
+      cineClubId,
+      nasPath,
+      script: buildBundleExtractionScript(trackIdxs),
+      timeoutMs: 10 * 60_000,
+      onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress),
+    });
+    if (result.code !== 0) {
+      throw new Error(`FFmpeg NAS exit=${result.code} — stderr: ${result.stderr.replace(/\s+/g, ' ').slice(-300)}`);
+    }
+    return parseSubtitleBundle(result.stdout);
+  }
+
   // Extraction en arrière-plan par média/piste : le endpoint répond immédiatement
   // « pending » + progression, et le client re-sonde jusqu'au VTT — aucune connexion
   // HTTP longue (l'edge Railway coupe les requêtes qui durent plusieurs minutes).
   private subtitleExtractInFlight = new Map<string, { progressPercent: number }>();
   // Échec d'extraction conservé jusqu'au poll suivant, qui le remonte en erreur HTTP.
   private subtitleExtractErrors = new Map<string, string>();
+
+  // Pré-extraction de TOUTES les pistes texte d'un média en une passe (clé = média ou épisode).
+  // Coexiste avec l'extraction à la demande ci-dessus : mêmes lignes SubtitleCache, et l'extraction
+  // à la demande reste le filet de sécurité si la pré-extraction échoue ou n'a pas eu lieu.
+  private subtitlePrefetchInFlight = new Map<string, { progressPercent: number }>();
+  // Échec récent : évite de relancer un SSH voué à l'échec à chaque ouverture du média.
+  private subtitlePrefetchFailedAt = new Map<string, number>();
+  private static readonly SUBTITLE_PREFETCH_RETRY_MS = 30 * 60_000;
+
+  private subtitleSourceKey(filter: { mediaId?: number; episodeId?: number }): string {
+    return filter.mediaId !== undefined ? `${filter.mediaId}` : `ep${filter.episodeId}`;
+  }
+
+  /**
+   * Extrait et met en cache toutes les pistes sous-titres texte manquantes d'un média/épisode NAS.
+   * Best-effort : ne lève jamais (appelable en fire-and-forget).
+   * - `tracks` : pistes déjà sondées par l'appelant (sinon sondage FFmpeg via SSH sur le NAS) ;
+   * - `force` : fichier remplacé (nouveau téléchargement) → purge du cache avant de ré-extraire.
+   */
+  private async prefetchSubtitleTracks(
+    filter: { mediaId?: number; episodeId?: number },
+    source: { cineClubId: number; nasPath: string | null; durationSeconds: number },
+    opts: { tracks?: SubtitleTrackInfo[]; force?: boolean } = {},
+  ): Promise<void> {
+    if (!source.nasPath) return;
+    const key = this.subtitleSourceKey(filter);
+
+    // Contrôles et réservation synchrones (avant tout await) : pas de double lancement concurrent.
+    if (this.subtitlePrefetchInFlight.has(key)) return;
+    // Une extraction à la demande est déjà en cours pour ce média : l'utilisateur l'attend, on ne relit pas le fichier en double.
+    for (const k of this.subtitleExtractInFlight.keys()) if (k.startsWith(`${key}:`)) return;
+    const failedAt = this.subtitlePrefetchFailedAt.get(key);
+    if (!opts.force && failedAt !== undefined && Date.now() - failedAt < NasService.SUBTITLE_PREFETCH_RETRY_MS) return;
+
+    const entry = { progressPercent: 0 };
+    this.subtitlePrefetchInFlight.set(key, entry);
+
+    try {
+      if (opts.force) await this.prisma.subtitleCache.deleteMany({ where: filter });
+
+      const tracks = opts.tracks ?? (await this.probeTracksViaNasSsh(source.cineClubId, source.nasPath)).subtitles;
+      const textTracks = tracks.filter((t) => isTextSubtitleCodec(t.codec));
+      if (textTracks.length === 0) return;
+
+      const cachedIdx = new Set(
+        (await this.prisma.subtitleCache.findMany({ where: filter, select: { trackIdx: true } })).map((r) => r.trackIdx),
+      );
+      const missing = textTracks.filter((t) => !cachedIdx.has(t.index));
+      if (missing.length === 0) return;
+
+      this.logger.log(`[subtitles] pré-extraction ${key} : ${missing.length} piste(s) (${missing.map((t) => `${t.index}:${t.language}`).join(', ')})`);
+      const vtts = await this.extractSubtitleBundleViaNasSsh(
+        source.cineClubId, source.nasPath, missing.map((t) => t.index), source.durationSeconds,
+        (p) => { entry.progressPercent = p; },
+      );
+
+      // Relecture juste avant écriture : une extraction à la demande a pu cacher une piste entre-temps.
+      const nowCached = new Set(
+        (await this.prisma.subtitleCache.findMany({ where: filter, select: { trackIdx: true } })).map((r) => r.trackIdx),
+      );
+      const rows = missing
+        .filter((t) => vtts.has(t.index) && !nowCached.has(t.index))
+        .map((t) => ({ ...filter, trackIdx: t.index, language: t.language, title: t.title, codec: t.codec, vttContent: vtts.get(t.index)! }));
+      if (rows.length > 0) await this.prisma.subtitleCache.createMany({ data: rows });
+      this.logger.log(`[subtitles] pré-extraction ${key} : ${rows.length}/${missing.length} piste(s) en cache`);
+      this.subtitlePrefetchFailedAt.delete(key);
+    } catch (err) {
+      const message = (err as Error)?.message || (err as { code?: string })?.code || String(err);
+      this.logger.warn(`[subtitles] pré-extraction ${key} échouée (extraction à la demande en secours) : ${message}`);
+      this.subtitlePrefetchFailedAt.set(key, Date.now());
+    } finally {
+      this.subtitlePrefetchInFlight.delete(key);
+    }
+  }
+
+  /** Pré-extraction pour un film, à l'ouverture sur la TV (pistes déjà sondées par `/nas/tracks`). */
+  async prefetchSubtitlesForMedia(mediaId: number, cineClubId: number, tracks: SubtitleTrackInfo[]): Promise<void> {
+    if (tracks.length === 0) return;
+    const media = await this.prisma.media.findFirst({
+      where: { id: mediaId, cineClubId },
+      select: { nasPath: true, runtime: true },
+    }).catch(() => null);
+    if (!media) return;
+    await this.prefetchSubtitleTracks({ mediaId }, {
+      cineClubId, nasPath: media.nasPath, durationSeconds: (media.runtime ?? 0) * 60,
+    }, { tracks });
+  }
+
+  /** Pré-extraction pour un épisode, à l'ouverture sur la TV. */
+  async prefetchSubtitlesForEpisode(episodeId: number, cineClubId: number, tracks: SubtitleTrackInfo[]): Promise<void> {
+    if (tracks.length === 0) return;
+    const episode = await this.prisma.episode.findFirst({
+      where: { id: episodeId, season: { media: { cineClubId } } },
+      select: { nasPath: true, runtime: true },
+    }).catch(() => null);
+    if (!episode) return;
+    await this.prefetchSubtitleTracks({ episodeId }, {
+      cineClubId, nasPath: episode.nasPath, durationSeconds: (episode.runtime ?? 0) * 60,
+    }, { tracks });
+  }
+
+  /**
+   * Pré-extraction juste après un transfert rsync vers le NAS : retrouve le film/l'épisode par
+   * son chemin NAS. Le fichier vient d'être (re)écrit → cache purgé puis reconstruit.
+   * Sans entrée catalogue (job sans tmdbId…), ne fait rien : la pré-extraction se fera à l'ouverture.
+   */
+  async prefetchSubtitlesForNasPath(cineClubId: number, nasPath: string): Promise<void> {
+    try {
+      // Épisode d'abord : le Media d'une série porte le chemin d'un de ses épisodes comme ancre.
+      const episode = await this.prisma.episode.findFirst({
+        where: { nasPath, season: { media: { cineClubId } } },
+        select: { id: true, runtime: true },
+      });
+      if (episode) {
+        await this.prefetchSubtitleTracks({ episodeId: episode.id }, {
+          cineClubId, nasPath, durationSeconds: (episode.runtime ?? 0) * 60,
+        }, { force: true });
+        return;
+      }
+      const media = await this.prisma.media.findFirst({
+        where: { cineClubId, nasPath, type: MediaType.MOVIE },
+        select: { id: true, runtime: true },
+      });
+      if (media) {
+        await this.prefetchSubtitleTracks({ mediaId: media.id }, {
+          cineClubId, nasPath, durationSeconds: (media.runtime ?? 0) * 60,
+        }, { force: true });
+      }
+    } catch (err) {
+      this.logger.warn(`[subtitles] pré-extraction post-transfert impossible (${nasPath}) : ${(err as Error)?.message ?? err}`);
+    }
+  }
 
   private async getNasSubtitleTrack(
     filter: { mediaId?: number; episodeId?: number },
@@ -1270,6 +1466,13 @@ export class NasService implements OnModuleInit {
 
     const inFlight = this.subtitleExtractInFlight.get(key);
     if (inFlight) return pendingResponse(inFlight.progressPercent);
+
+    // Pré-extraction de toutes les pistes déjà en cours pour ce média : on attend son résultat
+    // (même coût qu'une extraction seule : une passe sur le fichier) au lieu de relire le
+    // fichier en double. Si la piste n'est pas en cache à la fin, le poll suivant retombe
+    // sur l'extraction à la demande ci-dessous.
+    const prefetching = this.subtitlePrefetchInFlight.get(this.subtitleSourceKey(filter));
+    if (prefetching) return pendingResponse(prefetching.progressPercent);
 
     const entry = { progressPercent: 0 };
     this.subtitleExtractInFlight.set(key, entry);

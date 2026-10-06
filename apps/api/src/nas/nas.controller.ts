@@ -141,7 +141,11 @@ export class NasController {
     const jellyfinTracks = await this.nasService.getEpisodeTracksForJellyfin(episodeId, req.user.cineClubId);
     if (jellyfinTracks) return jellyfinTracks;
     const nasUrl = await this.nasService.getEpisodeFileUrl(episodeId, req.user.sub, req.user.cineClubId);
-    return this.nasService.probeMediaTracks(nasUrl);
+    const tracks = await this.nasService.probeMediaTracks(nasUrl);
+    // Pré-extraction de tous les sous-titres en arrière-plan pendant le chargement de la vidéo
+    // (best-effort, ne lève jamais) : l'extraction à la demande reste le filet de sécurité.
+    void this.nasService.prefetchSubtitlesForEpisode(episodeId, req.user.cineClubId, tracks.subtitles);
+    return tracks;
   }
 
   @Get('tracks/:mediaId')
@@ -154,7 +158,9 @@ export class NasController {
     const jellyfinTracks = await this.nasService.getMediaTracksForJellyfin(mediaId, req.user.cineClubId);
     if (jellyfinTracks) return jellyfinTracks;
     const nasUrl = await this.nasService.getMediaFileUrl(mediaId, req.user.sub, req.user.cineClubId);
-    return this.nasService.probeMediaTracks(nasUrl);
+    const tracks = await this.nasService.probeMediaTracks(nasUrl);
+    void this.nasService.prefetchSubtitlesForMedia(mediaId, req.user.cineClubId, tracks.subtitles);
+    return tracks;
   }
 
   // ── Stream URLs ────────────────────────────────────────────────────────────
