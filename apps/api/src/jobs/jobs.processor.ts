@@ -584,7 +584,10 @@ export class JobsProcessor extends WorkerHost {
     const dir = p.targetDir.replace(/\/$/, '');
     const target = `${p.nasUser}@${p.nasHost}:${dir}/`;
     // --timeout : rsync abandonne (exit 30) si aucune donnée ne circule pendant 10 min.
-    const parts = ['rsync', '-av', '--partial', '--timeout=600', '--info=progress2'];
+    // --chmod : -a préserve les droits de la seedbox (souvent 600) ; les fichiers
+    // arrivent alors lisibles par le seul compte de réception, et les autres membres
+    // du NAS (hors admin) obtiennent une page « introuvable » au téléchargement.
+    const parts = ['rsync', '-av', '--partial', '--chmod=D755,F644', '--timeout=600', '--info=progress2'];
     if (p.ensureRemoteDir) {
       // mkdir -p côté NAS avant rsync : --rsync-path est exécuté à la place du
       // rsync distant et permet d'enchaîner un mkdir puis le vrai rsync.
