@@ -162,6 +162,9 @@ importers:
       hls.js:
         specifier: ^1.5.20
         version: 1.6.15
+      libpgs:
+        specifier: 0.9.0
+        version: 0.9.0
       react:
         specifier: ^19.0.0
         version: 19.2.4
@@ -3503,6 +3506,9 @@ packages:
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
+
+  libpgs@0.9.0:
+    resolution: {integrity: sha512-kKgKKelcc2dRahni5WysOq9CjglObiGp3zPqlupYb9O0Ewwiu4OMDbyRP/YH043IXub3D6rrR15+9od4Yu7JWA==}
 
   libphonenumber-js@1.12.38:
     resolution: {integrity: sha512-vwzxmasAy9hZigxtqTbFEwp8ZdZ975TiqVDwj5bKx5sR+zi5ucUQy9mbVTkKM9GzqdLdxux/hTw2nmN5J7POMA==}
@@ -8179,6 +8185,8 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
+
+  libpgs@0.9.0: {}
 
   libphonenumber-js@1.12.38: {}
 

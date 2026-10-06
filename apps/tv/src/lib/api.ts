@@ -5,6 +5,7 @@ import type {
   MediaDetailResponse,
   MediaResponse,
   MediaTracks,
+  NasImageSubtitleStatus,
   NasSubtitleTrack,
   PaginatedResponse,
   StreamUrlResponse,
@@ -42,6 +43,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+/** Comme `request`, pour une réponse binaire (sous-titres PGS .sup). */
+async function requestBinary(path: string): Promise<ArrayBuffer> {
+  const token = tokens.getAccess();
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE}${path}`, { headers });
+
+  if (res.status === 401 && tokens.getAccess()) {
+    tokens.clear();
+    window.location.reload();
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: 'Erreur réseau' }));
+    throw new Error((err as { message?: string }).message || `HTTP ${res.status}`);
+  }
+  return res.arrayBuffer();
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -96,7 +117,7 @@ export function getMediaById(id: number) {
 
 // ── NAS ───────────────────────────────────────────────────────────────────
 
-export type { MediaTracks, NasSubtitleTrack };
+export type { MediaTracks, NasImageSubtitleStatus, NasSubtitleTrack };
 
 export function getNasStatus() {
   return request<{ online: boolean }>('/nas/status');
@@ -142,6 +163,24 @@ export function getNasSubtitleTrack(mediaId: number, trackIdx: number, meta?: Su
 
 export function getNasEpisodeSubtitleTrack(episodeId: number, trackIdx: number, meta?: SubtitleMeta) {
   return request<NasSubtitleTrack>(`/nas/subtitles/episode/${episodeId}/track/${trackIdx}${subtitleMetaQuery(meta)}`);
+}
+
+/** Sous-titre image PGS : état de l'extraction (à re-sonder tant que `pending`). */
+export function getNasImageSubtitle(mediaId: number, trackIdx: number, meta?: SubtitleMeta) {
+  return request<NasImageSubtitleStatus>(`/nas/subtitles/${mediaId}/image/${trackIdx}${subtitleMetaQuery(meta)}`);
+}
+
+export function getNasEpisodeImageSubtitle(episodeId: number, trackIdx: number, meta?: SubtitleMeta) {
+  return request<NasImageSubtitleStatus>(`/nas/subtitles/episode/${episodeId}/image/${trackIdx}${subtitleMetaQuery(meta)}`);
+}
+
+/** Contenu .sup d'une piste PGS extraite (`ready`). */
+export function getNasImageSubtitleData(mediaId: number, trackIdx: number) {
+  return requestBinary(`/nas/subtitles/${mediaId}/image/${trackIdx}/data`);
+}
+
+export function getNasEpisodeImageSubtitleData(episodeId: number, trackIdx: number) {
+  return requestBinary(`/nas/subtitles/episode/${episodeId}/image/${trackIdx}/data`);
 }
 
 export function getPreferences() {

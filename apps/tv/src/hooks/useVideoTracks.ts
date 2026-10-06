@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
 import Hls from 'hls.js';
-import { getStreamUrl, getEpisodeStreamUrl, getNasSubtitleTrack, getNasEpisodeSubtitleTrack } from '../lib/api';
+import type { PgsRenderer } from 'libpgs';
+import type { PgsRendererMode } from 'libpgs/dist/pgsRendererMode';
+import {
+  getStreamUrl, getEpisodeStreamUrl, getNasSubtitleTrack, getNasEpisodeSubtitleTrack,
+  getNasImageSubtitle, getNasEpisodeImageSubtitle, getNasImageSubtitleData, getNasEpisodeImageSubtitleData,
+} from '../lib/api';
 import type { MediaTracks } from '../lib/api';
-import { HLS_CONFIG, isTextSubtitleCodec, langName, parseVTT } from './utils';
+import { HLS_CONFIG, isPgsSubtitleCodec, isTextSubtitleCodec, langName, parseVTT } from './utils';
 import type { AudioTrack, SubtitleTrack } from './utils';
 import type { HlsAudioTrack } from './useVideoCore';
 
 interface Params {
   videoRef: RefObject<HTMLVideoElement | null>;
+  /** Canvas superposé à la vidéo, où libpgs dessine les sous-titres PGS. */
+  pgsCanvasRef: RefObject<HTMLCanvasElement | null>;
   hlsRef: MutableRefObject<Hls | null>;
   url: string;
   isHls: boolean;
@@ -40,7 +47,7 @@ interface Return {
 }
 
 export function useVideoTracks({
-  videoRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
+  videoRef, pgsCanvasRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
   tracks, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
   currentTime, mediaId, episodeId, urlChangeKey,
 }: Params): Return {
@@ -56,6 +63,19 @@ export function useVideoTracks({
   const cueCacheRef = useRef<Map<number, Array<{ start: number; end: number; html: string }>>>(new Map());
   // Génération de polling : incrémentée au changement de média pour stopper les sondages en cours
   const pollGenRef = useRef(0);
+  // Sous-titres PGS : renderer actif + .sup déjà téléchargés (clé = index FFmpeg de la piste)
+  const pgsRendererRef = useRef<PgsRenderer | null>(null);
+  const pgsDataCacheRef = useRef<Map<number, ArrayBuffer>>(new Map());
+  // Incrémenté à chaque choix de sous-titre : un chargement PGS dépassé par un autre choix est abandonné
+  const selectionGenRef = useRef(0);
+
+  const disposePgs = useCallback(() => {
+    pgsRendererRef.current?.dispose();
+    pgsRendererRef.current = null;
+    // dispose() ne vide pas un canvas fourni par l'appelant
+    const canvas = pgsCanvasRef.current;
+    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+  }, [pgsCanvasRef]);
 
   // Reset all subtitle state on media change
   useEffect(() => {
@@ -63,8 +83,13 @@ export function useVideoTracks({
     setSubtitleCues([]);
     setSubtitleProgress(null);
     cueCacheRef.current = new Map();
+    pgsDataCacheRef.current = new Map();
     pollGenRef.current += 1;
-  }, [urlChangeKey]);
+    selectionGenRef.current += 1;
+    disposePgs();
+  }, [urlChangeKey, disposePgs]);
+
+  useEffect(() => disposePgs, [disposePgs]);
 
   // NAS : extraction VTT d'une piste à la demande (backend), mise en cache locale par index FFmpeg.
   // L'extraction API est asynchrone (réponse immédiate pending + progression) : on re-sonde
@@ -91,6 +116,38 @@ export function useVideoTracks({
       const cues = parseVTT(res.vttContent);
       cueCacheRef.current.set(key, cues);
       return cues;
+    } finally {
+      setSubtitleProgress(null);
+    }
+  }, [episodeId, mediaId]);
+
+  // NAS PGS : le .sup est extrait côté API (souvent déjà fait par la pré-extraction), on re-sonde
+  // l'état toutes les 4 s jusqu'à `ready` puis on télécharge le binaire (quelques Mo).
+  const fetchNasPgsData = useCallback(async (track: SubtitleTrack) => {
+    const key = track.nasTrackIdx ?? track.index;
+    const existing = pgsDataCacheRef.current.get(key);
+    if (existing) return existing;
+    const meta = { language: track.language, codec: track.codec };
+    const status = () => episodeId
+      ? getNasEpisodeImageSubtitle(episodeId, key, meta)
+      : getNasImageSubtitle(mediaId, key, meta);
+
+    const gen = pollGenRef.current;
+    try {
+      let res = await status();
+      for (let attempt = 0; !res.ready; attempt++) {
+        // Lecture complète d'un remux UHD sur le NAS : jusqu'à ~30 min côté API
+        if (attempt > 450) throw new Error('extraction sous-titres PGS : timeout');
+        setSubtitleProgress(res.progressPercent ?? 0);
+        await new Promise((r) => setTimeout(r, 4000));
+        if (pollGenRef.current !== gen) throw new Error('extraction sous-titres PGS : annulée (changement de média)');
+        res = await status();
+      }
+      const data = episodeId
+        ? await getNasEpisodeImageSubtitleData(episodeId, key)
+        : await getNasImageSubtitleData(mediaId, key);
+      pgsDataCacheRef.current.set(key, data);
+      return data;
     } finally {
       setSubtitleProgress(null);
     }
@@ -276,6 +333,8 @@ export function useVideoTracks({
       const tt = video.textTracks;
       for (let i = 0; i < tt.length; i++) tt[i].mode = 'disabled';
     }
+    const selection = ++selectionGenRef.current;
+    disposePgs();
     if (index === -1) { setSubtitleCues([]); setActiveSubtitle(-1); return; }
 
     const track = effectiveSubtitles[index];
@@ -284,7 +343,35 @@ export function useVideoTracks({
     // NAS via sondage FFmpeg : VTT extrait à la demande côté backend (lent la 1re fois, puis caché).
     // Les pistes natives webOS (sans nasTrackIdx) retombent plus bas sur le rendu natif.
     if (sourceType === 'NAS' && track.nasTrackIdx !== undefined) {
-      // Sous-titre image (PGS/VOBSUB) : non convertible en VTT sans OCR → on n'extrait pas.
+      // PGS (Blu-ray) : .sup extrait côté API puis dessiné sur le canvas par libpgs.
+      if (isPgsSubtitleCodec(track.codec)) {
+        setSubtitleCues([]);
+        setSubtitleLoading(true);
+        try {
+          const data = await fetchNasPgsData(track);
+          const canvas = pgsCanvasRef.current;
+          if (selectionGenRef.current !== selection || !video || !canvas) return;
+          // Chargé à la demande : seuls les films à sous-titres PGS paient ce module
+          const { PgsRenderer } = await import('libpgs');
+          if (selectionGenRef.current !== selection) return;
+          // Rendu dans le thread principal : un worker exige un fichier JS séparé, peu fiable
+          // dans une app servie en file://, et ne répond pas sur webOS ≤ 5 (cf. libpgs).
+          const renderer = new PgsRenderer({ video, canvas, mode: 'mainThread' as PgsRendererMode });
+          pgsRendererRef.current = renderer;
+          await renderer.loadFromBuffer(data);
+          if (selectionGenRef.current !== selection) return;
+          renderer.renderAtTimestamp(video.currentTime);
+          setActiveSubtitle(index);
+          console.info(`[NasflixTV] PGS subtitles loaded ${JSON.stringify({ lang: track.language, bytes: data.byteLength })}`);
+        } catch (e) {
+          console.error('[VideoPlayer] PGS subtitle failed', e);
+          if (selectionGenRef.current === selection) disposePgs();
+        } finally {
+          if (selectionGenRef.current === selection) setSubtitleLoading(false);
+        }
+        return;
+      }
+      // Autres sous-titres image (VOBSUB…) : non convertibles en VTT sans OCR → on n'extrait pas.
       if (!isTextSubtitleCodec(track.codec)) {
         console.warn(`[NasflixTV] subtitle track ${track.nasTrackIdx} codec=${track.codec} (image) non supporté`);
         setSubtitleCues([]);
@@ -347,7 +434,7 @@ export function useVideoTracks({
       for (let i = 0; i < tt.length; i++) tt[i].mode = (i === track.index) ? 'showing' : 'disabled';
     }
     setActiveSubtitle(index);
-  }, [videoRef, effectiveSubtitles, sourceType, jellyfinBaseUrl, jellyfinItemId, jellyfinApiToken, fetchNasTrackCues]);
+  }, [videoRef, pgsCanvasRef, effectiveSubtitles, sourceType, jellyfinBaseUrl, jellyfinItemId, jellyfinApiToken, fetchNasTrackCues, fetchNasPgsData, disposePgs]);
 
   return {
     effectiveAudioTracks, effectiveSubtitles, activeSubtitle, activeCueHtml,

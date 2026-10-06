@@ -54,6 +54,10 @@ interface Return {
   doStartOver: () => void;
   showControlsFor: (ms?: number) => void;
   activateTransportBtn: (idx: number) => void;
+  /** Ouvre le menu Audio / Sous-titres sur la piste active (télécommande ou pointeur). */
+  openMenu: (section: TrackSection) => void;
+  /** Applique la piste d'index `i` de la section ouverte et referme le menu. */
+  selectMenuItem: (i: number) => void;
 }
 
 export function usePlayerNav({
@@ -80,6 +84,14 @@ export function usePlayerNav({
       setNavMode('play');
       setPendingSeekTime(null);
     }, ms);
+  }, []);
+
+  // BACK quand l'overlay est affiché : on le masque tout de suite (annule scrub / menu en cours)
+  const hideControls = useCallback(() => {
+    clearTimeout(hideTimerRef.current);
+    setShowControls(false);
+    setNavMode('play');
+    setPendingSeekTime(null);
   }, []);
 
   const showSeekHint = useCallback((text: string) => {
@@ -164,6 +176,28 @@ export function usePlayerNav({
     ? effectiveAudioTracks
     : [{ index: -1, title: 'Désactivés', language: '', codec: '' }, ...effectiveSubtitles];
 
+  // Position de la piste active dans la liste d'une section (« Désactivés » occupe la 1re ligne des sous-titres)
+  const activeMenuIndex = useCallback((section: TrackSection) => (
+    section === 'audio' ? Math.max(0, activeAudio) : activeSubtitle + 1
+  ), [activeAudio, activeSubtitle]);
+
+  const openMenu = useCallback((section: TrackSection) => {
+    setNavMode('menu');
+    setMenuSection(section);
+    setMenuIndex(activeMenuIndex(section));
+    clearTimeout(hideTimerRef.current);
+    setShowControls(true);
+  }, [activeMenuIndex]);
+
+  const selectMenuItem = useCallback((i: number) => {
+    const item = currentItems[i];
+    if (!item) return;
+    if (menuSection === 'audio') applyAudioTrack(item.index);
+    else applySubtitle(item.index);
+    setNavMode('transport');
+    showControlsFor();
+  }, [currentItems, menuSection, applyAudioTrack, applySubtitle, showControlsFor]);
+
   // Stable ref so the remote key handler is registered once and always reads latest values
   const stateRef = useRef({
     navMode: 'play' as NavMode,
@@ -172,6 +206,7 @@ export function usePlayerNav({
     menuIndex: 0,
     currentItems: [] as TrackItem[],
     pendingSeekTime: null as number | null,
+    showControls: true,
     showResume: false,
     activeAudio: 0,
     hasTracks: false,
@@ -186,13 +221,15 @@ export function usePlayerNav({
     doResume: () => {},
     doStartOver: () => {},
     activateTransportBtn: (_: number) => {},
+    openMenu: (_: TrackSection) => {},
+    selectMenuItem: (_: number) => {},
   });
   // Update synchronously every render (safe: events fire after render)
   stateRef.current = {
     navMode, transportFocus, menuSection, menuIndex, currentItems,
-    pendingSeekTime, showResume, activeAudio, hasTracks, hasMenu, maxTransportIdx,
+    pendingSeekTime, showControls, showResume, activeAudio, hasTracks, hasMenu, maxTransportIdx,
     durationSeconds, mediaId, episodeId,
-    onBack, applyAudioTrack, applySubtitle, doResume, doStartOver, activateTransportBtn,
+    onBack, applyAudioTrack, applySubtitle, doResume, doStartOver, activateTransportBtn, openMenu, selectMenuItem,
   };
 
   useRemoteKeys((e) => {
@@ -209,25 +246,23 @@ export function usePlayerNav({
       return;
     }
 
-    // ── Menu (pistes audio / sous-titres) ────────────────────────────────
+    // ── Menu (pistes audio / sous-titres, sous la barre de transport) ────
     if (s.navMode === 'menu') {
       e.preventDefault();
       if (e.keyCode === KEY.BACK) {
-        setNavMode('transport'); showControlsFor();
+        hideControls();
       } else if (e.keyCode === KEY.UP) {
-        setMenuIndex(i => Math.max(0, i - 1));
+        // Au-dessus de la 1re piste : retour aux boutons de lecture, placés au-dessus du menu
+        if (s.menuIndex <= 0) { setNavMode('transport'); showControlsFor(); }
+        else setMenuIndex(i => Math.max(0, i - 1));
       } else if (e.keyCode === KEY.DOWN) {
         setMenuIndex(i => Math.min(s.currentItems.length - 1, i + 1));
       } else if (e.keyCode === KEY.LEFT) {
-        setMenuSection('audio'); setMenuIndex(0);
+        s.openMenu('audio');
       } else if (e.keyCode === KEY.RIGHT) {
-        setMenuSection('subtitle'); setMenuIndex(0);
+        s.openMenu('subtitle');
       } else if (e.keyCode === KEY.OK) {
-        const item = s.currentItems[s.menuIndex];
-        if (!item) return;
-        if (s.menuSection === 'audio') s.applyAudioTrack(item.index);
-        else s.applySubtitle(item.index);
-        setNavMode('transport'); showControlsFor();
+        s.selectMenuItem(s.menuIndex);
       }
       return;
     }
@@ -248,7 +283,9 @@ export function usePlayerNav({
       } else if (e.keyCode === KEY.OK) {
         if (s.pendingSeekTime !== null) video.currentTime = s.pendingSeekTime;
         setPendingSeekTime(null); setNavMode('transport'); showControlsFor();
-      } else if (e.keyCode === KEY.DOWN || e.keyCode === KEY.BACK || e.keyCode === KEY.UP) {
+      } else if (e.keyCode === KEY.BACK) {
+        hideControls();
+      } else if (e.keyCode === KEY.DOWN || e.keyCode === KEY.UP) {
         setPendingSeekTime(null); setNavMode('transport'); showControlsFor();
       }
       return;
@@ -266,10 +303,9 @@ export function usePlayerNav({
       } else if (e.keyCode === KEY.UP) {
         setNavMode('seek'); setPendingSeekTime(video.currentTime); showControlsFor(8000);
       } else if (e.keyCode === KEY.DOWN && s.hasMenu) {
-        setNavMode('menu'); setMenuSection('audio'); setMenuIndex(s.activeAudio);
-        clearTimeout(hideTimerRef.current); setShowControls(true);
+        s.openMenu('audio');
       } else if (e.keyCode === KEY.BACK) {
-        setNavMode('play'); setShowControls(false); clearTimeout(hideTimerRef.current);
+        hideControls();
       } else if (e.keyCode === KEY.PLAY_PAUSE || e.keyCode === KEY.PLAY || e.keyCode === KEY.PAUSE) {
         video.paused ? video.play().catch(() => {}) : video.pause(); showControlsFor();
       }
@@ -277,12 +313,16 @@ export function usePlayerNav({
     }
 
     // ── Play (aucun focus) ───────────────────────────────────────────────
-    showControlsFor();
     if (e.keyCode === KEY.BACK) {
       e.preventDefault();
+      // 1er BACK : masque l'overlay (sans attendre l'auto-masquage) ; 2e BACK : quitte la lecture
+      if (s.showControls) { hideControls(); return; }
       watchProgress.save(s.mediaId, s.episodeId, video.currentTime, video.duration || s.durationSeconds || 0);
       s.onBack();
-    } else if (e.keyCode === KEY.DOWN) {
+      return;
+    }
+    showControlsFor();
+    if (e.keyCode === KEY.DOWN) {
       e.preventDefault();
       setNavMode('transport'); setTransportFocus(2);
     } else if (e.keyCode === KEY.UP) {
@@ -297,7 +337,7 @@ export function usePlayerNav({
       const t = Math.min(video.currentTime + 30, video.duration || 0); video.currentTime = t; showSeekHint('+30s');
     } else if (e.keyCode === KEY.RW) {
       e.preventDefault();
-      const t = Math.max(video.currentTime - 10, 0); video.currentTime = t; showSeekHint('−10s');
+      const t = Math.max(video.currentTime - 30, 0); video.currentTime = t; showSeekHint('−30s');
     } else if (e.keyCode === KEY.RIGHT) {
       e.preventDefault();
       const t = Math.min(video.currentTime + 10, video.duration || 0); video.currentTime = t; showSeekHint('+10s');
@@ -336,6 +376,6 @@ export function usePlayerNav({
     menuSection, menuIndex, currentItems, seekHint, pendingSeekTime,
     displayTime, progress, duration, audioSummary, subSummary,
     hasTracks, hasMenu, hasPrevEpisode, hasNextEpisode, clockTime,
-    doResume, doStartOver, showControlsFor, activateTransportBtn,
+    doResume, doStartOver, showControlsFor, activateTransportBtn, openMenu, selectMenuItem,
   };
 }

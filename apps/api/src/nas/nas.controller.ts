@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Logger, Param, ParseIntPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Logger, Param, ParseIntPipe, Post, Query, Req, StreamableFile, UseGuards } from '@nestjs/common';
 import { NasService } from './nas.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/guards/roles.decorator';
@@ -127,6 +127,56 @@ export class NasController {
   ) {
     if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
     return this.nasService.getNasSubtitleTrackForMedia(mediaId, trackIdx, req.user.sub, req.user.cineClubId, { language: lang, title, codec });
+  }
+
+  // ── Sous-titres image (PGS) : état d'extraction puis téléchargement du .sup ──
+  // Rendus en image par l'app TV (libpgs). Le .sup transite par l'API (quelques Mo),
+  // jamais la vidéo.
+
+  @Get('subtitles/episode/:episodeId/image/:trackIdx')
+  async getEpisodeImageSubtitle(
+    @Param('episodeId', ParseIntPipe) episodeId: number,
+    @Param('trackIdx', ParseIntPipe) trackIdx: number,
+    @Query('lang') lang: string | undefined,
+    @Query('codec') codec: string | undefined,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.getNasImageSubtitleForEpisode(episodeId, trackIdx, req.user.cineClubId, { language: lang, codec });
+  }
+
+  @Get('subtitles/episode/:episodeId/image/:trackIdx/data')
+  async getEpisodeImageSubtitleData(
+    @Param('episodeId', ParseIntPipe) episodeId: number,
+    @Param('trackIdx', ParseIntPipe) trackIdx: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    const data = await this.nasService.getNasImageSubtitleDataForEpisode(episodeId, trackIdx, req.user.cineClubId);
+    return new StreamableFile(data, { type: 'application/octet-stream', length: data.length });
+  }
+
+  @Get('subtitles/:mediaId/image/:trackIdx')
+  async getMediaImageSubtitle(
+    @Param('mediaId', ParseIntPipe) mediaId: number,
+    @Param('trackIdx', ParseIntPipe) trackIdx: number,
+    @Query('lang') lang: string | undefined,
+    @Query('codec') codec: string | undefined,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    return this.nasService.getNasImageSubtitleForMedia(mediaId, trackIdx, req.user.cineClubId, { language: lang, codec });
+  }
+
+  @Get('subtitles/:mediaId/image/:trackIdx/data')
+  async getMediaImageSubtitleData(
+    @Param('mediaId', ParseIntPipe) mediaId: number,
+    @Param('trackIdx', ParseIntPipe) trackIdx: number,
+    @Req() req: { user: JwtPayload },
+  ) {
+    if (!req.user.cineClubId) throw new ForbiddenException('Aucun CineClub sélectionné');
+    const data = await this.nasService.getNasImageSubtitleDataForMedia(mediaId, trackIdx, req.user.cineClubId);
+    return new StreamableFile(data, { type: 'application/octet-stream', length: data.length });
   }
 
   // ── Track probing ──────────────────────────────────────────────────────────

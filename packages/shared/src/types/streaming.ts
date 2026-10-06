@@ -43,3 +43,15 @@ export interface NasSubtitleTrack {
   /** Progression de l'extraction (% du fichier lu depuis le NAS). */
   progressPercent?: number;
 }
+
+/** Piste sous-titre image (PGS) : état d'extraction ; le .sup se télécharge à part une fois `ready`. */
+export interface NasImageSubtitleStatus {
+  trackIdx: number;
+  language: string;
+  codec: string;
+  ready: boolean;
+  /** Extraction encore en cours côté API : re-sonder le endpoint. */
+  pending?: boolean;
+  /** Progression de l'extraction (% du fichier lu sur le NAS). */
+  progressPercent?: number;
+}

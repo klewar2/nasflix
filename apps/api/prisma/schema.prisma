@@ -303,6 +303,22 @@ model SubtitleCache {
   @@index([episodeId])
 }
 
+// Sous-titres image (PGS Blu-ray) extraits tels quels en .sup, rendus par l'app TV (libpgs).
+// Table séparée de SubtitleCache : plusieurs Mo par piste, jamais chargés avec les VTT.
+model SubtitleImageCache {
+  id        Int      @id @default(autoincrement())
+  mediaId   Int?
+  episodeId Int?
+  trackIdx  Int
+  language  String
+  codec     String
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  @@index([mediaId])
+  @@index([episodeId])
+}
+
 model SyncLog {
   id             Int       @id @default(autoincrement())
   cineClubId     Int?

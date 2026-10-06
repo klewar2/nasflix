@@ -25,10 +25,15 @@ export function formatTime(s: number): string {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-// Sous-titres texte (convertibles en WebVTT) vs image (PGS/VOBSUB → OCR requis, non supporté).
+// Sous-titres texte (convertibles en WebVTT) vs image (PGS rendu en image, VOBSUB non supporté).
 const TEXT_SUBTITLE_CODECS = ['SUBRIP', 'SRT', 'ASS', 'SSA', 'MOV_TEXT', 'WEBVTT', 'VTT', 'TEXT'];
 export function isTextSubtitleCodec(codec: string): boolean {
   return TEXT_SUBTITLE_CODECS.includes((codec || '').toUpperCase());
+}
+
+// PGS (Blu-ray) : image extraite en .sup côté API et dessinée sur un canvas (libpgs).
+export function isPgsSubtitleCodec(codec: string): boolean {
+  return (codec || '').toUpperCase() === 'HDMV_PGS_SUBTITLE';
 }
 
 export function channelLabel(n: number): string {

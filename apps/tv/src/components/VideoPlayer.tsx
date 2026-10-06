@@ -1,11 +1,11 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { MediaTracks } from '../lib/api';
 import { watchProgress } from '../lib/progress';
 import { useVideoCore } from '../hooks/useVideoCore';
 import { useVideoTracks } from '../hooks/useVideoTracks';
 import { useWatchProgress } from '../hooks/useWatchProgress';
 import { usePlayerNav } from '../hooks/usePlayerNav';
-import { channelLabel, formatTime, isTextSubtitleCodec, langName } from '../hooks/utils';
+import { channelLabel, formatTime, isPgsSubtitleCodec, isTextSubtitleCodec, langName } from '../hooks/utils';
 
 interface Props {
   url: string;
@@ -34,6 +34,8 @@ export default function VideoPlayer({
   // savedProgress computed once (synchronous localStorage read)
   const savedProgressRef = useRef(watchProgress.get(mediaId, episodeId));
   const savedProgress = savedProgressRef.current;
+  const pgsCanvasRef = useRef<HTMLCanvasElement>(null);
+  const trackListRef = useRef<HTMLDivElement>(null);
 
   const {
     videoRef, hlsRef, playing, paused, currentTime, isBuffering, videoError,
@@ -50,7 +52,7 @@ export default function VideoPlayer({
     activeCueHtml, subtitleLoading, subtitleProgress, nativeAudioTracks, nativeSubtitleTracks,
     applyAudioTrack, applySubtitle,
   } = useVideoTracks({
-    videoRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
+    videoRef, pgsCanvasRef, hlsRef, url, isHls, hlsAudioTracks, setHlsAudioTracks, setActiveAudio,
     tracks, sourceType, jellyfinItemId, jellyfinBaseUrl, jellyfinApiToken,
     currentTime, mediaId, episodeId, urlChangeKey,
   });
@@ -61,11 +63,29 @@ export default function VideoPlayer({
     onBack, onNextEpisode, onPrevEpisode, mediaId, episodeId, showResume, setShowResume, savedProgress,
   });
 
+  // Garde la piste focalisée visible : la télécommande ne fait pas défiler la liste d'elle-même
+  useEffect(() => {
+    const list = trackListRef.current;
+    const el = list?.children[nav.menuIndex] as HTMLElement | undefined;
+    if (!list || !el) return;
+    if (el.offsetTop < list.scrollTop) list.scrollTop = el.offsetTop;
+    else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
+    }
+  }, [nav.menuOpen, nav.menuSection, nav.menuIndex]);
+
   const DEBUG = import.meta.env.VITE_DEBUG === 'true';
 
   return (
     <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, left: 0, background: '#000' }}>
       <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline />
+
+      {/* ── Sous-titres PGS (libpgs) : même boîte et même object-fit que la vidéo ──
+          Sans z-index : reste sous les contrôles, déclarés après dans le DOM. */}
+      <canvas ref={pgsCanvasRef} style={{
+        position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+        objectFit: 'contain', pointerEvents: 'none',
+      }} />
 
       {/* ── Subtitle overlay (TV-optimised) ─────────────────────────── */}
       {activeCueHtml && (
@@ -254,109 +274,6 @@ export default function VideoPlayer({
           background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.65) 30%, rgba(0,0,0,0.97) 100%)',
           padding: '3.75rem 2rem 1rem',
         }}>
-          {/* Tabs: Lecture / Audio / Sous-titres */}
-          <div style={{ display: 'flex', gap: '0.1875rem', marginBottom: '0.875rem', alignItems: 'center' }}>
-            {[
-              { id: 'play' as const, label: 'Lecture', sub: null, active: !nav.menuOpen },
-              { id: 'audio' as const, label: 'Audio', sub: nav.audioSummary, active: nav.menuOpen && nav.menuSection === 'audio' },
-              { id: 'subtitle' as const, label: 'Sous-titres', sub: nav.subSummary, active: nav.menuOpen && nav.menuSection === 'subtitle' },
-            ].map((tab) => (
-              <div
-                key={tab.id}
-                onClick={() => {
-                  if (tab.id === 'play') { nav.showControlsFor(); }
-                  else {
-                    // Opening menu via click sets navMode to 'menu'
-                    // We mimic nav internal logic via the state ref - but for click we can just toggle
-                    // Since nav doesn't expose setMenuSection, clicks work through DOM interaction
-                  }
-                }}
-                style={{
-                  padding: '0.3125rem 0.5625rem', borderRadius: '4px',
-                  background: tab.active ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
-                  border: `1px solid ${tab.active ? 'rgba(255,255,255,0.25)' : 'var(--line-strong)'}`,
-                  display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '3.75rem',
-                  cursor: 'pointer',
-                  outline: tab.active ? '3px solid rgba(255,255,255,0.5)' : 'none', outlineOffset: '3px',
-                }}
-              >
-                <span style={{ fontSize: '0.41rem', fontWeight: 500, color: tab.active ? '#fff' : 'var(--text-muted)' }}>
-                  {tab.label}
-                </span>
-                {tab.sub && (
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'var(--text-dim)' }}>
-                    {tab.sub}
-                  </span>
-                )}
-              </div>
-            ))}
-            <div style={{ flex: 1 }} />
-            <span className="chip" style={{ fontSize: '0.3rem' }}>
-              {nav.seekMode
-                ? '◀▶ ±30s · OK valider · BACK annuler'
-                : nav.menuOpen
-                  ? '↑↓ Choisir · ←→ Audio / Sous-titres · OK valider'
-                  : '↑ Scrub · ↓ Audio / Sous-titres · ←→ ±10s'}
-            </span>
-          </div>
-
-          {/* Track list (when menu open) */}
-          {nav.menuOpen && (
-            <div style={{
-              marginBottom: '0.875rem', maxHeight: '7.5rem', overflowY: 'auto',
-              display: 'flex', flexDirection: 'column', gap: '2px',
-            }}>
-              {nav.currentItems.map((item, i) => {
-                const isActive = nav.menuSection === 'audio' ? (i === activeAudio) : (item.index === activeSubtitle);
-                const isFocused = i === nav.menuIndex;
-                const audioItem = nav.menuSection === 'audio'
-                  ? (item as { index: number; title: string; codec: string; channels?: number; language: string })
-                  : null;
-                return (
-                  <div key={item.index} style={{
-                    display: 'flex', alignItems: 'center', gap: '0.4375rem',
-                    padding: '0.4375rem 0.5rem', borderRadius: '4px',
-                    background: isFocused ? 'var(--accent-soft)' : isActive ? 'rgba(255,255,255,0.04)' : 'transparent',
-                    border: `1px solid ${isFocused ? 'var(--accent-line)' : 'transparent'}`,
-                    cursor: 'pointer',
-                  }}>
-                    <span style={{
-                      width: '0.25rem', height: '0.25rem', borderRadius: '50%', flexShrink: 0,
-                      background: isActive ? 'var(--accent)' : 'transparent',
-                      border: '1px solid var(--line-strong)',
-                    }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '0.44rem', color: isFocused ? '#fff' : 'var(--text)', fontWeight: 500 }}>
-                        {item.title}
-                        {item.language && langName(item.language) !== item.title && (
-                          <span style={{ color: 'var(--text-dim)', fontSize: '0.34rem', marginLeft: '0.375rem' }}>
-                            {langName(item.language)}
-                          </span>
-                        )}
-                      </div>
-                      {audioItem && audioItem.codec && (
-                        <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'var(--text-dim)', marginTop: '1px' }}>
-                          {[audioItem.codec, (audioItem.channels ?? 0) > 0 ? channelLabel(audioItem.channels!) : ''].filter(Boolean).join(' · ')}
-                        </div>
-                      )}
-                      {!audioItem && item.index !== -1 && item.codec && (
-                        <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: isTextSubtitleCodec(item.codec) ? 'var(--text-dim)' : 'var(--accent)', marginTop: '1px' }}>
-                          {item.codec}{isTextSubtitleCodec(item.codec) ? '' : ' · image, non supporté'}
-                        </div>
-                      )}
-                    </div>
-                    {isActive && <span className="chip accent" style={{ fontSize: '0.28rem' }}>ACTIF</span>}
-                  </div>
-                );
-              })}
-              {nav.currentItems.length === 0 && (
-                <span style={{ fontFamily: 'var(--mono)', fontSize: '0.38rem', color: 'var(--text-dim)', padding: '0.25rem 0.5rem' }}>
-                  Aucune piste disponible
-                </span>
-              )}
-            </div>
-          )}
-
           {/* Timeline */}
           <div style={{ position: 'relative', marginBottom: '0.875rem' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: '0.5rem' }}>
@@ -452,16 +369,6 @@ export default function VideoPlayer({
 
             <div style={{ flex: 1 }} />
 
-            {/* Track summary chips */}
-            {nav.hasTracks && (
-              <div style={{ display: 'flex', gap: '0.375rem' }}>
-                <span className="chip" style={{ fontSize: '0.34rem' }}>🔊 {nav.audioSummary}</span>
-                <span className="chip" style={{ fontSize: '0.34rem', color: activeSubtitle >= 0 ? 'var(--text)' : 'var(--text-dim)' }}>
-                  💬 {nav.subSummary}
-                </span>
-              </div>
-            )}
-
             {/* Prev / Next episode text buttons */}
             {onPrevEpisode && (
               <button onClick={onPrevEpisode} style={{
@@ -486,6 +393,105 @@ export default function VideoPlayer({
               </button>
             )}
           </div>
+
+          {/* ── Audio / Sous-titres : SOUS les boutons (↓ depuis la barre de transport) ── */}
+          <div style={{ display: 'flex', gap: '0.1875rem', marginTop: '0.875rem', alignItems: 'center' }}>
+            {([
+              { id: 'audio' as const, label: 'Audio', sub: nav.audioSummary },
+              { id: 'subtitle' as const, label: 'Sous-titres', sub: nav.subSummary },
+            ]).map((tab) => {
+              const active = nav.menuOpen && nav.menuSection === tab.id;
+              return (
+                <div
+                  key={tab.id}
+                  onClick={() => nav.openMenu(tab.id)}
+                  style={{
+                    padding: '0.3125rem 0.5625rem', borderRadius: '4px',
+                    background: active ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${active ? 'rgba(255,255,255,0.25)' : 'var(--line-strong)'}`,
+                    display: 'flex', flexDirection: 'column', minWidth: '3.75rem',
+                    marginRight: '0.1875rem',
+                    cursor: 'pointer',
+                    outline: active ? '3px solid rgba(255,255,255,0.5)' : 'none', outlineOffset: '3px',
+                  }}
+                >
+                  <span style={{ fontSize: '0.41rem', fontWeight: 500, color: active ? '#fff' : 'var(--text-muted)' }}>
+                    {tab.label}
+                  </span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'var(--text-dim)', marginTop: '2px' }}>
+                    {tab.sub}
+                  </span>
+                </div>
+              );
+            })}
+            <div style={{ flex: 1 }} />
+            <span className="chip" style={{ fontSize: '0.3rem' }}>
+              {nav.seekMode
+                ? '◀▶ ±30s · OK valider · BACK annuler'
+                : nav.menuOpen
+                  ? '↑↓ Choisir · ←→ Audio / Sous-titres · OK valider · BACK masquer'
+                  : nav.navMode === 'transport'
+                    ? '←→ Boutons · ↑ Scrub · ↓ Audio / Sous-titres · BACK masquer'
+                    : '←→ ±10s · ↑ Scrub · ↓ Commandes · BACK masquer'}
+            </span>
+          </div>
+
+          {/* Track list (when menu open) — défile pour garder la piste focalisée visible */}
+          {nav.menuOpen && (
+            <div ref={trackListRef} style={{
+              position: 'relative', marginTop: '0.5rem', maxHeight: '7.5rem', overflowY: 'auto',
+              display: 'flex', flexDirection: 'column',
+            }}>
+              {nav.currentItems.map((item, i) => {
+                const isActive = nav.menuSection === 'audio' ? (i === activeAudio) : (item.index === activeSubtitle);
+                const isFocused = i === nav.menuIndex;
+                const audioItem = nav.menuSection === 'audio'
+                  ? (item as { index: number; title: string; codec: string; channels?: number; language: string })
+                  : null;
+                return (
+                  <div key={item.index} onClick={() => nav.selectMenuItem(i)} style={{
+                    display: 'flex', alignItems: 'center',
+                    padding: '0.4375rem 0.5rem', borderRadius: '4px', marginBottom: '2px',
+                    background: isFocused ? 'var(--accent-soft)' : isActive ? 'rgba(255,255,255,0.04)' : 'transparent',
+                    border: `1px solid ${isFocused ? 'var(--accent-line)' : 'transparent'}`,
+                    cursor: 'pointer',
+                  }}>
+                    <span style={{
+                      width: '0.25rem', height: '0.25rem', borderRadius: '50%', flexShrink: 0,
+                      background: isActive ? 'var(--accent)' : 'transparent',
+                      border: '1px solid var(--line-strong)', marginRight: '0.4375rem',
+                    }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '0.44rem', color: isFocused ? '#fff' : 'var(--text)', fontWeight: 500 }}>
+                        {item.title}
+                        {item.language && langName(item.language) !== item.title && (
+                          <span style={{ color: 'var(--text-dim)', fontSize: '0.34rem', marginLeft: '0.375rem' }}>
+                            {langName(item.language)}
+                          </span>
+                        )}
+                      </div>
+                      {audioItem && audioItem.codec && (
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: 'var(--text-dim)', marginTop: '1px' }}>
+                          {[audioItem.codec, (audioItem.channels ?? 0) > 0 ? channelLabel(audioItem.channels!) : ''].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
+                      {!audioItem && item.index !== -1 && item.codec && (
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: '0.3rem', color: isTextSubtitleCodec(item.codec) || isPgsSubtitleCodec(item.codec) ? 'var(--text-dim)' : 'var(--accent)', marginTop: '1px' }}>
+                          {item.codec}{isTextSubtitleCodec(item.codec) ? '' : isPgsSubtitleCodec(item.codec) ? ' · image' : ' · image, non supporté'}
+                        </div>
+                      )}
+                    </div>
+                    {isActive && <span className="chip accent" style={{ fontSize: '0.28rem' }}>ACTIF</span>}
+                  </div>
+                );
+              })}
+              {nav.currentItems.length === 0 && (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: '0.38rem', color: 'var(--text-dim)', padding: '0.25rem 0.5rem' }}>
+                  Aucune piste disponible
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

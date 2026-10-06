@@ -6,13 +6,13 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:
 import { spawn } from 'node:child_process';
 import * as https from 'node:https';
 import * as http from 'node:http';
-import { StringDecoder } from 'node:string_decoder';
 import { Client as SshClient } from 'ssh2';
 import { MediaType } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 import { CryptoService } from '../common/crypto.service';
 import { NasGateway } from './nas.gateway';
-import { buildBundleExtractionScript, isTextSubtitleCodec, parseSubtitleBundle } from './subtitle-bundle';
+import { buildBundleExtractionScript, isPgsData, isPgsSubtitleCodec, isTextSubtitleCodec, parseSubtitleBundle } from './subtitle-bundle';
+import type { BundleFormat, BundleTrack } from './subtitle-bundle';
 
 interface FetchInit {
   method?: string;
@@ -94,6 +94,16 @@ export interface NasSubtitleTrack {
   /** Extraction encore en cours : le client re-sonde le endpoint jusqu'au VTT. */
   pending?: boolean;
   /** Progression de l'extraction (% du fichier lu depuis le NAS). */
+  progressPercent?: number;
+}
+
+/** État d'une piste PGS (.sup) : les données binaires se téléchargent à part une fois `ready`. */
+export interface NasImageSubtitleStatus {
+  trackIdx: number;
+  language: string;
+  codec: string;
+  ready: boolean;
+  pending?: boolean;
   progressPercent?: number;
 }
 
@@ -1126,13 +1136,17 @@ export class NasService implements OnModuleInit {
     command: string;
     timeoutMs: number;
     onStderr?: (chunk: string) => void;
-  }): Promise<{ code: number; stdout: string; stderr: string }> {
+    /** Garde-fou mémoire : au-delà, la commande est abandonnée (défaut 64 Mo). */
+    maxStdoutBytes?: number;
+  }): Promise<{ code: number; stdout: string; stdoutBuffer: Buffer; stderr: string }> {
     return new Promise((resolve, reject) => {
       const client = new SshClient();
-      let stdout = '';
+      // stdout collecté en binaire (PGS .sup) et décodé en UTF-8 d'un bloc à la fin :
+      // un caractère multi-octets coupé entre deux paquets n'est jamais corrompu.
+      const chunks: Buffer[] = [];
+      let stdoutBytes = 0;
+      const maxStdoutBytes = p.maxStdoutBytes ?? 64 * 1024 * 1024;
       let stderr = '';
-      // Décodeur à état : un caractère UTF-8 multi-octets coupé entre deux paquets ne doit pas être corrompu
-      const stdoutDecoder = new StringDecoder('utf8');
       let settled = false;
       const done = (fn: () => void) => { if (!settled) { settled = true; clearTimeout(kill); fn(); } };
       const kill = setTimeout(() => {
@@ -1146,10 +1160,17 @@ export class NasService implements OnModuleInit {
             stream
               .on('close', (code: number | null) => {
                 client.end();
-                stdout += stdoutDecoder.end();
-                done(() => resolve({ code: code ?? -1, stdout, stderr }));
+                const stdoutBuffer = Buffer.concat(chunks);
+                done(() => resolve({ code: code ?? -1, stdout: stdoutBuffer.toString('utf8'), stdoutBuffer, stderr }));
               })
-              .on('data', (data: Buffer) => { stdout += stdoutDecoder.write(data); })
+              .on('data', (data: Buffer) => {
+                stdoutBytes += data.length;
+                if (stdoutBytes > maxStdoutBytes) {
+                  done(() => { client.end(); reject(new Error(`Sortie SSH > ${Math.round(maxStdoutBytes / 1048576)} Mo — abandon`)); });
+                  return;
+                }
+                chunks.push(data);
+              })
               .stderr.on('data', (data: Buffer) => {
                 const chunk = data.toString('utf8');
                 stderr = (stderr + chunk).slice(-4000);
@@ -1216,7 +1237,8 @@ export class NasService implements OnModuleInit {
     script: string[];
     timeoutMs: number;
     onStderr?: (chunk: string) => void;
-  }): Promise<{ code: number; stdout: string; stderr: string }> {
+    maxStdoutBytes?: number;
+  }): Promise<{ code: number; stdout: string; stdoutBuffer: Buffer; stderr: string }> {
     const club = await this.prisma.cineClub.findUnique({ where: { id: p.cineClubId } });
     if (!club?.seedboxSshHost || !club.seedboxSshUser || !club.seedboxSshPrivateKey || !club.nasSshHost || !club.nasSshUser) {
       throw new Error('chaîne SSH seedbox→NAS non configurée pour ce CineClub');
@@ -1245,6 +1267,7 @@ export class NasService implements OnModuleInit {
       command,
       timeoutMs: p.timeoutMs,
       onStderr: p.onStderr,
+      maxStdoutBytes: p.maxStdoutBytes,
     });
   }
 
@@ -1275,24 +1298,51 @@ export class NasService implements OnModuleInit {
     return this.parseFfmpegStreamInfo(result.stdout);
   }
 
+  // Lecture complète du fichier sur le NAS : un remux UHD (~60 Go) peut prendre plusieurs minutes.
+  private static readonly NAS_FULL_READ_TIMEOUT_MS = 30 * 60_000;
+
   private async extractSubtitleBundleViaNasSsh(
     cineClubId: number,
     nasPath: string,
-    trackIdxs: number[],
+    tracks: BundleTrack[],
     durationSeconds: number,
     onProgress: (percent: number) => void,
-  ): Promise<Map<number, string>> {
+  ): Promise<Map<number, Buffer>> {
     const result = await this.execOnNas({
       cineClubId,
       nasPath,
-      script: buildBundleExtractionScript(trackIdxs),
-      timeoutMs: 10 * 60_000,
+      script: buildBundleExtractionScript(tracks),
+      timeoutMs: NasService.NAS_FULL_READ_TIMEOUT_MS,
       onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress),
+      // Plusieurs pistes PGS (quelques Mo à quelques dizaines de Mo chacune)
+      maxStdoutBytes: 400 * 1024 * 1024,
     });
     if (result.code !== 0) {
       throw new Error(`FFmpeg NAS exit=${result.code} — stderr: ${result.stderr.replace(/\s+/g, ' ').slice(-300)}`);
     }
-    return parseSubtitleBundle(result.stdout);
+    return parseSubtitleBundle(result.stdoutBuffer);
+  }
+
+  /** Extraction d'une piste PGS telle quelle (.sup) en exécutant FFmpeg sur le NAS. */
+  private async extractImageSubtitleTrackViaNasSsh(
+    cineClubId: number,
+    nasPath: string,
+    trackIdx: number,
+    durationSeconds: number,
+    onProgress: (percent: number) => void,
+  ): Promise<Buffer> {
+    const result = await this.execOnNas({
+      cineClubId,
+      nasPath,
+      script: [`exec "$FF" -nostdin -v error -progress pipe:2 -i "$F" -map 0:s:${trackIdx} -c:s copy -f sup pipe:1`],
+      timeoutMs: NasService.NAS_FULL_READ_TIMEOUT_MS,
+      onStderr: this.ffmpegProgressReporter(durationSeconds, onProgress),
+      maxStdoutBytes: 200 * 1024 * 1024,
+    });
+    if (result.code !== 0 || !isPgsData(result.stdoutBuffer)) {
+      throw new Error(`FFmpeg NAS exit=${result.code} — stderr: ${result.stderr.replace(/\s+/g, ' ').slice(-300)}`);
+    }
+    return result.stdoutBuffer;
   }
 
   // Extraction en arrière-plan par média/piste : le endpoint répond immédiatement
@@ -1302,21 +1352,25 @@ export class NasService implements OnModuleInit {
   // Échec d'extraction conservé jusqu'au poll suivant, qui le remonte en erreur HTTP.
   private subtitleExtractErrors = new Map<string, string>();
 
-  // Pré-extraction de TOUTES les pistes texte d'un média en une passe (clé = média ou épisode).
-  // Coexiste avec l'extraction à la demande ci-dessus : mêmes lignes SubtitleCache, et l'extraction
-  // à la demande reste le filet de sécurité si la pré-extraction échoue ou n'a pas eu lieu.
+  // Pré-extraction en une passe de toutes les pistes texte + des pistes PGS fr/en d'un média
+  // (clé = média ou épisode). Coexiste avec l'extraction à la demande ci-dessus : mêmes lignes
+  // SubtitleCache / SubtitleImageCache, et l'extraction à la demande reste le filet de sécurité
+  // si la pré-extraction échoue ou n'a pas eu lieu.
   private subtitlePrefetchInFlight = new Map<string, { progressPercent: number }>();
   // Échec récent : évite de relancer un SSH voué à l'échec à chaque ouverture du média.
   private subtitlePrefetchFailedAt = new Map<string, number>();
   private static readonly SUBTITLE_PREFETCH_RETRY_MS = 30 * 60_000;
+  // PGS pré-extraits : seulement les langues susceptibles d'être choisies (plusieurs Mo par piste,
+  // un remux en compte souvent une dizaine). Les autres restent extraites à la demande.
+  private static readonly PREFETCH_PGS_LANGUAGES = new Set(['fr', 'fre', 'fra', 'en', 'eng']);
 
   private subtitleSourceKey(filter: { mediaId?: number; episodeId?: number }): string {
     return filter.mediaId !== undefined ? `${filter.mediaId}` : `ep${filter.episodeId}`;
   }
 
   /**
-   * Extrait et met en cache toutes les pistes sous-titres texte manquantes d'un média/épisode NAS.
-   * Best-effort : ne lève jamais (appelable en fire-and-forget).
+   * Extrait et met en cache les pistes sous-titres manquantes d'un média/épisode NAS : toutes les
+   * pistes texte (VTT) et les pistes PGS fr/en (.sup). Best-effort : ne lève jamais (fire-and-forget).
    * - `tracks` : pistes déjà sondées par l'appelant (sinon sondage FFmpeg via SSH sur le NAS) ;
    * - `force` : fichier remplacé (nouveau téléchargement) → purge du cache avant de ré-extraire.
    */
@@ -1339,33 +1393,54 @@ export class NasService implements OnModuleInit {
     this.subtitlePrefetchInFlight.set(key, entry);
 
     try {
-      if (opts.force) await this.prisma.subtitleCache.deleteMany({ where: filter });
+      if (opts.force) {
+        await this.prisma.subtitleCache.deleteMany({ where: filter });
+        await this.prisma.subtitleImageCache.deleteMany({ where: filter });
+      }
 
       const tracks = opts.tracks ?? (await this.probeTracksViaNasSsh(source.cineClubId, source.nasPath)).subtitles;
       const textTracks = tracks.filter((t) => isTextSubtitleCodec(t.codec));
-      if (textTracks.length === 0) return;
+      const pgsTracks = tracks.filter((t) =>
+        isPgsSubtitleCodec(t.codec) && NasService.PREFETCH_PGS_LANGUAGES.has(t.language.toLowerCase()));
+      if (textTracks.length === 0 && pgsTracks.length === 0) return;
 
-      const cachedIdx = new Set(
-        (await this.prisma.subtitleCache.findMany({ where: filter, select: { trackIdx: true } })).map((r) => r.trackIdx),
-      );
-      const missing = textTracks.filter((t) => !cachedIdx.has(t.index));
+      const cachedText = await this.cachedTrackIdx('vtt', filter);
+      const cachedPgs = await this.cachedTrackIdx('sup', filter);
+      const missingText = textTracks.filter((t) => !cachedText.has(t.index));
+      const missingPgs = pgsTracks.filter((t) => !cachedPgs.has(t.index));
+      const missing = [...missingText, ...missingPgs];
       if (missing.length === 0) return;
 
-      this.logger.log(`[subtitles] pré-extraction ${key} : ${missing.length} piste(s) (${missing.map((t) => `${t.index}:${t.language}`).join(', ')})`);
-      const vtts = await this.extractSubtitleBundleViaNasSsh(
-        source.cineClubId, source.nasPath, missing.map((t) => t.index), source.durationSeconds,
+      this.logger.log(`[subtitles] pré-extraction ${key} : ${missing.length} piste(s) (${missing.map((t) => `${t.index}:${t.language}${isPgsSubtitleCodec(t.codec) ? ':pgs' : ''}`).join(', ')})`);
+      const extracted = await this.extractSubtitleBundleViaNasSsh(
+        source.cineClubId, source.nasPath,
+        [
+          ...missingText.map((t): BundleTrack => ({ idx: t.index, format: 'vtt' })),
+          ...missingPgs.map((t): BundleTrack => ({ idx: t.index, format: 'sup' })),
+        ],
+        source.durationSeconds,
         (p) => { entry.progressPercent = p; },
       );
 
       // Relecture juste avant écriture : une extraction à la demande a pu cacher une piste entre-temps.
-      const nowCached = new Set(
-        (await this.prisma.subtitleCache.findMany({ where: filter, select: { trackIdx: true } })).map((r) => r.trackIdx),
-      );
-      const rows = missing
-        .filter((t) => vtts.has(t.index) && !nowCached.has(t.index))
-        .map((t) => ({ ...filter, trackIdx: t.index, language: t.language, title: t.title, codec: t.codec, vttContent: vtts.get(t.index)! }));
-      if (rows.length > 0) await this.prisma.subtitleCache.createMany({ data: rows });
-      this.logger.log(`[subtitles] pré-extraction ${key} : ${rows.length}/${missing.length} piste(s) en cache`);
+      const nowCachedText = await this.cachedTrackIdx('vtt', filter);
+      const textRows = missingText
+        .filter((t) => !nowCachedText.has(t.index))
+        .map((t) => ({ t, vtt: extracted.get(t.index)?.toString('utf8').trim() ?? '' }))
+        .filter(({ vtt }) => vtt.startsWith('WEBVTT'))
+        .map(({ t, vtt }) => ({ ...filter, trackIdx: t.index, language: t.language, title: t.title, codec: t.codec, vttContent: vtt }));
+      if (textRows.length > 0) await this.prisma.subtitleCache.createMany({ data: textRows });
+
+      const nowCachedPgs = await this.cachedTrackIdx('sup', filter);
+      let pgsCount = 0;
+      for (const t of missingPgs) {
+        const data = extracted.get(t.index);
+        if (!data || !isPgsData(data) || nowCachedPgs.has(t.index)) continue;
+        // Une ligne par requête : plusieurs Mo chacune
+        await this.prisma.subtitleImageCache.create({ data: { ...filter, trackIdx: t.index, language: t.language, codec: t.codec, data: new Uint8Array(data) } });
+        pgsCount++;
+      }
+      this.logger.log(`[subtitles] pré-extraction ${key} : ${textRows.length + pgsCount}/${missing.length} piste(s) en cache`);
       this.subtitlePrefetchFailedAt.delete(key);
     } catch (err) {
       const message = (err as Error)?.message || (err as { code?: string })?.code || String(err);
@@ -1374,6 +1449,13 @@ export class NasService implements OnModuleInit {
     } finally {
       this.subtitlePrefetchInFlight.delete(key);
     }
+  }
+
+  private async cachedTrackIdx(format: BundleFormat, filter: { mediaId?: number; episodeId?: number }): Promise<Set<number>> {
+    const rows = format === 'vtt'
+      ? await this.prisma.subtitleCache.findMany({ where: filter, select: { trackIdx: true } })
+      : await this.prisma.subtitleImageCache.findMany({ where: filter, select: { trackIdx: true } });
+    return new Set(rows.map((r) => r.trackIdx));
   }
 
   /** Pré-extraction pour un film, à l'ouverture sur la TV (pistes déjà sondées par `/nas/tracks`). */
@@ -1544,6 +1626,113 @@ export class NasService implements OnModuleInit {
       durationSeconds: (episode?.runtime ?? 0) * 60,
       nasUrlFactory: () => this.getEpisodeFileUrl(episodeId, userId, cineClubId),
     }, meta);
+  }
+
+  // ── Sous-titres image (PGS) : .sup extrait sur le NAS, rendu par l'app TV ──────
+
+  /**
+   * Même principe que `getNasSubtitleTrack` (cache-first, extraction en arrière-plan, le client
+   * re-sonde), mais le .sup est gardé tel quel et téléchargé ensuite via `getNasImageSubtitleData`.
+   * Pas de repli HTTP : relire un remux de plusieurs dizaines de Go à travers Internet est hors de portée.
+   */
+  private async getNasImageSubtitle(
+    filter: { mediaId?: number; episodeId?: number },
+    trackIdx: number,
+    source: { cineClubId: number; nasPath: string | null; durationSeconds: number },
+    meta: { language?: string; codec?: string },
+  ): Promise<NasImageSubtitleStatus> {
+    const cached = await this.prisma.subtitleImageCache.findFirst({
+      where: { ...filter, trackIdx },
+      select: { language: true, codec: true },
+    });
+    if (cached) return { trackIdx, language: cached.language, codec: cached.codec, ready: true };
+
+    const language = meta.language || 'und';
+    const codec = meta.codec || '';
+    if (!isPgsSubtitleCodec(codec)) throw new BadRequestException(`Codec de sous-titre image non supporté : ${codec || 'inconnu'}`);
+    if (!source.nasPath) throw new NotFoundException('Fichier introuvable sur le NAS');
+
+    const key = `${this.subtitleSourceKey(filter)}:img${trackIdx}`;
+    const pendingResponse = (progressPercent: number): NasImageSubtitleStatus =>
+      ({ trackIdx, language, codec, ready: false, pending: true, progressPercent });
+
+    const failure = this.subtitleExtractErrors.get(key);
+    if (failure !== undefined) {
+      this.subtitleExtractErrors.delete(key);
+      throw new BadRequestException(`Extraction sous-titre échouée : ${failure}`);
+    }
+
+    const inFlight = this.subtitleExtractInFlight.get(key);
+    if (inFlight) return pendingResponse(inFlight.progressPercent);
+
+    const prefetching = this.subtitlePrefetchInFlight.get(this.subtitleSourceKey(filter));
+    if (prefetching) return pendingResponse(prefetching.progressPercent);
+
+    const entry = { progressPercent: 0 };
+    this.subtitleExtractInFlight.set(key, entry);
+    this.logger.log(`[subtitles] extraction PGS start ${key} (${language})`);
+    const nasPath = source.nasPath;
+
+    void (async () => {
+      const data = await this.extractImageSubtitleTrackViaNasSsh(
+        source.cineClubId, nasPath, trackIdx, source.durationSeconds, (p) => { entry.progressPercent = p; },
+      );
+      await this.prisma.subtitleImageCache.create({ data: { ...filter, trackIdx, language, codec, data: new Uint8Array(data) } });
+      this.logger.log(`[subtitles] PGS track ${trackIdx} (${language}, ${Math.round(data.length / 1024)} Ko) extracted & cached ${JSON.stringify(filter)}`);
+    })()
+      .catch((err: Error & { code?: string }) => {
+        const message = err?.message || err?.code || String(err);
+        this.logger.error(`[subtitles] extraction PGS ${key} échouée : ${message}`);
+        this.subtitleExtractErrors.set(key, message);
+      })
+      .finally(() => this.subtitleExtractInFlight.delete(key));
+
+    return pendingResponse(0);
+  }
+
+  async getNasImageSubtitleForMedia(
+    mediaId: number, trackIdx: number, cineClubId: number, meta: { language?: string; codec?: string } = {},
+  ): Promise<NasImageSubtitleStatus> {
+    const media = await this.prisma.media.findFirst({ where: { id: mediaId, cineClubId }, select: { nasPath: true, runtime: true } });
+    if (!media) throw new NotFoundException('Média introuvable');
+    return this.getNasImageSubtitle({ mediaId }, trackIdx, {
+      cineClubId, nasPath: media.nasPath, durationSeconds: (media.runtime ?? 0) * 60,
+    }, meta);
+  }
+
+  async getNasImageSubtitleForEpisode(
+    episodeId: number, trackIdx: number, cineClubId: number, meta: { language?: string; codec?: string } = {},
+  ): Promise<NasImageSubtitleStatus> {
+    const episode = await this.prisma.episode.findFirst({
+      where: { id: episodeId, season: { media: { cineClubId } } },
+      select: { nasPath: true, runtime: true },
+    });
+    if (!episode) throw new NotFoundException('Épisode introuvable');
+    return this.getNasImageSubtitle({ episodeId }, trackIdx, {
+      cineClubId, nasPath: episode.nasPath, durationSeconds: (episode.runtime ?? 0) * 60,
+    }, meta);
+  }
+
+  /** Contenu .sup en cache (tenant vérifié) — 404 tant que l'extraction n'est pas terminée. */
+  async getNasImageSubtitleDataForMedia(mediaId: number, trackIdx: number, cineClubId: number): Promise<Uint8Array> {
+    const media = await this.prisma.media.findFirst({ where: { id: mediaId, cineClubId }, select: { id: true } });
+    if (!media) throw new NotFoundException('Média introuvable');
+    return this.getNasImageSubtitleData({ mediaId }, trackIdx);
+  }
+
+  async getNasImageSubtitleDataForEpisode(episodeId: number, trackIdx: number, cineClubId: number): Promise<Uint8Array> {
+    const episode = await this.prisma.episode.findFirst({
+      where: { id: episodeId, season: { media: { cineClubId } } },
+      select: { id: true },
+    });
+    if (!episode) throw new NotFoundException('Épisode introuvable');
+    return this.getNasImageSubtitleData({ episodeId }, trackIdx);
+  }
+
+  private async getNasImageSubtitleData(filter: { mediaId?: number; episodeId?: number }, trackIdx: number): Promise<Uint8Array> {
+    const row = await this.prisma.subtitleImageCache.findFirst({ where: { ...filter, trackIdx }, select: { data: true } });
+    if (!row) throw new NotFoundException('Sous-titre image non extrait');
+    return row.data;
   }
 
   async deleteFile(session: NasSession, path: string): Promise<void> {

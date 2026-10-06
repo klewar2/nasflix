@@ -1,59 +1,89 @@
 import { describe, expect, it } from 'vitest';
-import { buildBundleExtractionScript, isTextSubtitleCodec, parseSubtitleBundle, SUBTITLE_BUNDLE_MARKER } from './subtitle-bundle';
+import {
+  buildBundleExtractionScript, isPgsData, isPgsSubtitleCodec, isTextSubtitleCodec, parseSubtitleBundle, SUBTITLE_BUNDLE_MARKER,
+} from './subtitle-bundle';
 
-describe('isTextSubtitleCodec', () => {
+describe('codecs', () => {
   it('accepte les codecs texte, insensible à la casse', () => {
     expect(isTextSubtitleCodec('SUBRIP')).toBe(true);
     expect(isTextSubtitleCodec('ass')).toBe(true);
   });
 
-  it('refuse les codecs image et les valeurs vides', () => {
+  it('refuse les codecs image et les valeurs vides comme texte', () => {
     expect(isTextSubtitleCodec('HDMV_PGS_SUBTITLE')).toBe(false);
     expect(isTextSubtitleCodec('DVD_SUBTITLE')).toBe(false);
     expect(isTextSubtitleCodec('')).toBe(false);
   });
+
+  it('reconnaît le PGS (et seulement lui) comme image rendable', () => {
+    expect(isPgsSubtitleCodec('HDMV_PGS_SUBTITLE')).toBe(true);
+    expect(isPgsSubtitleCodec('hdmv_pgs_subtitle')).toBe(true);
+    expect(isPgsSubtitleCodec('DVD_SUBTITLE')).toBe(false);
+  });
+
+  it('vérifie le magic « PG » des données .sup', () => {
+    expect(isPgsData(Buffer.from([0x50, 0x47, 0x00, 0x01]))).toBe(true);
+    expect(isPgsData(Buffer.from('WEBVTT'))).toBe(false);
+    expect(isPgsData(Buffer.alloc(0))).toBe(false);
+  });
 });
+
+/** Reproduit la sortie du script : en-tête « marqueur index taille » puis le contenu brut. */
+function frame(idx: number, content: Buffer | string, sizePadding = ''): Buffer {
+  const data = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
+  return Buffer.concat([Buffer.from(`${SUBTITLE_BUNDLE_MARKER} ${idx} ${sizePadding}${data.length}\n`), data]);
+}
 
 describe('parseSubtitleBundle', () => {
   const vtt = (text: string) => `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${text}`;
 
-  it('sépare les pistes par index', () => {
-    const out = [
-      `${SUBTITLE_BUNDLE_MARKER} 0`, vtt('Bonjour'), '',
-      `${SUBTITLE_BUNDLE_MARKER} 2`, vtt('Hello'), '',
-    ].join('\n');
-    const tracks = parseSubtitleBundle(out);
+  it('sépare les pistes par index, accents compris (taille en octets)', () => {
+    const tracks = parseSubtitleBundle(Buffer.concat([frame(0, vtt('Café à Noël')), frame(2, vtt('Hello'))]));
     expect([...tracks.keys()]).toEqual([0, 2]);
-    expect(tracks.get(0)).toBe(vtt('Bonjour'));
-    expect(tracks.get(2)).toBe(vtt('Hello'));
+    expect(tracks.get(0)!.toString('utf8')).toBe(vtt('Café à Noël'));
+    expect(tracks.get(2)!.toString('utf8')).toBe(vtt('Hello'));
   });
 
-  it('ignore les blocs qui ne sont pas du WebVTT', () => {
-    const out = [`${SUBTITLE_BUNDLE_MARKER} 0`, '', `${SUBTITLE_BUNDLE_MARKER} 1`, vtt('ok')].join('\n');
+  it('est sûr pour le binaire, même si les données contiennent le marqueur ou des sauts de ligne', () => {
+    const pgs = Buffer.concat([Buffer.from([0x50, 0x47, 0x0a, 0x00, 0xff]), Buffer.from(`\n${SUBTITLE_BUNDLE_MARKER} 9 3\n`)]);
+    const tracks = parseSubtitleBundle(Buffer.concat([frame(1, pgs), frame(3, vtt('ok'))]));
+    expect([...tracks.keys()]).toEqual([1, 3]);
+    expect(tracks.get(1)!.equals(pgs)).toBe(true);
+  });
+
+  it('tolère une taille alignée par des espaces (wc -c BSD) et un préambule parasite', () => {
+    const out = Buffer.concat([Buffer.from('bannière du shell\n'), frame(4, vtt('x'), '     ')]);
+    expect(parseSubtitleBundle(out).get(4)!.toString()).toBe(vtt('x'));
+  });
+
+  it("s'arrête sur un bloc tronqué sans renvoyer de contenu partiel", () => {
+    const full = frame(0, vtt('complet'));
+    const truncated = frame(1, vtt('tronqué')).subarray(0, 30);
+    const tracks = parseSubtitleBundle(Buffer.concat([full, truncated]));
+    expect([...tracks.keys()]).toEqual([0]);
+  });
+
+  it('ignore un en-tête sans taille (fichier de sortie absent)', () => {
+    const out = Buffer.concat([Buffer.from(`${SUBTITLE_BUNDLE_MARKER} 0 \n`), frame(1, vtt('ok'))]);
     expect([...parseSubtitleBundle(out).keys()]).toEqual([1]);
   });
 
   it('renvoie une map vide sans marqueur', () => {
-    expect(parseSubtitleBundle('').size).toBe(0);
-    expect(parseSubtitleBundle('NOFILE').size).toBe(0);
-  });
-
-  it('tolère les fins de ligne CRLF', () => {
-    const out = `${SUBTITLE_BUNDLE_MARKER} 3\r\n${vtt('x')}\r\n`;
-    expect(parseSubtitleBundle(out).has(3)).toBe(true);
+    expect(parseSubtitleBundle(Buffer.alloc(0)).size).toBe(0);
+    expect(parseSubtitleBundle(Buffer.from('NOFILE')).size).toBe(0);
   });
 });
 
 describe('buildBundleExtractionScript', () => {
-  it('mappe chaque piste vers son propre fichier et les restitue toutes', () => {
-    const script = buildBundleExtractionScript([0, 3]).join('\n');
+  it('mappe chaque piste vers son propre fichier, au bon format', () => {
+    const script = buildBundleExtractionScript([{ idx: 0, format: 'vtt' }, { idx: 3, format: 'sup' }]).join('\n');
     expect(script).toContain('-map 0:s:0 -c:s webvtt -f webvtt "$TMP/0.vtt"');
-    expect(script).toContain('-map 0:s:3 -c:s webvtt -f webvtt "$TMP/3.vtt"');
-    expect(script).toContain(`echo "${SUBTITLE_BUNDLE_MARKER} 3"`);
+    expect(script).toContain('-map 0:s:3 -c:s copy -f sup "$TMP/3.sup"');
+    expect(script).toContain(`printf '${SUBTITLE_BUNDLE_MARKER} 3 %s\\n' "$(wc -c < "$TMP/3.sup")"`);
   });
 
-  it('abandonne sans rien restituer si FFmpeg échoue (pas de VTT tronqué)', () => {
-    const lines = buildBundleExtractionScript([0]);
+  it('abandonne sans rien restituer si FFmpeg échoue (pas de sous-titre tronqué)', () => {
+    const lines = buildBundleExtractionScript([{ idx: 0, format: 'vtt' }]);
     const ffmpegLine = lines.findIndex((l) => l.includes('"$FF"'));
     expect(lines[ffmpegLine]).toContain('|| exit $?');
     expect(ffmpegLine).toBeLessThan(lines.findIndex((l) => l.includes('cat "$TMP/0.vtt"')));
